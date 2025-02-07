@@ -1,6 +1,6 @@
 ## Maps.json structure and sample
 
-*Created after application launch*
+*Created after application launch if not present*
 
 | Key  | Description |
 | ------------- | ------------- |
