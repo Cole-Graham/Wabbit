@@ -30,6 +30,12 @@ namespace RDGRBotV2.BotClient.Commands
 
             await context.DeferResponseAsync();
 
+            if (context.Guild is null)
+            {
+                await context.EditResponseAsync("Guild context is null");
+                return;
+            }
+
             // Length kvp
 
             string pings = $"{Player1.Mention} {Player2.Mention} {Player3.Mention} {Player4.Mention}";
@@ -39,13 +45,24 @@ namespace RDGRBotV2.BotClient.Commands
                 Name = "Round", // Placeholder
                 Length = length,
                 OneVOne = false,
-                Teams = [],
+                Teams = new List<Round.Team>(),
                 Pings = pings
             };
             Round.Team team1 = new();
             Round.Team team2 = new();
 
-            List<DiscordMember> players = [await context.Guild.GetMemberAsync(Player1.Id), await context.Guild.GetMemberAsync(Player2.Id), await context.Guild.GetMemberAsync(Player3.Id), await context.Guild.GetMemberAsync(Player4.Id),];
+            var member1 = await context.Guild.GetMemberAsync(Player1.Id);
+            var member2 = await context.Guild.GetMemberAsync(Player2.Id);
+            var member3 = await context.Guild.GetMemberAsync(Player3.Id);
+            var member4 = await context.Guild.GetMemberAsync(Player4.Id);
+
+            if (member1 is null || member2 is null || member3 is null || member4 is null)
+            {
+                await context.EditResponseAsync("One or more players could not be found in the server");
+                return;
+            }
+
+            List<DiscordMember> players = [member1, member2, member3, member4];
             foreach (var player in players)
             {
                 Round.Participant participant = new() { Player = player };
@@ -63,15 +80,17 @@ namespace RDGRBotV2.BotClient.Commands
 
             _ongoingRounds.TourneyRounds.Add(round);
 
-            
 
-            string?[] maps2v2 = Maps.MapCollection.Where(m => m.Size == "2v2").Select(m => m.Name).ToArray();
+            string?[] maps2v2 = Maps.MapCollection?.Where(m => m.Size == "2v2").Select(m => m.Name).ToArray() ?? Array.Empty<string?>();
 
             var options = new List<DiscordSelectComponentOption>();
             foreach (var map in maps2v2)
             {
-                var option = new DiscordSelectComponentOption(map, map);
-                options.Add(option);
+                if (map is not null)
+                {
+                    var option = new DiscordSelectComponentOption(map, map);
+                    options.Add(option);
+                }
             }
 
             DiscordSelectComponent dropdown;
@@ -103,12 +122,13 @@ namespace RDGRBotV2.BotClient.Commands
 
             foreach (var team in round.Teams)
             {
-                var thread = await channel.CreateThreadAsync(team.Name, DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
+                var thread = await channel.CreateThreadAsync(team.Name ?? "Team Thread", DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
                 team.Thread = thread;
 
                 await thread.SendMessageAsync(dropdownBuilder);
                 foreach (var participant in team.Participants)
-                    await thread.AddThreadMemberAsync(participant.Player);
+                    if (participant.Player is not null)
+                        await thread.AddThreadMemberAsync(participant.Player);
             }
             await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round sequence commenced"));
         }
@@ -128,6 +148,12 @@ namespace RDGRBotV2.BotClient.Commands
 
             await context.DeferResponseAsync();
 
+            if (context.Guild is null)
+            {
+                await context.EditResponseAsync("Guild context is null");
+                return;
+            }
+
             // Length kvp
 
             string pings = $"{Player1.Mention} {Player2.Mention}";
@@ -137,21 +163,33 @@ namespace RDGRBotV2.BotClient.Commands
                 Name = "Round", // Placeholder
                 Length = length,
                 OneVOne = true,
-                Teams = [],
+                Teams = new List<Round.Team>(),
                 Pings = pings
             };
             Round.Team team1 = new();
             Round.Team team2 = new();
 
-            List<DiscordMember> players = [await context.Guild.GetMemberAsync(Player1.Id), await context.Guild.GetMemberAsync(Player2.Id)];
+            var member1 = await context.Guild.GetMemberAsync(Player1.Id);
+            var member2 = await context.Guild.GetMemberAsync(Player2.Id);
 
-            string?[] maps1v1 = Maps.MapCollection.Where(m => m.Size == "1v1").Select(m => m.Name).ToArray();
+            if (member1 is null || member2 is null)
+            {
+                await context.EditResponseAsync("One or more players could not be found in the server");
+                return;
+            }
+
+            List<DiscordMember> players = [member1, member2];
+
+            string?[] maps1v1 = Maps.MapCollection?.Where(m => m.Size == "1v1").Select(m => m.Name).ToArray() ?? Array.Empty<string?>();
 
             var options = new List<DiscordSelectComponentOption>();
             foreach (var map in maps1v1)
             {
-                var option = new DiscordSelectComponentOption(map, map);
-                options.Add(option);
+                if (map is not null)
+                {
+                    var option = new DiscordSelectComponentOption(map, map);
+                    options.Add(option);
+                }
             }
 
             DiscordSelectComponent dropdown;
@@ -183,17 +221,19 @@ namespace RDGRBotV2.BotClient.Commands
 
             foreach (var player in players)
             {
-                Round.Team team = new() { Name = player.DisplayName };
+                string displayName = player?.DisplayName ?? "Player";
+                Round.Team team = new() { Name = displayName };
                 Round.Participant participant = new() { Player = player };
                 team.Participants.Add(participant);
 
                 round.Teams.Add(team);
 
-                var thread = await channel.CreateThreadAsync(player.DisplayName, DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
+                var thread = await channel.CreateThreadAsync(displayName, DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
                 team.Thread = thread;
 
                 await thread.SendMessageAsync(dropdownBuilder);
-                await thread.AddThreadMemberAsync(player);
+                if (player is not null)
+                    await thread.AddThreadMemberAsync(player);
             }
 
             _ongoingRounds.TourneyRounds.Add(round);
@@ -207,22 +247,25 @@ namespace RDGRBotV2.BotClient.Commands
         {
             await context.DeleteResponseAsync();
 
-            
 
-            var round = _ongoingRounds.TourneyRounds.Where(t => t.Pings.Contains(Participant.Mention)).FirstOrDefault();
+
+            var round = _ongoingRounds.TourneyRounds?.Where(t => t.Pings != null && t.Pings.Contains(Participant.Mention)).FirstOrDefault();
             if (round is not null)
             {
-                if (round.MsgToDel.Count > 0)
+                if (round.MsgToDel?.Count > 0)
                     foreach (var msg in round.MsgToDel)
                         await msg.DeleteAsync();
 
-                foreach (var team in round.Teams)
+                if (round.Teams is not null)
                 {
-                    if (team.Thread is not null)
-                        await team.Thread.DeleteAsync();
+                    foreach (var team in round.Teams)
+                    {
+                        if (team.Thread is not null)
+                            await team.Thread.DeleteAsync();
+                    }
                 }
 
-                _ongoingRounds.TourneyRounds.Remove(round);
+                _ongoingRounds.TourneyRounds?.Remove(round);
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round has been manually concluded"));
             }
             else

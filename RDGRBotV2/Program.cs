@@ -52,7 +52,7 @@ namespace RDGRBotV2
                     extension.AddCommands([typeof(BasicGroup), typeof(ConfigGroup), typeof(TournamentGroup), typeof(MapManagementGroup)]);
                 }, new CommandsConfiguration()
                 {
-                    DebugGuildId = ConfigManager.Config.Servers.FirstOrDefault().ServerId ?? 0
+                    DebugGuildId = ConfigManager.Config.Servers?.FirstOrDefault()?.ServerId ?? 0
                 });
 
                 DiscordClient client = builder.Build();

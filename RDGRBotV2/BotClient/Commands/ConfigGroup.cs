@@ -14,9 +14,21 @@ namespace RDGRBotV2.BotClient.Commands
         [Description("Initial bot set-up")]
         public static async Task Setup(CommandContext context, [Description("Bot channel")] DiscordChannel botChannel, [Description("Deck channel")] DiscordChannel deckChannel)
         {
+            if (context.Guild is null)
+            {
+                await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("This command must be used in a server"));
+                return;
+            }
+
             await context.DeferResponseAsync();
 
-            var server = ConfigManager.Config.Servers.Where(s => s.ServerId == context.Guild.Id).First();
+            // Get or create server config
+            var server = ConfigManager.Config.Servers.FirstOrDefault(s => s.ServerId == context.Guild.Id);
+            if (server == null)
+            {
+                server = new BotConfig.ServerConfig { ServerId = context.Guild.Id };
+                ConfigManager.Config.Servers.Add(server);
+            }
 
             if (botChannel.Type != DiscordChannelType.Voice && deckChannel.Type != DiscordChannelType.Voice)
             {

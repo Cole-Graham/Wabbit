@@ -7,7 +7,7 @@ namespace RDGRBotV2.Services
     {
         private readonly Random _random = random.Instance;
 
-        public List<string?>? GenerateMapListBo3(bool OvO, List<string> team1Bans, List<string> team2Bans)
+        public List<string>? GenerateMapListBo3(bool OvO, List<string> team1Bans, List<string> team2Bans)
         {
             if (Maps.MapCollection is null || Maps.MapCollection.Count == 0)
             {
@@ -15,7 +15,7 @@ namespace RDGRBotV2.Services
                 return null;
             }
 
-            List<string?> mapList;
+            List<string>? mapList;
             if (OvO)
                 mapList = Maps.MapCollection.Where(m => m.Size == "1v1").Select(m => m.Name).ToList();
             else
@@ -78,9 +78,9 @@ namespace RDGRBotV2.Services
             return shuffled;
         }
 
-        public List<string?>? GenerateMapListBo5(bool OvO, List<string> team1bans, List<string> team2bans)
+        public List<string>? GenerateMapListBo5(bool OvO, List<string> team1bans, List<string> team2bans)
         {
-            if (Maps.MapCollection is null ||  Maps.MapCollection.Count == 0)
+            if (Maps.MapCollection is null || Maps.MapCollection.Count == 0)
             {
                 Console.WriteLine("Map collection is empty");
                 return null;
@@ -89,7 +89,7 @@ namespace RDGRBotV2.Services
             List<string> randomMaps = [];
             int rMIndex;
 
-            List<string?> mapList;
+            List<string>? mapList;
             if (OvO)
                 mapList = Maps.MapCollection.Where(m => m.Size == "1v1").Select(m => m.Name).ToList();
             else
@@ -116,21 +116,21 @@ namespace RDGRBotV2.Services
 
                     randomMaps.Add(team1bans.First());
                     randomMaps.Add(team2bans.First());
-                    
+
                     rMIndex = _random.Next(randomMaps.Count - 1);
                     mtrList.Add(randomMaps[rMIndex]);
 
                     foreach (var map in mtrList)
                         mapList.Remove(map);
-                    
+
                     break;
                 case 2:
                     foreach (var map in same)
                         mapList.Remove(map);
-                    
+
                     break;
             }
-            
+
             var shuffled = mapList.OrderBy(_ => _random.Next()).ToList();
             return shuffled;
         }

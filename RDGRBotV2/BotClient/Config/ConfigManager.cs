@@ -55,8 +55,8 @@ namespace RDGRBotV2.BotClient.Config
                     return;
                 }
 
-                Config = JsonConvert.DeserializeObject<BotConfig>(json);
-                if (Config is null || String.IsNullOrEmpty(Config.Token))
+                Config = JsonConvert.DeserializeObject<BotConfig>(json) ?? new();
+                if (String.IsNullOrEmpty(Config.Token))
                 {
                     await SetToken(false);
                     return;

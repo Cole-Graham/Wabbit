@@ -25,7 +25,7 @@ namespace RDGRBotV2.BotClient.Commands
                 await context.EditResponseAsync("Map collection is empty. Check the file content");
                 return;
             }
-            
+
             if (Maps.MapCollection.Count > 8)
             {
                 int embedCount = (int)Math.Ceiling(Maps.MapCollection.Count / 8.0);
@@ -37,13 +37,13 @@ namespace RDGRBotV2.BotClient.Commands
                     var embed = new DiscordEmbedBuilder();
                     if (i == 0)
                         embed.Title = "Maps";
-                    
+
                     for (int j = 0; j < 8; j++)
                     {
                         if (pos < Maps.MapCollection.Count)
                         {
                             embed.AddField("Name", Maps.MapCollection[pos].Name, true);
-                            embed.AddField("Size", Maps.MapCollection[pos].Size, true);
+                            embed.AddField("Size", Maps.MapCollection[pos].Size ?? "Unknown", true);
 
                             string boolConvert = Maps.MapCollection[pos].IsInRandomPool ? "Yes" : "No";
                             embed.AddField("In random pool", boolConvert, true);
@@ -72,7 +72,7 @@ namespace RDGRBotV2.BotClient.Commands
                 foreach (var map in Maps.MapCollection)
                 {
                     embed.AddField("Name", map.Name, true);
-                    embed.AddField("Size", map.Size, true);
+                    embed.AddField("Size", map.Size ?? "Unknown", true);
 
                     string boolConvert = map.IsInRandomPool ? "Yes" : "No";
                     embed.AddField("In random pool", boolConvert, true);
@@ -83,11 +83,11 @@ namespace RDGRBotV2.BotClient.Commands
 
         [Command("add_map")]
         [Description("Add map to map list")]
-        public async Task AddMap(CommandContext context, [Description("Map name")] string mapName, [Description("Map ID")] string id, [Description("Size")] [SlashChoiceProvider<MapSizeChoiceProvider>] string size, [Description("Include into random map pool?")] bool inRandom, [Description("Map image URL")] string? thumbnail = null)
+        public async Task AddMap(CommandContext context, [Description("Map name")] string mapName, [Description("Map ID")] string id, [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size, [Description("Include into random map pool?")] bool inRandom, [Description("Map image URL")] string? thumbnail = null)
         {
             await context.DeferResponseAsync();
 
-            if (Maps.MapCollection.Where(m => m.Id == id).Any())
+            if (Maps.MapCollection?.Where(m => m.Id == id).Any() == true)
             {
                 await context.EditResponseAsync($"Map with ID {id} already added");
                 return;
@@ -103,6 +103,10 @@ namespace RDGRBotV2.BotClient.Commands
             if (thumbnail is not null)
                 map.Thumbnail = thumbnail;
 
+            if (Maps.MapCollection is null)
+            {
+                Maps.MapCollection = new List<Map>();
+            }
             Maps.MapCollection.Add(map);
 
             (bool saved, string? error) = await Maps.SaveMaps();
@@ -112,7 +116,7 @@ namespace RDGRBotV2.BotClient.Commands
             else
             {
                 await context.EditResponseAsync($"Operation failed: {error}");
-                Maps.MapCollection.Remove(map); // Revert
+                Maps.MapCollection?.Remove(map); // Revert
             }
         }
 
@@ -128,7 +132,7 @@ namespace RDGRBotV2.BotClient.Commands
                 return;
             }
 
-            Map? map = Maps.MapCollection.Where(m => m.Name == mapName).FirstOrDefault();
+            Map? map = Maps.MapCollection?.Where(m => m.Name == mapName).FirstOrDefault();
             if (map == null)
             {
                 await context.EditResponseAsync("Map was not found. Potential choice provider problem or invalid input");
@@ -151,7 +155,7 @@ namespace RDGRBotV2.BotClient.Commands
             else
             {
                 await context.EditResponseAsync($"Operation failed: {error}");
-                Maps.MapCollection.Add(map); // Revert
+                Maps.MapCollection?.Add(map); // Revert
             }
         }
 
@@ -161,14 +165,14 @@ namespace RDGRBotV2.BotClient.Commands
         {
             await context.DeferResponseAsync();
 
-            Map? map = Maps.MapCollection.Where(m => m.Name == mapName).FirstOrDefault();
+            Map? map = Maps.MapCollection?.Where(m => m.Name == mapName).FirstOrDefault();
             if (map == null)
             {
                 await context.EditResponseAsync("Map was not found. Potential choice provider problem or invalid input");
                 return;
             }
 
-            Maps.MapCollection.Remove(map);
+            Maps.MapCollection?.Remove(map);
             (bool saved, string? error) = await Maps.SaveMaps();
 
             if (saved == true)
@@ -176,7 +180,7 @@ namespace RDGRBotV2.BotClient.Commands
             else
             {
                 await context.EditResponseAsync($"Operation failed: {error}");
-                Maps.MapCollection.Add(map); // Revert
+                Maps.MapCollection?.Add(map); // Revert
             }
         }
 
@@ -225,7 +229,7 @@ namespace RDGRBotV2.BotClient.Commands
 
         private class MapNameChoiceProvider : IChoiceProvider
         {
-            private static readonly IEnumerable<DiscordApplicationCommandOptionChoice> names = Maps.MapCollection.Select(m => new DiscordApplicationCommandOptionChoice(m.Name, m.Name));
+            private static readonly IEnumerable<DiscordApplicationCommandOptionChoice> names = Maps.MapCollection?.Select(m => new DiscordApplicationCommandOptionChoice(m.Name, m.Name)) ?? Array.Empty<DiscordApplicationCommandOptionChoice>();
 
             public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter) =>
                 ValueTask.FromResult(names);
@@ -233,7 +237,7 @@ namespace RDGRBotV2.BotClient.Commands
 
         private class MapNameAutoCompleteProvider : IAutoCompleteProvider
         {
-            private static readonly IEnumerable<DiscordAutoCompleteChoice> names = Maps.MapCollection.Select(m => new DiscordAutoCompleteChoice(m.Name, m.Name));
+            private static readonly IEnumerable<DiscordAutoCompleteChoice> names = Maps.MapCollection?.Select(m => new DiscordAutoCompleteChoice(m.Name, m.Name)) ?? Array.Empty<DiscordAutoCompleteChoice>();
 
             public ValueTask<IEnumerable<DiscordAutoCompleteChoice>> AutoCompleteAsync(AutoCompleteContext context) =>
                 ValueTask.FromResult(names);

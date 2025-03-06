@@ -26,7 +26,7 @@ namespace RDGRBotV2.BotClient.Events
             {
                 var user = modal.Interaction.User;
                 var round = _roundsHolder.RegularRounds.Where(p => p.Player1 == user || p.Player2 == user).FirstOrDefault();
-                
+
                 if (round is null)
                 {
                     response = $"{user.Username} is not a participant of this round";
@@ -51,8 +51,8 @@ namespace RDGRBotV2.BotClient.Events
 
                         var options = new List<DiscordSelectComponentOption>()
                         {
-                            new(round.Player1.Username, round.Player1.Username),
-                            new(round.Player2.Username, round.Player2.Username),
+                            new(round.Player1?.Username ?? "Player 1", round.Player1?.Username ?? "Player 1"),
+                            new(round.Player2?.Username ?? "Player 2", round.Player2?.Username ?? "Player 2"),
                         };
 
                         DiscordSelectComponent dropdown = new("1v1_winner_dropdown", "Select a winner", options, false, 1, 1);
@@ -69,15 +69,64 @@ namespace RDGRBotV2.BotClient.Events
             }
             else
             {
-                Round tourneyRound = _roundsHolder.TourneyRounds.Where(r => r.Teams.Any(t => t.Participants.Any(p => p.Player.Id == modal.Interaction.User.Id))).FirstOrDefault();
+                Round? tourneyRound = _roundsHolder.TourneyRounds.Where(r => r is not null && r.Teams is not null &&
+                    r.Teams.Any(t => t is not null && t.Participants is not null &&
+                    t.Participants.Any(p => p is not null && p.Player is not null && p.Player.Id == modal.Interaction.User.Id))).FirstOrDefault();
+                if (tourneyRound is null)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Could not find your tournament round"));
+                    return;
+                }
                 var teams = tourneyRound.Teams;
 
-                var team1 = tourneyRound.Teams.Where(t => t.Participants.Any(p => p.Player.Id == modal.Interaction.User.Id)).First();
-                var team2 = tourneyRound.Teams.First(t => t != team1);
+                var team1 = tourneyRound.Teams?.Where(t => t is not null && t.Participants is not null &&
+                    t.Participants.Any(p => p is not null && p.Player is not null && p.Player.Id == modal.Interaction.User.Id)).FirstOrDefault();
+                if (team1 is null)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Could not find your team"));
+                    return;
+                }
 
-                var participant = team1.Participants.Where(p => p.Player.Id == modal.Interaction.User.Id).First();
+                var team2 = tourneyRound.Teams?.FirstOrDefault(t => t is not null && t != team1);
+                if (team2 is null)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Could not find opponent team"));
+                    return;
+                }
 
-                var server = ConfigManager.Config.Servers.Where(s => s.ServerId == modal.Interaction.GuildId).First();
+                var participant = team1.Participants?.Where(p => p is not null && p.Player is not null && p.Player.Id == modal.Interaction.User.Id).FirstOrDefault();
+                if (participant is null)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Could not find your participant data"));
+                    return;
+                }
+
+                if (ConfigManager.Config?.Servers is null)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Server configuration is missing"));
+                    return;
+                }
+
+                var server = ConfigManager.Config.Servers.FirstOrDefault(s => s is not null && s.ServerId == modal.Interaction.GuildId);
+                if (server is null || !server.BotChannelId.HasValue)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Server or bot channel configuration is missing"));
+                    return;
+                }
+
+                if (modal.Interaction.Guild is null)
+                {
+                    await modal.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder().WithContent("Guild information is missing"));
+                    return;
+                }
+
                 var tChannel = await modal.Interaction.Guild.GetChannelAsync((ulong)server.BotChannelId);
 
                 participant.Deck = deck;
@@ -86,20 +135,27 @@ namespace RDGRBotV2.BotClient.Events
                 response = $"Deck code of {member.DisplayName} has been submitted";
                 tourneyRound.MsgToDel.Add(await sender.SendMessageAsync(tChannel, response));
 
-                if (teams.All(t => t.Participants.All(p => !String.IsNullOrEmpty(p.Deck))))
+                if (teams is not null && teams.All(t => t is not null && t.Participants is not null &&
+                    t.Participants.All(p => p is not null && !string.IsNullOrEmpty(p.Deck))))
                 {
                     tourneyRound.InGame = true;
-                    List<string> maps = tourneyRound.Maps;
+                    List<string> maps = tourneyRound.Maps ?? new List<string>();
 
                     if (tourneyRound.Cycle == 0)
                     {
                         switch (tourneyRound.Length) // To rewrite as suggested?
                         {
                             case 5:
-                                maps = tourneyRound.Maps = _banMap.GenerateMapListBo5(tourneyRound.OneVOne, team1.MapBans, team2.MapBans);
+                                var generatedMaps = _banMap.GenerateMapListBo5(tourneyRound.OneVOne,
+                                    team1.MapBans ?? new List<string>(),
+                                    team2.MapBans ?? new List<string>());
+                                maps = tourneyRound.Maps = generatedMaps ?? new List<string>();
                                 break;
                             default:
-                                maps = tourneyRound.Maps = _banMap.GenerateMapListBo3(tourneyRound.OneVOne, team1.MapBans, team2.MapBans);
+                                var defaultMaps = _banMap.GenerateMapListBo3(tourneyRound.OneVOne,
+                                    team1.MapBans ?? new List<string>(),
+                                    team2.MapBans ?? new List<string>());
+                                maps = tourneyRound.Maps = defaultMaps ?? new List<string>();
                                 break;
                         }
                     }

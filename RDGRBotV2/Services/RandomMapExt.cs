@@ -10,7 +10,12 @@ namespace RDGRBotV2.Services
 
         public DiscordEmbedBuilder GenerateRandomMap()
         {
-            var maps = Maps.MapCollection.Where(m => m.IsInRandomPool == true).ToList();
+            var maps = Maps.MapCollection?.Where(m => m.IsInRandomPool == true).ToList();
+            if (maps is null || maps.Count == 0)
+            {
+                Console.WriteLine("No maps found in the random pool");
+                return new DiscordEmbedBuilder().WithTitle("No maps found in the random pool");
+            }
             int mIndex = _random.Next(maps.Count);
             var map = maps.ElementAt(mIndex);
 
