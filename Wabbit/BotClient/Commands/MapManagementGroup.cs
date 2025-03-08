@@ -7,6 +7,7 @@ using DSharpPlus.Entities;
 using Wabbit.Data;
 using Wabbit.Models;
 using System.ComponentModel;
+using System.IO;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -47,6 +48,21 @@ namespace Wabbit.BotClient.Commands
 
                             string boolConvert = Maps.MapCollection[pos].IsInRandomPool ? "Yes" : "No";
                             embed.AddField("In random pool", boolConvert, true);
+
+                            // Add thumbnail info
+                            if (Maps.MapCollection[pos].Thumbnail != null)
+                            {
+                                string thumbnailInfo = Maps.MapCollection[pos].Thumbnail.StartsWith("http")
+                                    ? "URL"
+                                    : "Local file";
+                                embed.AddField("Thumbnail", thumbnailInfo, true);
+                            }
+                            else
+                            {
+                                embed.AddField("Thumbnail", "None", true);
+                            }
+
+                            pos++;
                         }
                         else
                             break;
@@ -83,7 +99,7 @@ namespace Wabbit.BotClient.Commands
 
         [Command("add_map")]
         [Description("Add map to map list")]
-        public async Task AddMap(CommandContext context, [Description("Map name")] string mapName, [Description("Map ID")] string id, [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size, [Description("Include into random map pool?")] bool inRandom, [Description("Map image URL")] string? thumbnail = null)
+        public async Task AddMap(CommandContext context, [Description("Map name")] string mapName, [Description("Map ID")] string id, [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size, [Description("Include into random map pool?")] bool inRandom, [Description("Map image URL or local path (data/images/filename.png)")] string? thumbnail = null)
         {
             await context.DeferResponseAsync();
 
@@ -100,8 +116,16 @@ namespace Wabbit.BotClient.Commands
                 Size = size,
                 IsInRandomPool = inRandom
             };
+
             if (thumbnail is not null)
+            {
+                // Check if it's a local path and not a URL
+                if (!thumbnail.StartsWith("http") && !File.Exists(thumbnail))
+                {
+                    await context.EditResponseAsync($"Warning: Local file path '{thumbnail}' does not exist. The map will be added, but the thumbnail may not display correctly.");
+                }
                 map.Thumbnail = thumbnail;
+            }
 
             if (Maps.MapCollection is null)
             {

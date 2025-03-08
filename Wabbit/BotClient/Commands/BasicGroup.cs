@@ -4,6 +4,7 @@ using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using System.ComponentModel;
+using System.IO;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -20,7 +21,30 @@ namespace Wabbit.BotClient.Commands
             await context.DeferResponseAsync();
             var embed = _randomMap.GenerateRandomMap();
 
-            await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            // Check if the embed contains a local image path
+            if (embed.Description != null && embed.Description.StartsWith("Local image:"))
+            {
+                // Extract the file path from the description
+                string filePath = embed.Description.Replace("Local image:", "").Trim();
+
+                // Clear the description as we don't want to show it
+                embed.Description = null;
+
+                // Create a webhook builder with the embed
+                var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
+
+                // Add the file as an attachment
+                using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+                webhookBuilder.AddFile(Path.GetFileName(filePath), fileStream);
+
+                // Send the response with the file attachment
+                await context.EditResponseAsync(webhookBuilder);
+            }
+            else
+            {
+                // Regular URL-based image, just send the embed
+                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            }
         }
 
         [Command("regular_1v1")]

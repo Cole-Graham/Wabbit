@@ -24,7 +24,21 @@ namespace Wabbit.Services
                 Title = map.Name,
             };
             if (map.Thumbnail is not null)
-                embed.ImageUrl = map.Thumbnail;
+            {
+                // Check if the thumbnail is a URL or a local file path
+                if (map.Thumbnail.StartsWith("http"))
+                {
+                    // It's a URL, use it directly
+                    embed.ImageUrl = map.Thumbnail;
+                }
+                else
+                {
+                    // For local files, we need to handle this differently
+                    // We'll store the path and handle the file attachment when sending the message
+                    // This will be done in the command handler
+                    embed.Description = $"Local image: {map.Thumbnail}";
+                }
+            }
 
             return embed;
         }
