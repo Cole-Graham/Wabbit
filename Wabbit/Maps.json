@@ -9,7 +9,7 @@
   {
     "Name": "Death Row",
     "Id": "WA_2x3DeathRow1v1_CQ",
-    "Thumbnail": "Data/images/WA_DeathRow_1v1.jpg",
+    "Thumbnail": "Data/images/WA_Death_Row_1v1.jpg",
     "Size": "1v1",
     "IsInRandomPool": true
   },
@@ -39,7 +39,7 @@
     "Id": "WA_3x3_Bowl_Conquest",
     "Thumbnail": "Data/images/WA_Punchbowl_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": false
   },
   {
     "Name": "Urban Frontlines",

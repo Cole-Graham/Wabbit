@@ -12,11 +12,12 @@ using System.IO;
 namespace Wabbit.BotClient.Commands
 {
     [Command("Map_management")]
-    [RequirePermissions(DiscordPermission.Administrator)]
+    [RequirePermissions(DiscordPermission.ManageMessages)]
     public class MapManagementGroup
     {
         [Command("list_maps")]
         [Description("Print a list of registered maps")]
+        [RequirePermissions()]
         public async Task ListMaps(CommandContext context)
         {
             await context.DeferResponseAsync();
