@@ -1,11 +1,11 @@
 ﻿using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
-using RDGRBotV2.BotClient.Config;
-using RDGRBotV2.Misc;
-using RDGRBotV2.Models;
+using Wabbit.BotClient.Config;
+using Wabbit.Misc;
+using Wabbit.Models;
 
-namespace RDGRBotV2.BotClient.Events
+namespace Wabbit.BotClient.Events
 {
     public class Event_Button(OngoingRounds roundsHolder) : IEventHandler<ComponentInteractionCreatedEventArgs>
     {

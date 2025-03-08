@@ -1,12 +1,12 @@
 ﻿using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
-using RDGRBotV2.BotClient.Config;
-using RDGRBotV2.Misc;
-using RDGRBotV2.Models;
-using RDGRBotV2.Services.Interfaces;
+using Wabbit.BotClient.Config;
+using Wabbit.Misc;
+using Wabbit.Models;
+using Wabbit.Services.Interfaces;
 
-namespace RDGRBotV2.BotClient.Events
+namespace Wabbit.BotClient.Events
 {
     public class Event_Modal(OngoingRounds roundsHolder, IRandomMapExt randomMap, IMapBanExt banMap) : IEventHandler<ModalSubmittedEventArgs>
     {

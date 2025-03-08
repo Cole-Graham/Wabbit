@@ -2,12 +2,12 @@
 using DSharpPlus.Commands.Processors.SlashCommands.ArgumentModifiers;
 using DSharpPlus.Commands.Trees;
 using DSharpPlus.Entities;
-using RDGRBotV2.Misc;
-using RDGRBotV2.Data;
-using RDGRBotV2.Models;
+using Wabbit.Misc;
+using Wabbit.Data;
+using Wabbit.Models;
 using System.ComponentModel;
 
-namespace RDGRBotV2.BotClient.Commands
+namespace Wabbit.BotClient.Commands
 {
     [Command("Tournament")]
     public class TournamentGroup(OngoingRounds ongoingRounds)

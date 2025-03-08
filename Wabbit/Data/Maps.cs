@@ -1,7 +1,7 @@
 ﻿using Newtonsoft.Json;
-using RDGRBotV2.Models;
+using Wabbit.Models;
 
-namespace RDGRBotV2.Data
+namespace Wabbit.Data
 {
     public static class Maps
     {
@@ -34,7 +34,7 @@ namespace RDGRBotV2.Data
                 if (!String.IsNullOrEmpty(json))
                 {
                     MapCollection = JsonConvert.DeserializeObject<List<Map>>(json);
-                    
+
                     if (MapCollection is null || MapCollection.Count == 0)
                     {
                         Console.WriteLine("Could not deserialize maps or collection was empty. Make sure you filled all the values");

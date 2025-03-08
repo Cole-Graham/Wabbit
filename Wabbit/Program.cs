@@ -2,15 +2,15 @@
 using DSharpPlus.Commands;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.DependencyInjection;
-using RDGRBotV2.BotClient.Commands;
-using RDGRBotV2.BotClient.Config;
-using RDGRBotV2.BotClient.Events;
-using RDGRBotV2.Misc;
-using RDGRBotV2.Data;
-using RDGRBotV2.Services;
-using RDGRBotV2.Services.Interfaces;
+using Wabbit.BotClient.Commands;
+using Wabbit.BotClient.Config;
+using Wabbit.BotClient.Events;
+using Wabbit.Misc;
+using Wabbit.Data;
+using Wabbit.Services;
+using Wabbit.Services.Interfaces;
 
-namespace RDGRBotV2
+namespace Wabbit
 {
     internal class Program
     {

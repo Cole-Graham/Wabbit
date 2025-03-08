@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace RDGRBotV2.BotClient.Config
+namespace Wabbit.BotClient.Config
 {
     public static class ConfigManager
     {

@@ -1,6 +1,6 @@
-﻿using RDGRBotV2.Services.Interfaces;
+﻿using Wabbit.Services.Interfaces;
 
-namespace RDGRBotV2.Services
+namespace Wabbit.Services
 {
     public class RandomProvider : IRandomProvider
     {

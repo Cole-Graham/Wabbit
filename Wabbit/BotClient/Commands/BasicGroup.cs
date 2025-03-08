@@ -1,11 +1,11 @@
 ﻿using DSharpPlus.Commands;
 using DSharpPlus.Entities;
-using RDGRBotV2.Misc;
-using RDGRBotV2.Models;
-using RDGRBotV2.Services.Interfaces;
+using Wabbit.Misc;
+using Wabbit.Models;
+using Wabbit.Services.Interfaces;
 using System.ComponentModel;
 
-namespace RDGRBotV2.BotClient.Commands
+namespace Wabbit.BotClient.Commands
 {
     [Command("General")]
     public class BasicGroup(IRandomMapExt randomMap, OngoingRounds roundsHolder)

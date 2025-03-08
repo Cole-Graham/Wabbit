@@ -1,8 +1,8 @@
 ﻿using DSharpPlus.Entities;
-using RDGRBotV2.Data;
-using RDGRBotV2.Services.Interfaces;
+using Wabbit.Data;
+using Wabbit.Services.Interfaces;
 
-namespace RDGRBotV2.Services
+namespace Wabbit.Services
 {
     public class RandomMapExt(IRandomProvider random) : IRandomMapExt
     {

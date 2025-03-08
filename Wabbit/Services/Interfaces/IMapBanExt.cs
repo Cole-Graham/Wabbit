@@ -1,4 +1,4 @@
-﻿namespace RDGRBotV2.Services.Interfaces
+﻿namespace Wabbit.Services.Interfaces
 {
     public interface IMapBanExt
     {

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace RDGRBotV2.Services.Interfaces
+namespace Wabbit.Services.Interfaces
 {
     public interface IRandomProvider
     {

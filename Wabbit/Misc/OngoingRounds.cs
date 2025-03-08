@@ -1,6 +1,6 @@
-﻿using RDGRBotV2.Models;
+﻿using Wabbit.Models;
 
-namespace RDGRBotV2.Misc
+namespace Wabbit.Misc
 {
     public class OngoingRounds
     {

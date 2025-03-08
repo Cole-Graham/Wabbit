@@ -1,4 +1,4 @@
-﻿namespace RDGRBotV2.BotClient.Config
+﻿namespace Wabbit.BotClient.Config
 {
     public class BotConfig
     {

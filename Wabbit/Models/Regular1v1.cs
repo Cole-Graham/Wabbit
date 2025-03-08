@@ -1,6 +1,6 @@
 ﻿using DSharpPlus.Entities;
 
-namespace RDGRBotV2.Models
+namespace Wabbit.Models
 {
     public class Regular1v1
     {

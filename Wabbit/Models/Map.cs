@@ -1,4 +1,4 @@
-﻿namespace RDGRBotV2.Models
+﻿namespace Wabbit.Models
 {
     public class Map
     {

@@ -1,10 +1,10 @@
 ﻿using DSharpPlus.Commands;
 using DSharpPlus.Commands.ContextChecks;
 using DSharpPlus.Entities;
-using RDGRBotV2.BotClient.Config;
+using Wabbit.BotClient.Config;
 using System.ComponentModel;
 
-namespace RDGRBotV2.BotClient.Commands
+namespace Wabbit.BotClient.Commands
 {
     [Command("Config")]
     [RequirePermissions(DiscordPermission.Administrator)]
