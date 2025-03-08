@@ -40,7 +40,7 @@ namespace Wabbit.Services
 
                     // Normalize the path to ensure it uses the correct directory separators
                     relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
-                                              .Replace('/', Path.DirectorySeparatorChar);
+                                             .Replace('/', Path.DirectorySeparatorChar);
 
                     // Store the relative path in the description
                     embed.Description = $"Local image: {relativePath}";

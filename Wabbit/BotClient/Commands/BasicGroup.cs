@@ -28,7 +28,9 @@ namespace Wabbit.BotClient.Commands
                 string relativePath = embed.Description.Replace("Local image:", "").Trim();
 
                 // Get the base directory of the application
-                string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                // Instead of using BaseDirectory, we'll use the current directory
+                // and navigate to the project root
+                string baseDirectory = Directory.GetCurrentDirectory();
 
                 // Combine the base directory with the relative path
                 string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
@@ -39,7 +41,7 @@ namespace Wabbit.BotClient.Commands
                 // Check if the file exists
                 if (!File.Exists(fullPath))
                 {
-                    await context.EditResponseAsync($"Error: Image file not found at {relativePath}. Please check the file path.");
+                    await context.EditResponseAsync($"Error: Image file not found at path: {fullPath}. Please check that the file exists and the path is correct in Maps.json.");
                     return;
                 }
 
