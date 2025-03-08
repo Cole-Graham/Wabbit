@@ -52,7 +52,7 @@ namespace Wabbit.BotClient.Commands
                             // Add thumbnail info
                             if (Maps.MapCollection[pos].Thumbnail != null)
                             {
-                                string thumbnailInfo = Maps.MapCollection[pos].Thumbnail.StartsWith("http")
+                                string thumbnailInfo = Maps.MapCollection[pos].Thumbnail?.StartsWith("http") == true
                                     ? "URL"
                                     : "Local file";
                                 embed.AddField("Thumbnail", thumbnailInfo, true);
