@@ -25,7 +25,23 @@ namespace Wabbit.BotClient.Commands
             if (embed.Description != null && embed.Description.StartsWith("Local image:"))
             {
                 // Extract the file path from the description
-                string filePath = embed.Description.Replace("Local image:", "").Trim();
+                string relativePath = embed.Description.Replace("Local image:", "").Trim();
+
+                // Get the base directory of the application
+                string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
+                // Combine the base directory with the relative path
+                string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
+
+                // Log the path for debugging
+                Console.WriteLine($"Attempting to access image at: {fullPath}");
+
+                // Check if the file exists
+                if (!File.Exists(fullPath))
+                {
+                    await context.EditResponseAsync($"Error: Image file not found at {relativePath}. Please check the file path.");
+                    return;
+                }
 
                 // Clear the description as we don't want to show it
                 embed.Description = null;
@@ -34,8 +50,8 @@ namespace Wabbit.BotClient.Commands
                 var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
 
                 // Add the file as an attachment
-                using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
-                webhookBuilder.AddFile(Path.GetFileName(filePath), fileStream);
+                using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+                webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
 
                 // Send the response with the file attachment
                 await context.EditResponseAsync(webhookBuilder);

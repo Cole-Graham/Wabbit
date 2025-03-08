@@ -1,6 +1,7 @@
 ﻿using DSharpPlus.Entities;
 using Wabbit.Data;
 using Wabbit.Services.Interfaces;
+using System.IO;
 
 namespace Wabbit.Services
 {
@@ -33,10 +34,19 @@ namespace Wabbit.Services
                 }
                 else
                 {
-                    // For local files, we need to handle this differently
+                    // For local files, ensure we're using a relative path
                     // We'll store the path and handle the file attachment when sending the message
-                    // This will be done in the command handler
-                    embed.Description = $"Local image: {map.Thumbnail}";
+                    string relativePath = map.Thumbnail;
+
+                    // Normalize the path to ensure it uses the correct directory separators
+                    relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
+                                              .Replace('/', Path.DirectorySeparatorChar);
+
+                    // Store the relative path in the description
+                    embed.Description = $"Local image: {relativePath}";
+
+                    // Log for debugging
+                    Console.WriteLine($"Using relative path for image: {relativePath}");
                 }
             }
 
