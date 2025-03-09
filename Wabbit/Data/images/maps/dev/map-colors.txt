@@ -1,0 +1,7 @@
+blue deployment outline 0, 195, 255
+blue deployment         0, 101, 255
+
+red deployment outline 255, 20, 20
+red deployment         206, 60, 47
+
+deployment layer additive blend mode, opacity 75/255

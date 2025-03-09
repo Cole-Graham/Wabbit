@@ -88,8 +88,8 @@ namespace Wabbit.BotClient.Commands
         [Description("Print a list of registered maps")]
         public async Task ListMaps(
             CommandContext context,
-            [Description("Filter by size (e.g., 1v1, 2v2)")][Optional][SlashChoiceProvider<MapSizeChoiceProvider>] string? size,
-            [Description("Show only maps in random pool")][Optional] bool? inRandomPool)
+            [Description("Filter by size (e.g., 1v1 to 4v4, or 'all' for all sizes")][SlashChoiceProvider<MapSizeChoiceProvider>] string? size = "all",
+            [Description("Show only maps in random pool")] bool? inRandomPool = null)
         {
             await context.DeferResponseAsync();
 
@@ -101,7 +101,8 @@ namespace Wabbit.BotClient.Commands
 
             // Filter maps by size if specified
             var filteredMaps = Maps.MapCollection;
-            if (!string.IsNullOrEmpty(size))
+
+            if (!string.IsNullOrEmpty(size) && size != "all")
             {
                 filteredMaps = filteredMaps.Where(m =>
                     string.Equals(m.Size, size, StringComparison.OrdinalIgnoreCase)).ToList();
