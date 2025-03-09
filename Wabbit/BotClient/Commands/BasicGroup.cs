@@ -48,34 +48,18 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Clear the footer as we don't want to show it
+                // Clear the footer so it doesn't show in the message
                 embed.Footer = null;
 
-                try
-                {
-                    // Create a new webhook builder with content for debugging
-                    var webhookBuilder = new DiscordWebhookBuilder()
-                        .WithContent($"Debug: Attaching file {Path.GetFileName(fullPath)} from {fullPath}");
+                // Create a webhook builder with the embed
+                var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
 
-                    // Add the file as an attachment
-                    using (var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
-                    {
-                        string fileName = Path.GetFileName(fullPath);
-                        webhookBuilder.AddFile(fileName, fileStream);
+                // Add the file as an attachment
+                using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+                webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
 
-                        // Then add the embed
-                        webhookBuilder.AddEmbed(embed);
-
-                        // Send the response
-                        await context.EditResponseAsync(webhookBuilder);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // Log any exceptions
-                    Console.WriteLine($"Error attaching file: {ex.Message}");
-                    await context.EditResponseAsync($"Error attaching file: {ex.Message}");
-                }
+                // Send the response with the file attachment
+                await context.EditResponseAsync(webhookBuilder);
             }
             else
             {
