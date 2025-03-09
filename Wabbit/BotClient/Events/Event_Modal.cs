@@ -234,16 +234,88 @@ namespace Wabbit.BotClient.Events
 
                     var options = new List<DiscordSelectComponentOption>() { new($"{teams.First().Name}", $"{teams.First().Name}"), new($"{teams.Last().Name}", $"{teams.Last().Name}") };
                     var dropdown = new DiscordSelectComponent("winner_dropdown", "Select a winner", options, false, 1, 1);
-                    var builder = new DiscordMessageBuilder()
-                        .WithContent($"{tourneyRound.Pings} \nAll decks have been submitted. \nThe map for Game {tourneyRound.Cycle + 1} is: **{maps[tourneyRound.Cycle]}** \nSelect a winner below after the game")
-                        .AddComponents(dropdown);
+
+                    // Get the current map name from the map list
+                    string currentMapName = maps[tourneyRound.Cycle];
+
+                    // Find the actual map object from Maps.MapCollection
+                    var currentMap = Data.Maps.MapCollection?.FirstOrDefault(m => m.Name == currentMapName);
+
+                    // Create embed with map details
+                    var embed = new DiscordEmbedBuilder
+                    {
+                        Title = currentMapName
+                    };
+
+                    // Build message content
+                    string messageContent = $"{tourneyRound.Pings} \nAll decks have been submitted. \nThe map for Game {tourneyRound.Cycle + 1} is: **{currentMapName}**\nSelect a winner below after the game";
 
                     await tChannel.DeleteMessagesAsync(tourneyRound.MsgToDel);
                     tourneyRound.MsgToDel.Clear();
 
-                    await sender.SendMessageAsync(tChannel, builder);
+                    // Handle map thumbnail if available
+                    if (currentMap?.Thumbnail != null)
+                    {
+                        if (currentMap.Thumbnail.StartsWith("http"))
+                        {
+                            // URL thumbnail - use directly
+                            embed.ImageUrl = currentMap.Thumbnail;
+                            var builder = new DiscordMessageBuilder()
+                                .WithContent(messageContent)
+                                .AddEmbed(embed)
+                                .AddComponents(dropdown);
 
+                            await sender.SendMessageAsync(tChannel, builder);
+                        }
+                        else
+                        {
+                            // Local file thumbnail - attach it
+                            string relativePath = currentMap.Thumbnail;
+                            relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
+                                                   .Replace('/', Path.DirectorySeparatorChar);
 
+                            string baseDirectory = Directory.GetCurrentDirectory();
+                            string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
+
+                            Console.WriteLine($"Attempting to access tournament map image at: {fullPath}");
+
+                            if (!File.Exists(fullPath))
+                            {
+                                // File not found, send without image
+                                var builder = new DiscordMessageBuilder()
+                                    .WithContent(messageContent)
+                                    .AddEmbed(embed)
+                                    .AddComponents(dropdown);
+
+                                await sender.SendMessageAsync(tChannel, builder);
+                            }
+                            else
+                            {
+                                // Create a message with file attachment
+                                var builder = new DiscordMessageBuilder()
+                                    .WithContent(messageContent)
+                                    .AddEmbed(embed)
+                                    .AddComponents(dropdown);
+
+                                using (var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
+                                {
+                                    string fileName = Path.GetFileName(fullPath);
+                                    builder.AddFile(fileName, fileStream);
+                                    await sender.SendMessageAsync(tChannel, builder);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // No thumbnail available
+                        var builder = new DiscordMessageBuilder()
+                            .WithContent(messageContent)
+                            .AddEmbed(embed)
+                            .AddComponents(dropdown);
+
+                        await sender.SendMessageAsync(tChannel, builder);
+                    }
                 }
                 var tFollowup = new DiscordFollowupMessageBuilder().WithContent(response); // To edit?
                 await modal.Interaction.CreateFollowupMessageAsync(tFollowup);
