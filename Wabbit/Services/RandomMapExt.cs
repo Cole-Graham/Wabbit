@@ -2,6 +2,7 @@
 using Wabbit.Data;
 using Wabbit.Services.Interfaces;
 using System.IO;
+using Wabbit.Models;
 
 namespace Wabbit.Services
 {
@@ -9,16 +10,25 @@ namespace Wabbit.Services
     {
         private readonly Random _random = random.Instance;
 
-        public DiscordEmbedBuilder GenerateRandomMap()
+        public Map GetRandomMap()
         {
             var maps = Maps.MapCollection?.Where(m => m.IsInRandomPool == true).ToList();
             if (maps is null || maps.Count == 0)
             {
                 Console.WriteLine("No maps found in the random pool");
-                return new DiscordEmbedBuilder().WithTitle("No maps found in the random pool");
+                return null;
             }
             int mIndex = _random.Next(maps.Count);
-            var map = maps.ElementAt(mIndex);
+            return maps.ElementAt(mIndex);
+        }
+
+        public DiscordEmbedBuilder GenerateRandomMap()
+        {
+            var map = GetRandomMap();
+            if (map == null)
+            {
+                return new DiscordEmbedBuilder().WithTitle("No maps found in the random pool");
+            }
 
             var embed = new DiscordEmbedBuilder
             {

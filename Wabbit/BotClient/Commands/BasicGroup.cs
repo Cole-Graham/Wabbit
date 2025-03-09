@@ -24,46 +24,67 @@ namespace Wabbit.BotClient.Commands
         public async Task Random1v1(CommandContext context)
         {
             await context.DeferResponseAsync();
-            var embed = _randomMap.GenerateRandomMap();
 
-            // Check if the embed contains a local image path in the footer
-            if (embed.Footer != null && embed.Footer.Text != null && embed.Footer.Text.StartsWith("LOCAL_THUMBNAIL:"))
+            // Get the random map directly
+            var map = _randomMap.GetRandomMap();
+            if (map == null)
             {
-                // Extract the file path from the footer
-                string relativePath = embed.Footer.Text.Replace("LOCAL_THUMBNAIL:", "").Trim();
+                await context.EditResponseAsync("No maps found in the random pool");
+                return;
+            }
 
-                // Get the base directory of the application
-                string baseDirectory = Directory.GetCurrentDirectory();
+            // Create an embed with the map details
+            var embed = new DiscordEmbedBuilder
+            {
+                Title = map.Name
+            };
 
-                // Combine the base directory with the relative path
-                string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
-
-                // Log the path for debugging
-                Console.WriteLine($"Attempting to access image at: {fullPath}");
-
-                // Check if the file exists
-                if (!File.Exists(fullPath))
+            // Handle the thumbnail
+            if (map.Thumbnail != null)
+            {
+                if (map.Thumbnail.StartsWith("http"))
                 {
-                    await context.EditResponseAsync($"Error: Image file not found at path: {fullPath}. Please check that the file exists and the path is correct in Maps.json.");
-                    return;
+                    // It's a URL, use it directly
+                    embed.ImageUrl = map.Thumbnail;
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
                 }
+                else
+                {
+                    // It's a local file, we need to attach it
+                    string relativePath = map.Thumbnail;
 
-                // Clear the footer so it doesn't show in the message
-                embed.Footer = null;
+                    // Normalize the path
+                    relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
+                                             .Replace('/', Path.DirectorySeparatorChar);
 
-                // Create a webhook builder with the embed
-                var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
+                    // Get the base directory and full path
+                    string baseDirectory = Directory.GetCurrentDirectory();
+                    string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
 
-                // Add the file as an attachment
-                using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-                webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
+                    Console.WriteLine($"Attempting to access image at: {fullPath}");
 
-                // Send the response with the file attachment
-                await context.EditResponseAsync(webhookBuilder);
+                    if (!File.Exists(fullPath))
+                    {
+                        // Image not found, but we can still show the map details
+                        embed.AddField("Thumbnail", "Image file not found", true);
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                        return;
+                    }
+
+                    // Create a webhook builder with the embed
+                    var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
+
+                    // Add the file as an attachment
+                    using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+                    webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
+
+                    // Send the response with the file attachment
+                    await context.EditResponseAsync(webhookBuilder);
+                }
             }
             else
             {
-                // Regular URL-based image, just send the embed
+                // No thumbnail
                 await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
             }
         }
