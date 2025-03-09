@@ -5,6 +5,7 @@ using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
+using System.IO;
 
 namespace Wabbit.BotClient.Events
 {
@@ -47,23 +48,94 @@ namespace Wabbit.BotClient.Events
 
                     if (!String.IsNullOrEmpty(round.Deck1) && !String.IsNullOrEmpty(round.Deck2))
                     {
-                        var embed = _randomMap.GenerateRandomMap();
-
+                        // Create dropdown for winner selection
                         var options = new List<DiscordSelectComponentOption>()
                         {
                             new(round.Player1?.Username ?? "Player 1", round.Player1?.Username ?? "Player 1"),
                             new(round.Player2?.Username ?? "Player 2", round.Player2?.Username ?? "Player 2"),
                         };
-
                         DiscordSelectComponent dropdown = new("1v1_winner_dropdown", "Select a winner", options, false, 1, 1);
 
+                        // Clear previous messages
                         var channel = modal.Interaction.Channel;
                         foreach (var message in round.Messages)
                             await channel.DeleteMessageAsync(message);
                         round.Messages.Clear();
 
-                        var followup = new DiscordFollowupMessageBuilder().WithContent("Decks have been submitted").AddEmbed(embed).AddComponents(dropdown);
-                        round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
+                        // Get the random map
+                        var map = _randomMap.GetRandomMap();
+                        if (map == null)
+                        {
+                            var followup = new DiscordFollowupMessageBuilder()
+                                .WithContent("Decks have been submitted, but no maps found in the random pool")
+                                .AddComponents(dropdown);
+                            round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
+                            return;
+                        }
+
+                        // Create the embed
+                        var embed = new DiscordEmbedBuilder { Title = map.Name };
+
+                        // Handle thumbnail
+                        if (map.Thumbnail != null)
+                        {
+                            if (map.Thumbnail.StartsWith("http"))
+                            {
+                                // URL thumbnail
+                                embed.ImageUrl = map.Thumbnail;
+                                var followup = new DiscordFollowupMessageBuilder()
+                                    .WithContent("Decks have been submitted")
+                                    .AddEmbed(embed)
+                                    .AddComponents(dropdown);
+                                round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
+                            }
+                            else
+                            {
+                                // Local file thumbnail
+                                string relativePath = map.Thumbnail;
+                                relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
+                                                       .Replace('/', Path.DirectorySeparatorChar);
+
+                                string baseDirectory = Directory.GetCurrentDirectory();
+                                string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
+
+                                Console.WriteLine($"Attempting to access image at: {fullPath}");
+
+                                if (!File.Exists(fullPath))
+                                {
+                                    // File not found, send without image
+                                    var followup = new DiscordFollowupMessageBuilder()
+                                        .WithContent("Decks have been submitted")
+                                        .AddEmbed(embed)
+                                        .AddComponents(dropdown);
+                                    round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
+                                }
+                                else
+                                {
+                                    // Create a follower with file attachment
+                                    var fileBuilder = new DiscordFollowupMessageBuilder()
+                                        .WithContent("Decks have been submitted")
+                                        .AddEmbed(embed)
+                                        .AddComponents(dropdown);
+
+                                    using (var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
+                                    {
+                                        string fileName = Path.GetFileName(fullPath);
+                                        fileBuilder.AddFile(fileName, fileStream);
+                                        round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(fileBuilder));
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // No thumbnail
+                            var followup = new DiscordFollowupMessageBuilder()
+                                .WithContent("Decks have been submitted")
+                                .AddEmbed(embed)
+                                .AddComponents(dropdown);
+                            round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
+                        }
                     }
                 }
             }
