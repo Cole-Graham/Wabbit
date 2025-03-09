@@ -10,7 +10,7 @@ namespace Wabbit.Services
     {
         private readonly Random _random = random.Instance;
 
-        public Map GetRandomMap()
+        public Map? GetRandomMap()
         {
             var maps = Maps.MapCollection?.Where(m => m.IsInRandomPool == true).ToList();
             if (maps is null || maps.Count == 0)

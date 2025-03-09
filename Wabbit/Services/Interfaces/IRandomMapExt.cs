@@ -6,6 +6,6 @@ namespace Wabbit.Services.Interfaces
     public interface IRandomMapExt
     {
         DiscordEmbedBuilder GenerateRandomMap();
-        Map GetRandomMap();
+        Map? GetRandomMap();
     }
 }
