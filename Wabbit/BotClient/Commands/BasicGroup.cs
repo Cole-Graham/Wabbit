@@ -26,15 +26,13 @@ namespace Wabbit.BotClient.Commands
             await context.DeferResponseAsync();
             var embed = _randomMap.GenerateRandomMap();
 
-            // Check if the embed contains a local image path
-            if (embed.Description != null && embed.Description.StartsWith("Local image:"))
+            // Check if the embed contains a local image path in the footer
+            if (embed.Footer != null && embed.Footer.Text != null && embed.Footer.Text.StartsWith("LOCAL_THUMBNAIL:"))
             {
-                // Extract the file path from the description
-                string relativePath = embed.Description.Replace("Local image:", "").Trim();
+                // Extract the file path from the footer
+                string relativePath = embed.Footer.Text.Replace("LOCAL_THUMBNAIL:", "").Trim();
 
                 // Get the base directory of the application
-                // Instead of using BaseDirectory, we'll use the current directory
-                // and navigate to the project root
                 string baseDirectory = Directory.GetCurrentDirectory();
 
                 // Combine the base directory with the relative path
@@ -50,8 +48,8 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Clear the description as we don't want to show it
-                embed.Description = null;
+                // Clear the footer as we don't want to show it
+                embed.Footer = null;
 
                 // Create a webhook builder with the embed
                 var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);

@@ -42,8 +42,11 @@ namespace Wabbit.Services
                     relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
                                              .Replace('/', Path.DirectorySeparatorChar);
 
-                    // Store the relative path in the description
-                    embed.Description = $"Local image: {relativePath}";
+                    // Store the relative path in a footer to be used when sending the message
+                    embed.Footer = new DiscordEmbedBuilder.EmbedFooter
+                    {
+                        Text = $"LOCAL_THUMBNAIL:{relativePath}"
+                    };
 
                     // Log for debugging
                     Console.WriteLine($"Using relative path for image: {relativePath}");
