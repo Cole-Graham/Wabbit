@@ -51,15 +51,21 @@ namespace Wabbit.BotClient.Commands
                 // Clear the footer as we don't want to show it
                 embed.Footer = null;
 
-                // Create a webhook builder with the embed
-                var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
+                // Create a new webhook builder
+                var webhookBuilder = new DiscordWebhookBuilder();
 
-                // Add the file as an attachment
-                using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-                webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
+                // Add the file first
+                using (var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
+                {
+                    string fileName = Path.GetFileName(fullPath);
+                    webhookBuilder.AddFile(fileName, fileStream);
 
-                // Send the response with the file attachment
-                await context.EditResponseAsync(webhookBuilder);
+                    // Then add the embed
+                    webhookBuilder.AddEmbed(embed);
+
+                    // Send the response with both the file and embed
+                    await context.EditResponseAsync(webhookBuilder);
+                }
             }
             else
             {
