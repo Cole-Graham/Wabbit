@@ -155,48 +155,56 @@ namespace Wabbit.Misc
             {
                 Color = TextColor,
                 TextSize = 16,
-                IsAntialias = true
+                IsAntialias = true,
+                TextAlign = SKTextAlign.Center
             };
-
-            // Column widths (adjust as needed)
-            int nameWidth = width / 2;
-            int statsWidth = (width - nameWidth) / 5;
 
             foreach (var group in tournament.Groups)
             {
                 // Draw group header
-                canvas.DrawRect(Padding, yOffset, width - (2 * Padding), RowHeight, headerPaint);
-                textPaint.TextAlign = SKTextAlign.Left;
-                textPaint.TextSize = 18;
-                canvas.DrawText(group.Name, Padding + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
+                canvas.DrawRect(Padding, yOffset, width - (Padding * 2), RowHeight, headerPaint);
+                canvas.DrawText(group.Name, width / 2, yOffset + RowHeight - CellPadding, textPaint);
                 yOffset += RowHeight;
 
-                // Draw column headers
-                textPaint.TextSize = 14;
+                // Calculate column widths
+                int nameWidth = (int)(width * 0.35); // Reduced from 0.5 to 0.35
+                int statsWidth = (int)(width * 0.125);
+                int statusWidth = (int)(width * 0.15);
+
+                // Draw header row
                 int xPos = Padding;
+
+                // Player column header
                 canvas.DrawRect(xPos, yOffset, nameWidth, RowHeight, borderPaint);
-                canvas.DrawText("Player", xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
+                textPaint.TextAlign = SKTextAlign.Center;
+                textPaint.TextSize = 14;
+                canvas.DrawText("Player", xPos + (nameWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += nameWidth;
 
+                // Wins column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("W", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
+                // Draws column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("D", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
+                // Losses column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("L", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
+                // Points column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("P", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
+                // Status column header
+                canvas.DrawRect(xPos, yOffset, statusWidth, RowHeight, borderPaint);
                 textPaint.TextSize = 12;
-                canvas.DrawText("Status", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                canvas.DrawText("Status", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 yOffset += RowHeight;
 
                 // Sort participants by points
@@ -260,12 +268,22 @@ namespace Wabbit.Misc
                     canvas.DrawText(participant.Points.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     xPos += statsWidth;
 
-                    // Status (advanced to playoffs)
-                    canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                    textPaint.TextSize = 12;
+                    // Status (qualified for playoffs, etc)
+                    canvas.DrawRect(xPos, yOffset, statusWidth, RowHeight, borderPaint);
                     if (participant.AdvancedToPlayoffs)
                     {
-                        canvas.DrawText("Advanced", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                        textPaint.Color = WinColor;
+                        canvas.DrawText("Qualified", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                    }
+                    else if (group.IsComplete)
+                    {
+                        textPaint.Color = LossColor;
+                        canvas.DrawText("Eliminated", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                    }
+                    else
+                    {
+                        textPaint.Color = TextColor;
+                        canvas.DrawText("Pending", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     }
 
                     yOffset += RowHeight;
