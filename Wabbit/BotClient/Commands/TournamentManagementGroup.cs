@@ -568,7 +568,7 @@ namespace Wabbit.BotClient.Commands
                 _ongoingRounds.TournamentSignups.Add(signup);
 
                 // 2. Add test participants to the signup
-                var members = await GetTestParticipants(context, participantCount);
+                var members = GetTestParticipants(context, participantCount);
                 if (members.Count < 2)
                 {
                     await context.EditResponseAsync("Failed to get enough test participants. Need at least 2.");
@@ -745,35 +745,24 @@ namespace Wabbit.BotClient.Commands
             }
         }
 
-        private async Task<List<DiscordMember>> GetTestParticipants(CommandContext context, int count)
+        private List<DiscordMember> GetTestParticipants(CommandContext context, int count)
         {
-            // If the context guild is null, we can't get members
-            if (context.Guild is null)
-                return new List<DiscordMember>();
+            // Create mock participants instead of getting real server members
+            var mockParticipants = new List<DiscordMember>();
 
-            // Add the command caller
-            var result = new List<DiscordMember>
+            for (int i = 0; i < count; i++)
             {
-                await context.Guild.GetMemberAsync(context.User.Id)
-            };
+                var mockPlayer = new MockDiscordMember
+                {
+                    UserId = 100000000000000000 + (ulong)i,
+                    UserName = $"TestPlayer{i + 1}"
+                };
 
-            // Get other random members from the server
-            var allMembers = new List<DiscordMember>();
-            await foreach (var member in context.Guild.GetAllMembersAsync())
-            {
-                allMembers.Add(member);
+                // Add the mock player to the list (using the explicit cast operator)
+                mockParticipants.Add((DiscordMember)mockPlayer);
             }
 
-            var otherMembers = allMembers
-                .Where(m => m.Id != context.User.Id && !m.IsBot)
-                .OrderBy(_ => Guid.NewGuid()) // Randomize order
-                .Take(count - 1)
-                .ToList();
-
-            result.AddRange(otherMembers);
-
-            // If we couldn't get enough real members, return what we have
-            return result;
+            return mockParticipants;
         }
 
         private async Task SimulateGroupMatches(CommandContext context, Tournament tournament)
