@@ -12,6 +12,47 @@ namespace Wabbit.Misc
         private readonly List<Tournament> _activeTournaments = [];
         private readonly OngoingRounds _ongoingRounds;
 
+        // Helper methods for handling object/DiscordMember properties
+        private string GetPlayerDisplayName(object? player)
+        {
+            if (player is DSharpPlus.Entities.DiscordMember member)
+                return member.DisplayName;
+            return player?.ToString() ?? "Unknown";
+        }
+
+        private ulong? GetPlayerId(object? player)
+        {
+            if (player is DSharpPlus.Entities.DiscordMember member)
+                return member.Id;
+            return null;
+        }
+
+        private string GetPlayerMention(object? player)
+        {
+            if (player is DSharpPlus.Entities.DiscordMember member)
+                return member.Mention;
+            return GetPlayerDisplayName(player);
+        }
+
+        private bool ComparePlayerIds(object? player1, object? player2)
+        {
+            // If both are DiscordMember, compare IDs
+            if (player1 is DSharpPlus.Entities.DiscordMember member1 &&
+                player2 is DSharpPlus.Entities.DiscordMember member2)
+                return member1.Id == member2.Id;
+
+            // Otherwise compare by reference or ToString
+            if (ReferenceEquals(player1, player2))
+                return true;
+
+            return player1?.ToString() == player2?.ToString();
+        }
+
+        private DSharpPlus.Entities.DiscordMember? ConvertToDiscordMember(object? player)
+        {
+            return player as DSharpPlus.Entities.DiscordMember;
+        }
+
         public TournamentManager(OngoingRounds ongoingRounds)
         {
             _ongoingRounds = ongoingRounds;
@@ -82,7 +123,7 @@ namespace Wabbit.Misc
                     {
                         var match = new Tournament.Match
                         {
-                            Name = $"{group.Participants[i].Player?.DisplayName ?? "Unknown"} vs {group.Participants[j].Player?.DisplayName ?? "Unknown"}",
+                            Name = $"{GetPlayerDisplayName(group.Participants[i].Player)} vs {GetPlayerDisplayName(group.Participants[j].Player)}",
                             Type = MatchType.GroupStage,
                             Participants = new List<Tournament.MatchParticipant>
                             {
@@ -124,7 +165,8 @@ namespace Wabbit.Misc
                 if (p is null || p.Player is null)
                     continue;
 
-                if (p.Player.Id == mainWinnerId)
+                var playerId = GetPlayerId(p.Player);
+                if (playerId.HasValue && playerId.Value == mainWinnerId)
                 {
                     winnerParticipant = p;
                     break;
@@ -161,8 +203,14 @@ namespace Wabbit.Misc
             if (match.Type == MatchType.GroupStage && tournament.Groups != null)
             {
                 // Store ID once
-                ulong groupWinnerId = winner.Id;
-                ulong? groupLoserId = loserParticipant?.Player?.Id;
+                ulong? groupWinnerIdNullable = GetPlayerId(winner);
+                if (!groupWinnerIdNullable.HasValue)
+                {
+                    Console.WriteLine("Error: Winner has no valid ID");
+                    return;
+                }
+                ulong groupWinnerId = groupWinnerIdNullable.Value;
+                ulong? groupLoserId = loserParticipant?.Player != null ? GetPlayerId(loserParticipant.Player) : null;
 
                 foreach (var group in tournament.Groups)
                 {
@@ -191,7 +239,11 @@ namespace Wabbit.Misc
                             if (p is null || p.Player is null)
                                 continue;
 
-                            if (p.Player.Id == groupWinnerId)
+                            if (p.Player is null)
+                                continue;
+
+                            var pPlayerId = GetPlayerId(p.Player);
+                            if (pPlayerId.HasValue && pPlayerId.Value == groupWinnerId)
                             {
                                 groupWinner = p;
                                 break;
@@ -206,7 +258,11 @@ namespace Wabbit.Misc
                                 if (p is null || p.Player is null)
                                     continue;
 
-                                if (p.Player.Id == groupLoserId.Value)
+                                if (p.Player is null)
+                                    continue;
+
+                                var pPlayerId = GetPlayerId(p.Player);
+                                if (pPlayerId.HasValue && pPlayerId.Value == groupLoserId.Value)
                                 {
                                     groupLoser = p;
                                     break;
@@ -522,7 +578,7 @@ namespace Wabbit.Misc
                 Length = match.BestOf,
                 OneVOne = true,
                 Teams = new List<Round.Team>(),
-                Pings = $"{player1.Mention} {player2.Mention}"
+                Pings = $"{GetPlayerMention(player1)} {GetPlayerMention(player2)}"
             };
 
             // Create teams (in this case individual players)
@@ -530,9 +586,18 @@ namespace Wabbit.Misc
             {
                 if (participant is not null && participant.Player is not null)
                 {
-                    var team = new Round.Team { Name = participant.Player.DisplayName };
-                    var roundParticipant = new Round.Participant { Player = participant.Player };
-                    team.Participants.Add(roundParticipant);
+                    var team = new Round.Team { Name = GetPlayerDisplayName(participant.Player) };
+                    var discordMember = ConvertToDiscordMember(participant.Player);
+                    if (discordMember is not null)
+                    {
+                        var roundParticipant = new Round.Participant { Player = discordMember };
+                        team.Participants.Add(roundParticipant);
+                    }
+                    else
+                    {
+                        // Fallback for non-DiscordMember players in test scenarios
+                        Console.WriteLine("[DEBUG] Skipping non-DiscordMember player in round creation");
+                    }
                     round.Teams.Add(team);
                 }
             }
@@ -595,7 +660,8 @@ namespace Wabbit.Misc
                         if (p is null || p.Player is null)
                             continue;
 
-                        if (p.Player.Id == playoffWinnerId)
+                        var playerIdValue = GetPlayerId(p.Player);
+                        if (playerIdValue.HasValue && playerIdValue.Value == playoffWinnerId)
                         {
                             winnerParticipant = p;
                             break;
