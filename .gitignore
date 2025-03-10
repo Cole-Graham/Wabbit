@@ -5,6 +5,7 @@
 
 # Config files
 ConfigFile.json
+.env
 
 # User-specific files
 *.rsuser

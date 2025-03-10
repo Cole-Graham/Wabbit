@@ -22,7 +22,10 @@ namespace Wabbit
 
                 if (ConfigManager.Config is null || ConfigManager.Config.Token is null)
                 {
-                    Console.WriteLine("Token is not obtained, application will be closed");
+                    Console.WriteLine("Discord bot token is not configured. Please either:");
+                    Console.WriteLine("1. Create a .env file with WABBIT_BOT_TOKEN=\"your-token-here\"");
+                    Console.WriteLine("2. Run the application again and enter the token when prompted");
+                    Console.WriteLine("The token will be stored in the .env file which is automatically added to .gitignore");
                     Environment.Exit(0);
                 }
 
