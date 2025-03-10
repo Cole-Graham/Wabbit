@@ -88,16 +88,76 @@ namespace Wabbit.Misc
                 if (File.Exists(_signupsFilePath))
                 {
                     string json = File.ReadAllText(_signupsFilePath);
-                    var options = new JsonSerializerOptions
-                    {
-                        ReferenceHandler = ReferenceHandler.Preserve
-                    };
-                    var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(json, options);
 
-                    if (signups != null)
+                    // Try to load signups, handling possibility of different formats
+                    try
                     {
-                        Console.WriteLine($"Loaded {signups.Count} signups from file");
-                        _ongoingRounds.TournamentSignups = signups;
+                        var options = new JsonSerializerOptions
+                        {
+                            ReferenceHandler = ReferenceHandler.Preserve
+                        };
+
+                        // Try to deserialize as anonymous type first (new format)
+                        using JsonDocument doc = JsonDocument.Parse(json);
+
+                        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                        {
+                            List<TournamentSignup> signups = new();
+
+                            foreach (JsonElement element in doc.RootElement.EnumerateArray())
+                            {
+                                var signup = new TournamentSignup
+                                {
+                                    Name = element.GetProperty("Name").GetString() ?? "",
+                                    IsOpen = element.TryGetProperty("IsOpen", out var isOpen) && isOpen.GetBoolean(),
+                                    Format = element.TryGetProperty("Format", out var format) ?
+                                        Enum.Parse<TournamentFormat>(format.GetString() ?? "GroupStageWithPlayoffs") :
+                                        TournamentFormat.GroupStageWithPlayoffs
+                                };
+
+                                if (element.TryGetProperty("CreatedAt", out var createdAt))
+                                {
+                                    signup.CreatedAt = createdAt.GetDateTime();
+                                }
+
+                                if (element.TryGetProperty("ScheduledStartTime", out var startTime) && startTime.ValueKind != JsonValueKind.Null)
+                                {
+                                    signup.ScheduledStartTime = startTime.GetDateTime();
+                                }
+
+                                if (element.TryGetProperty("SignupChannelId", out var channelId))
+                                {
+                                    signup.SignupChannelId = channelId.GetUInt64();
+                                }
+
+                                if (element.TryGetProperty("MessageId", out var messageId))
+                                {
+                                    signup.MessageId = messageId.GetUInt64();
+                                }
+
+                                // Participants will need to be reloaded when accessed
+
+                                signups.Add(signup);
+                            }
+
+                            Console.WriteLine($"Loaded {signups.Count} signups from file (simplified format)");
+                            _ongoingRounds.TournamentSignups = signups;
+                        }
+                        else
+                        {
+                            // Try original format as fallback
+                            var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(json, options);
+                            if (signups != null)
+                            {
+                                Console.WriteLine($"Loaded {signups.Count} signups from file (original format)");
+                                _ongoingRounds.TournamentSignups = signups;
+                            }
+                        }
+                    }
+                    catch (Exception parseEx)
+                    {
+                        Console.WriteLine($"Error parsing signups file: {parseEx.Message}");
+                        throw; // Rethrow to outer handler
                     }
                 }
                 else
@@ -144,10 +204,30 @@ namespace Wabbit.Misc
                 var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    ReferenceHandler = ReferenceHandler.Preserve
+                    ReferenceHandler = ReferenceHandler.Preserve,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 };
 
-                string json = JsonSerializer.Serialize(_ongoingRounds.TournamentSignups, options);
+                // Create a copy with simplified data to avoid serialization issues
+                var signupsToSave = _ongoingRounds.TournamentSignups.Select(signup => new
+                {
+                    signup.Name,
+                    signup.IsOpen,
+                    signup.CreatedAt,
+                    signup.Format,
+                    signup.ScheduledStartTime,
+                    signup.SignupChannelId,
+                    signup.MessageId,
+                    CreatedById = signup.CreatedBy?.Id ?? 0,
+                    CreatedByUsername = signup.CreatedBy?.Username ?? "Unknown",
+                    Participants = signup.Participants.Select(p => new
+                    {
+                        Id = p.Id,
+                        Username = p.Username
+                    }).ToList()
+                }).ToList();
+
+                string json = JsonSerializer.Serialize(signupsToSave, options);
                 File.WriteAllText(_signupsFilePath, json);
                 Console.WriteLine($"Saved {_ongoingRounds.TournamentSignups.Count} signups to file");
             }

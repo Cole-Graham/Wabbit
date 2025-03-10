@@ -17,7 +17,14 @@ namespace Wabbit.BotClient.Events
             {
                 try
                 {
-                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                    try
+                    {
+                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                    }
+                    catch (Exception respEx)
+                    {
+                        Console.WriteLine($"Failed to defer response: {respEx.Message}. Continuing execution...");
+                    }
 
                     string customId = e.Id;
 
@@ -635,12 +642,13 @@ namespace Wabbit.BotClient.Events
         private DiscordEmbed CreateSignupEmbed(TournamentSignup signup)
         {
             var builder = new DiscordEmbedBuilder()
-                .WithTitle($"Tournament Signup: {signup.Name}")
+                .WithTitle($"🏆 Tournament Signup: {signup.Name}")
                 .WithDescription("Sign up for this tournament by clicking the button below.")
                 .WithColor(new DiscordColor(75, 181, 67))
                 .AddField("Format", signup.Format.ToString(), true)
                 .AddField("Status", signup.IsOpen ? "Open" : "Closed", true)
-                .AddField("Created By", signup.CreatedBy?.Username ?? "Unknown", true);
+                .AddField("Created By", signup.CreatedBy?.Username ?? "Unknown", true)
+                .WithTimestamp(signup.CreatedAt);
 
             if (signup.ScheduledStartTime.HasValue)
             {
@@ -659,8 +667,6 @@ namespace Wabbit.BotClient.Events
             {
                 builder.AddField("Participants (0)", "No participants yet", false);
             }
-
-            builder.WithFooter($"Created at {signup.CreatedAt:yyyy-MM-dd HH:mm:ss}");
 
             return builder.Build();
         }

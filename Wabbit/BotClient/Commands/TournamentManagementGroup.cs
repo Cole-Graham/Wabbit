@@ -350,7 +350,8 @@ namespace Wabbit.BotClient.Commands
                     // Save updated MessageId
                     _tournamentManager.UpdateSignup(signup);
 
-                    await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Players can now sign up.");
+                    // Send a simple confirmation without repeating the tournament details
+                    await context.EditResponseAsync($"Tournament signup '{name}' created successfully.");
                 }
                 catch (Exception ex)
                 {
@@ -687,12 +688,13 @@ namespace Wabbit.BotClient.Commands
         private DiscordEmbed CreateSignupEmbed(TournamentSignup signup)
         {
             var builder = new DiscordEmbedBuilder()
-                .WithTitle($"Tournament Signup: {signup.Name}")
+                .WithTitle($"🏆 Tournament Signup: {signup.Name}")
                 .WithDescription("Sign up for this tournament by clicking the button below.")
                 .WithColor(new DiscordColor(75, 181, 67))
                 .AddField("Format", signup.Format.ToString(), true)
                 .AddField("Status", signup.IsOpen ? "Open" : "Closed", true)
-                .AddField("Created By", signup.CreatedBy?.Username ?? "Unknown", true);
+                .AddField("Created By", signup.CreatedBy?.Username ?? "Unknown", true)
+                .WithTimestamp(signup.CreatedAt);
 
             if (signup.ScheduledStartTime.HasValue)
             {
@@ -711,8 +713,6 @@ namespace Wabbit.BotClient.Commands
             {
                 builder.AddField("Participants (0)", "No participants yet", false);
             }
-
-            builder.WithFooter($"Created at {signup.CreatedAt:yyyy-MM-dd HH:mm:ss}");
 
             return builder.Build();
         }
