@@ -24,13 +24,14 @@ namespace Wabbit
                 {
                     Console.WriteLine("Discord bot token is not configured. Please either:");
                     Console.WriteLine("1. Create a .env file with WABBIT_BOT_TOKEN=\"your-token-here\"");
-                    Console.WriteLine("2. Run the application again and enter the token when prompted");
+                    Console.WriteLine("2. Run the application again and enter the token when prompted (interactive mode only)");
                     Console.WriteLine();
-                    Console.WriteLine("If you're having permission issues on Linux/Debian:");
-                    Console.WriteLine("  sudo touch .env");
-                    Console.WriteLine("  sudo chown youruser:yourgroup .env");
-                    Console.WriteLine("  sudo chmod 600 .env");
+                    Console.WriteLine("For headless/service usage (nohup, systemd, etc.):");
+                    Console.WriteLine("  You MUST create the .env file manually before starting the service");
+                    Console.WriteLine("  touch .env");
+                    Console.WriteLine("  chmod 644 .env");
                     Console.WriteLine("  echo 'WABBIT_BOT_TOKEN=\"your-token-here\"' > .env");
+                    Console.WriteLine("  chown <service-user>:<service-group> .env  # If running as a different user");
                     Environment.Exit(0);
                 }
 

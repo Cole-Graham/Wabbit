@@ -36,26 +36,53 @@ namespace Wabbit.BotClient.Config
                 }
                 catch (UnauthorizedAccessException ex)
                 {
-                    Console.WriteLine($"Warning: Cannot access {ENV_FILE_PATH} file due to permissions: {ex.Message}");
-                    Console.WriteLine("You may need to fix file permissions.");
+                    Console.WriteLine($"ERROR: Cannot access {ENV_FILE_PATH} file due to permissions: {ex.Message}");
+                    Console.WriteLine("If you're running as a service or with nohup, ensure the correct permissions:");
+                    Console.WriteLine($"  chmod 644 {ENV_FILE_PATH}");
+                    Console.WriteLine($"  chown <service-user>:<service-group> {ENV_FILE_PATH}");
+
+                    // If running in headless mode, cannot continue without the .env file
+                    if (Environment.UserInteractive == false || Console.IsInputRedirected)
+                    {
+                        Console.WriteLine("Running in non-interactive mode, cannot prompt for token.");
+                        Console.WriteLine("Please fix the .env file permissions and restart the application.");
+                        Environment.Exit(1);
+                    }
                 }
                 catch (IOException ex)
                 {
-                    Console.WriteLine($"Warning: IO error accessing {ENV_FILE_PATH} file: {ex.Message}");
+                    Console.WriteLine($"ERROR: IO error accessing {ENV_FILE_PATH} file: {ex.Message}");
+
+                    // If running in headless mode, cannot continue without the .env file
+                    if (Environment.UserInteractive == false || Console.IsInputRedirected)
+                    {
+                        Console.WriteLine("Running in non-interactive mode, cannot prompt for token.");
+                        Console.WriteLine("Please fix the .env file issues and restart the application.");
+                        Environment.Exit(1);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Warning: Error reading {ENV_FILE_PATH} file: {ex.Message}");
+                    Console.WriteLine($"ERROR: Problem with {ENV_FILE_PATH} file: {ex.Message}");
+
+                    // If running in headless mode, cannot continue without the .env file
+                    if (Environment.UserInteractive == false || Console.IsInputRedirected)
+                    {
+                        Console.WriteLine("Running in non-interactive mode, cannot prompt for token.");
+                        Console.WriteLine("Please create a valid .env file and restart the application.");
+                        Environment.Exit(1);
+                    }
                 }
 
                 // Fall back to asking for input and saving to .env file
+                // This will only run in interactive mode
                 await LoadFullConfig();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in ReadConfig: {ex.Message}");
+                Console.WriteLine($"Fatal error in ReadConfig: {ex.Message}");
                 Console.WriteLine(ex.StackTrace);
-                throw;
+                Environment.Exit(1);
             }
         }
 
@@ -176,36 +203,67 @@ namespace Wabbit.BotClient.Config
                     message = "Token was not found. Please enter Bot Token or press enter to close the application";
                 Console.WriteLine(message);
                 Console.WriteLine($"The token will be stored in {ENV_FILE_PATH}");
-                Console.WriteLine("Bot token:");
-                string? token = Console.ReadLine();
 
-                if (String.IsNullOrEmpty(token))
+                // Check if we're running in a headless/non-interactive environment
+                try
                 {
-                    Console.WriteLine("Entered an invalid value. Please relaunch the application and try again");
-                    Environment.Exit(0);
-                }
-
-                Console.WriteLine("Enter Discord ID of the server where the bot will be deployed or press enter to continue");
-                string? serverId = Console.ReadLine();
-                ulong guildId = 0;
-                if (!String.IsNullOrEmpty(serverId))
-                    _ = (ulong.TryParse(serverId, out guildId)) ? guildId : 0;
-
-                Config ??= new(); // Might set to null during deserialization
-
-                // Store token in .env file (will handle errors internally)
-                SaveEnvironmentVariable(BOT_TOKEN_KEY, token);
-                Config.Token = token;
-
-                if (guildId > 0)
-                {
-                    Config.Servers.Add(new BotConfig.ServerConfig
+                    // Try to detect if we have a console available for input
+                    if (!Console.IsInputRedirected && !Console.IsOutputRedirected)
                     {
-                        ServerId = guildId
-                    });
-                }
+                        Console.WriteLine("Bot token:");
+                        string? token = Console.ReadLine();
 
-                await SaveConfig();
+                        if (String.IsNullOrEmpty(token))
+                        {
+                            Console.WriteLine("Entered an invalid value. Please relaunch the application and try again");
+                            Environment.Exit(0);
+                        }
+
+                        Console.WriteLine("Enter Discord ID of the server where the bot will be deployed or press enter to continue");
+                        string? serverId = Console.ReadLine();
+                        ulong guildId = 0;
+                        if (!String.IsNullOrEmpty(serverId))
+                            _ = (ulong.TryParse(serverId, out guildId)) ? guildId : 0;
+
+                        Config ??= new(); // Might set to null during deserialization
+
+                        // Store token in .env file (will handle errors internally)
+                        SaveEnvironmentVariable(BOT_TOKEN_KEY, token);
+                        Config.Token = token;
+
+                        if (guildId > 0)
+                        {
+                            Config.Servers.Add(new BotConfig.ServerConfig
+                            {
+                                ServerId = guildId
+                            });
+                        }
+
+                        await SaveConfig();
+                    }
+                    else
+                    {
+                        // Running in headless mode, cannot prompt for input
+                        Console.WriteLine("ERROR: Bot is running in non-interactive mode (probably with nohup or as a service)");
+                        Console.WriteLine("Cannot prompt for token input. Please create a .env file manually:");
+                        Console.WriteLine($"1. Create a file named {ENV_FILE_PATH} in the application directory");
+                        Console.WriteLine($"2. Add this line to the file: {BOT_TOKEN_KEY}=\"your-token-here\"");
+                        Console.WriteLine($"3. Ensure the application has permissions to read the file");
+                        Console.WriteLine("Exiting application.");
+                        Environment.Exit(1);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    // This exception happens when Console.ReadLine is called in a process without a console
+                    Console.WriteLine("ERROR: No console available for input (running as service or with redirected input)");
+                    Console.WriteLine("Cannot prompt for token input. Please create a .env file manually:");
+                    Console.WriteLine($"1. Create a file named {ENV_FILE_PATH} in the application directory");
+                    Console.WriteLine($"2. Add this line to the file: {BOT_TOKEN_KEY}=\"your-token-here\"");
+                    Console.WriteLine($"3. Ensure the application has permissions to read the file");
+                    Console.WriteLine("Exiting application.");
+                    Environment.Exit(1);
+                }
             }
 
             string configFile = "ConfigFile.json";
