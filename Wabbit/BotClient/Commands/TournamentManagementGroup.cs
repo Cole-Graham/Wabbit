@@ -334,12 +334,12 @@ namespace Wabbit.BotClient.Commands
                         .AddComponents(
                             new DiscordButtonComponent(
                                 DiscordButtonStyle.Success,
-                                $"signup_{name.Replace(" ", "_")}",
+                                $"signup_{name}",
                                 "Sign Up"
                             ),
                             new DiscordButtonComponent(
                                 DiscordButtonStyle.Danger,
-                                $"withdraw_{name.Replace(" ", "_")}",
+                                $"withdraw_{name}",
                                 "Withdraw"
                             )
                         );
@@ -351,7 +351,7 @@ namespace Wabbit.BotClient.Commands
                     _tournamentManager.UpdateSignup(signup);
 
                     // Send a simple confirmation without repeating the tournament details
-                    await context.EditResponseAsync($"Tournament signup '{name}' created successfully.");
+                    await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Check {signupChannel.Mention} for the signup form.");
                 }
                 catch (Exception ex)
                 {

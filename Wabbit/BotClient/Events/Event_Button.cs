@@ -411,7 +411,7 @@ namespace Wabbit.BotClient.Events
                 Console.WriteLine($"Signup button clicked: {e.Id} by user {e.User.Username}");
 
                 // Extract the tournament name from the button ID (format: signup_TournamentName)
-                string tournamentName = e.Id.Substring("signup_".Length).Replace("_", " ");
+                string tournamentName = e.Id.Substring("signup_".Length);
 
                 // Find the signup
                 var signup = _roundsHolder.TournamentSignups.FirstOrDefault(s =>
@@ -673,8 +673,8 @@ namespace Wabbit.BotClient.Events
 
         private async Task HandleWithdrawButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
         {
-            // Extract tournament name from customId and replace underscores with spaces
-            string tournamentName = e.Id.Substring("withdraw_".Length).Replace("_", " ");
+            // Extract tournament name from customId
+            string tournamentName = e.Id.Substring("withdraw_".Length);
 
             // Find the tournament
             var signup = _roundsHolder.TournamentSignups.FirstOrDefault(t =>
