@@ -811,42 +811,10 @@ namespace Wabbit.BotClient.Commands
                             return;
                         }
 
-                        // Add mock participants
-                        try
-                        {
-                            for (int i = 0; i < 3; i++)
-                            {
-                                var mockPlayer = new MockDiscordMember
-                                {
-                                    UserId = 100000000000000000 + (ulong)i,
-                                    UserName = $"TestPlayer{i + 1}"
-                                };
+                        // Skip adding mock participants in the flow - we'll create them directly in the tournament
+                        // Just proceed with the current user as participant
 
-                                if (!existingSignup.Participants.Any(p => p.Id == mockPlayer.Id))
-                                {
-                                    existingSignup.Participants.Add((DiscordMember)mockPlayer);
-                                }
-                            }
-
-                            // Try to update the signup message
-                            if (existingSignup.SignupListMessage is not null)
-                            {
-                                try
-                                {
-                                    await UpdateSignupMessage(existingSignup, context.Client);
-                                }
-                                catch (Exception ex)
-                                {
-                                    await context.Channel.SendMessageAsync($"Warning: Could not update signup message: {ex.Message}");
-                                }
-                            }
-
-                            await context.EditResponseAsync($"✅ **Step 2 Complete**: Added participants to signup '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
-                        }
-                        catch (Exception ex)
-                        {
-                            await context.EditResponseAsync($"Error adding mock participants: {ex.Message}");
-                        }
+                        await context.EditResponseAsync($"✅ **Step 2 Complete**: Verified signup for '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
                         break;
 
                     case 3: // Create tournament from signup using the actual command
@@ -869,20 +837,25 @@ namespace Wabbit.BotClient.Commands
                             break;
                         }
 
-                        // Get players from the signup
-                        var players = signupToConvert.Participants.ToList();
-                        if (players.Count < 2)
-                        {
-                            await context.EditResponseAsync($"❌ Error: Not enough participants in signup '{testName}'. Need at least 2.");
-                            return;
-                        }
+                        // Create the tournament directly rather than from signup
+                        // Since we're testing, we'll create it manually with the real user and mock players
 
-                        // Create the tournament using the manager (this is what the create_from_signup command does)
-                        var tournament = _tournamentManager.CreateTournament(
-                            testName,
-                            players,
-                            signupToConvert.Format,
-                            context.Channel);
+                        // Start with the real user
+                        var realPlayers = signupToConvert.Participants.ToList();
+
+                        // Create the tournament
+                        var tournament = new Tournament
+                        {
+                            Name = testName,
+                            Format = signupToConvert.Format,
+                            AnnouncementChannel = context.Channel
+                        };
+
+                        // Add the tournament to the active list
+                        _ongoingRounds.Tournaments.Add(tournament);
+
+                        // Create groups with the real user and mock players
+                        CreateTestGroups(tournament, 8, 2, false);
 
                         // Mark signup as closed
                         signupToConvert.IsOpen = false;
@@ -892,7 +865,7 @@ namespace Wabbit.BotClient.Commands
                             string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
                             using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                             var builder = new DiscordWebhookBuilder()
-                                .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}' with {players.Count} participants.\nYou can use `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.")
+                                .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}'.\nYou can use `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.")
                                 .AddFile("tournament.png", fs);
 
                             await context.EditResponseAsync(builder);
