@@ -11,6 +11,7 @@
             public ulong? BotChannelId { get; set; }
             public ulong? ReplayChannelId { get; set; }
             public ulong? DeckChannelId { get; set; }
+            public ulong? SignupChannelId { get; set; }
         }
     }
 }

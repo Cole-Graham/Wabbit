@@ -37,23 +37,31 @@ namespace Wabbit
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
 
                     services.AddSingleton<OngoingRounds>();
-
-
                 });
 
                 builder.ConfigureEventHandlers(events =>
                 {
                     events.AddEventHandlers<Event_Button>(ServiceLifetime.Singleton);
                     events.AddEventHandlers<Event_Modal>(ServiceLifetime.Singleton);
+                    events.AddEventHandlers<Event_MessageCreated>(ServiceLifetime.Singleton);
                 });
 
                 builder.UseCommands((IServiceProvider serviceProvider, CommandsExtension extension) =>
                 {
-                    extension.AddCommands([typeof(BasicGroup), typeof(ConfigGroup), typeof(TournamentGroup), typeof(MapManagementGroup)]);
+                    extension.AddCommands([
+                        typeof(BasicGroup),
+                        typeof(ConfigGroup),
+                        typeof(TournamentGroup),
+                        typeof(MapManagementGroup),
+                        typeof(TournamentManagementGroup)
+                    ]);
                 }, new CommandsConfiguration()
                 {
                     DebugGuildId = ConfigManager.Config.Servers?.FirstOrDefault()?.ServerId ?? 0
                 });
+
+                // Create Images directory if it doesn't exist
+                Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), "Images"));
 
                 DiscordClient client = builder.Build();
 

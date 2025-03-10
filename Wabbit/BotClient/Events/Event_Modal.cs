@@ -6,19 +6,36 @@ using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace Wabbit.BotClient.Events
 {
-    public class Event_Modal(OngoingRounds roundsHolder, IRandomMapExt randomMap, IMapBanExt banMap) : IEventHandler<ModalSubmittedEventArgs>
+    public class Event_Modal : IEventHandler<ModalSubmittedEventArgs>
     {
-        private readonly OngoingRounds _roundsHolder = roundsHolder;
-        private readonly IRandomMapExt _randomMap = randomMap;
-        private readonly IMapBanExt _banMap = banMap;
+        private readonly OngoingRounds _roundsHolder;
+        private readonly IRandomMapExt _randomMap;
+        private readonly IMapBanExt _banMap;
+        private readonly TournamentManager _tournamentManager;
+
+        public Event_Modal(OngoingRounds roundsHolder, IRandomMapExt randomMap, IMapBanExt banMap)
+        {
+            _roundsHolder = roundsHolder;
+            _randomMap = randomMap;
+            _banMap = banMap;
+            _tournamentManager = new TournamentManager(roundsHolder);
+        }
 
         public async Task HandleEventAsync(DiscordClient sender, ModalSubmittedEventArgs modal)
         {
-            string deck = modal.Values["deck_code"];
+            // Handle tournament creation modal
+            if (modal.Interaction.Data.CustomId.StartsWith("tournament_create_modal_"))
+            {
+                await HandleTournamentCreateModal(sender, modal);
+                return;
+            }
 
+            // Handle deck submission modal
+            string deck = modal.Values["deck_code"];
             string response;
 
             await modal.Interaction.DeferAsync();
@@ -76,12 +93,12 @@ namespace Wabbit.BotClient.Events
                         // Create the embed
                         var embed = new DiscordEmbedBuilder { Title = map.Name };
 
-                        // Handle thumbnail
+                        // Handle map thumbnail if available
                         if (map.Thumbnail != null)
                         {
                             if (map.Thumbnail.StartsWith("http"))
                             {
-                                // URL thumbnail
+                                // URL thumbnail - use directly
                                 embed.ImageUrl = map.Thumbnail;
                                 var followup = new DiscordFollowupMessageBuilder()
                                     .WithContent("Decks have been submitted")
@@ -91,7 +108,7 @@ namespace Wabbit.BotClient.Events
                             }
                             else
                             {
-                                // Local file thumbnail
+                                // Local file thumbnail - attach it
                                 string relativePath = map.Thumbnail;
                                 relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
                                                        .Replace('/', Path.DirectorySeparatorChar);
@@ -99,21 +116,21 @@ namespace Wabbit.BotClient.Events
                                 string baseDirectory = Directory.GetCurrentDirectory();
                                 string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
 
-                                Console.WriteLine($"Attempting to access image at: {fullPath}");
+                                Console.WriteLine($"Attempting to access map image at: {fullPath}");
 
                                 if (!File.Exists(fullPath))
                                 {
                                     // File not found, send without image
                                     var followup = new DiscordFollowupMessageBuilder()
-                                        .WithContent("Decks have been submitted")
+                                        .WithContent("Decks have been submitted but map image not found")
                                         .AddEmbed(embed)
                                         .AddComponents(dropdown);
                                     round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
                                 }
                                 else
                                 {
-                                    // Create a follower with file attachment
-                                    var fileBuilder = new DiscordFollowupMessageBuilder()
+                                    // Create a followup with file attachment
+                                    var followup = new DiscordFollowupMessageBuilder()
                                         .WithContent("Decks have been submitted")
                                         .AddEmbed(embed)
                                         .AddComponents(dropdown);
@@ -121,8 +138,8 @@ namespace Wabbit.BotClient.Events
                                     using (var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
                                     {
                                         string fileName = Path.GetFileName(fullPath);
-                                        fileBuilder.AddFile(fileName, fileStream);
-                                        round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(fileBuilder));
+                                        followup.AddFile(fileName, fileStream);
+                                        round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
                                     }
                                 }
                             }
@@ -321,6 +338,112 @@ namespace Wabbit.BotClient.Events
                 await modal.Interaction.CreateFollowupMessageAsync(tFollowup);
 
                 await Console.Out.WriteLineAsync(response);
+            }
+        }
+
+        private async Task HandleTournamentCreateModal(DiscordClient sender, ModalSubmittedEventArgs modal)
+        {
+            await modal.Interaction.DeferAsync();
+
+            try
+            {
+                // Extract tournament name from modal ID
+                string tournamentName = modal.Interaction.Data.CustomId.Replace("tournament_create_modal_", "");
+
+                // Extract players from the input
+                string playersText = modal.Values["players"];
+
+                // Extract user mentions using regex
+                var userMentionRegex = new Regex(@"<@!?(\d+)>");
+                var matches = userMentionRegex.Matches(playersText);
+
+                List<DiscordMember> players = [];
+
+                if (modal.Interaction.Guild is null)
+                {
+                    await modal.Interaction.CreateFollowupMessageAsync(
+                        new DiscordFollowupMessageBuilder().WithContent("Guild information is missing."));
+                    return;
+                }
+
+                // Get DiscordMember objects for all mentioned users
+                foreach (Match match in matches)
+                {
+                    if (ulong.TryParse(match.Groups[1].Value, out ulong userId))
+                    {
+                        try
+                        {
+                            var member = await modal.Interaction.Guild.GetMemberAsync(userId);
+                            if (member is not null)
+                            {
+                                players.Add(member);
+                            }
+                        }
+                        catch
+                        {
+                            // User might not be in the server or other issue
+                            continue;
+                        }
+                    }
+                }
+
+                if (players.Count < 3)
+                {
+                    await modal.Interaction.CreateFollowupMessageAsync(
+                        new DiscordFollowupMessageBuilder().WithContent(
+                            "At least 3 players are required to create a tournament. Please mention valid server members."));
+                    return;
+                }
+
+                // Create the tournament
+                var tournament = _tournamentManager.CreateTournament(
+                    tournamentName,
+                    players,
+                    TournamentFormat.GroupStageWithPlayoffs,
+                    modal.Interaction.Channel);
+
+                // Add to ongoing tournaments
+                _roundsHolder.Tournaments.Add(tournament);
+
+                // Generate and send standings image
+                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"🏆 Tournament Created: {tournament.Name}")
+                    .WithDescription($"Format: Group Stage + Playoffs\nPlayers: {players.Count}\nGroups: {tournament.Groups.Count}")
+                    .WithColor(DiscordColor.Green)
+                    .WithFooter("Use /tournament_manager show_standings to view the current standings");
+
+                // Send the tournament info with the standings image
+                var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                var messageBuilder = new DiscordFollowupMessageBuilder()
+                    .AddEmbed(embed)
+                    .AddFile(Path.GetFileName(imagePath), fileStream);
+
+                await modal.Interaction.CreateFollowupMessageAsync(messageBuilder);
+
+                // Notify all players
+                var notificationEmbed = new DiscordEmbedBuilder()
+                    .WithTitle($"🏆 You've been added to tournament: {tournament.Name}")
+                    .WithDescription("Check the tournament channel for details and your group assignments.")
+                    .WithColor(DiscordColor.Green);
+
+                foreach (var player in players)
+                {
+                    try
+                    {
+                        await player.SendMessageAsync(notificationEmbed);
+                    }
+                    catch
+                    {
+                        // Player may have DMs disabled, continue anyway
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await modal.Interaction.CreateFollowupMessageAsync(
+                    new DiscordFollowupMessageBuilder().WithContent($"Failed to create tournament: {ex.Message}"));
             }
         }
     }
