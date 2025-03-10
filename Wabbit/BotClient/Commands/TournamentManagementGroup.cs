@@ -1194,6 +1194,16 @@ namespace Wabbit.BotClient.Commands
                     CreateTestGroups(tournament, 8, 2, false);
                     break;
 
+                case "groups_2x2":
+                    // Create 2 groups with 2 players each
+                    CreateTestGroups(tournament, 4, 2, true, 1.0);
+                    break;
+
+                case "groups_2x3":
+                    // Create 2 groups with 3 players each
+                    CreateTestGroups(tournament, 6, 2, true, 1.0);
+                    break;
+
                 case "groups_in_progress":
                     // Create 2 groups with 4 players each, some matches played
                     CreateTestGroups(tournament, 8, 2, true, 0.5);
@@ -1902,6 +1912,100 @@ namespace Wabbit.BotClient.Commands
             // Otherwise, throw an error
             throw new InvalidOperationException($"Cannot convert {playerObj.GetType().Name} to DiscordMember");
         }
+
+        [Command("test_specific_groups")]
+        [Description("Test tournament with specific group configurations")]
+        public async Task TestSpecificGroups(
+            CommandContext context,
+            [Description("Test scenario")][SlashChoiceProvider<GroupTestScenarioProvider>] string scenario = "2groups_2players")
+        {
+            await context.DeferResponseAsync();
+
+            try
+            {
+                // Create a new tournament with a test name
+                string tournamentName = $"Test Tournament {scenario} {DateTime.Now:yyyyMMdd-HHmmss}";
+
+                // Create the tournament directly
+                var tournament = new Tournament
+                {
+                    Name = tournamentName,
+                    Format = TournamentFormat.GroupStageWithPlayoffs,
+                    AnnouncementChannel = context.Channel
+                };
+
+                // Add tournament to active tournaments
+                _ongoingRounds.Tournaments.Add(tournament);
+
+                // Set up specific test scenario
+                SetupTestScenario(tournament, scenario, true);
+
+                // Generate and show the tournament visualization
+                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+                using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                var builder = new DiscordWebhookBuilder()
+                    .WithContent($"Test tournament '{tournamentName}' created with scenario: {scenario}")
+                    .AddFile("tournament.png", fs);
+
+                await context.EditResponseAsync(builder);
+            }
+            catch (Exception ex)
+            {
+                await context.EditResponseAsync($"Error in test setup: {ex.Message}");
+            }
+        }
+
+        private void SetupTestScenario(Tournament tournament, string scenario, bool playMatches)
+        {
+            switch (scenario)
+            {
+                case "2groups_2players":
+                    // 2 groups with 2 players each
+                    CreateTestGroups(tournament, 4, 2, playMatches, 1.0);
+                    break;
+
+                case "2groups_3players":
+                    // 2 groups with 3 players each
+                    CreateTestGroups(tournament, 6, 2, playMatches, 1.0);
+                    break;
+
+                case "groups_and_playoffs":
+                    // 2 groups with 3 players each + playoffs
+                    CreateTestGroups(tournament, 6, 2, true, 1.0);
+                    tournament.CurrentStage = TournamentStage.Playoffs;
+                    SetupTestPlayoffs(tournament, playMatches, 0.5);
+                    break;
+
+                case "complete_tournament":
+                    // Full tournament completed
+                    CreateTestGroups(tournament, 6, 2, true, 1.0);
+                    tournament.CurrentStage = TournamentStage.Playoffs;
+                    SetupTestPlayoffs(tournament, true, 1.0);
+                    tournament.IsComplete = true;
+                    break;
+
+                default:
+                    CreateTestGroups(tournament, 4, 2, playMatches, 1.0);
+                    break;
+            }
+        }
+
+        // Choice provider for test scenarios
+        public class GroupTestScenarioProvider : IChoiceProvider
+        {
+            private static readonly IEnumerable<DiscordApplicationCommandOptionChoice> scenarios = new DiscordApplicationCommandOptionChoice[]
+            {
+                new("2 Groups with 2 Players Each", "2groups_2players"),
+                new("2 Groups with 3 Players Each", "2groups_3players"),
+                new("2 Groups + Playoffs", "groups_and_playoffs"),
+                new("Complete Tournament", "complete_tournament"),
+            };
+
+            public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter)
+            {
+                return new ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>>(scenarios);
+            }
+        }
     }
 
     public class TournamentFormatChoiceProvider : IChoiceProvider
@@ -1922,19 +2026,21 @@ namespace Wabbit.BotClient.Commands
 
     public class VisualizationTestChoiceProvider : IChoiceProvider
     {
+        private static readonly IEnumerable<DiscordApplicationCommandOptionChoice> scenarios = new DiscordApplicationCommandOptionChoice[]
+        {
+            new("Empty Tournament", "empty"),
+            new("Groups Only", "groups_only"),
+            new("2 Groups of 2 Players", "groups_2x2"),
+            new("2 Groups of 3 Players", "groups_2x3"),
+            new("Groups In Progress", "groups_in_progress"),
+            new("Playoffs Ready", "playoffs_ready"),
+            new("Playoffs In Progress", "playoffs_in_progress"),
+            new("Complete Tournament", "complete"),
+        };
+
         public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter)
         {
-            var choices = new List<DiscordApplicationCommandOptionChoice>
-            {
-                new DiscordApplicationCommandOptionChoice("Empty Tournament", "empty"),
-                new DiscordApplicationCommandOptionChoice("Groups Only", "groups_only"),
-                new DiscordApplicationCommandOptionChoice("Groups In Progress", "groups_in_progress"),
-                new DiscordApplicationCommandOptionChoice("Playoffs Ready", "playoffs_ready"),
-                new DiscordApplicationCommandOptionChoice("Playoffs In Progress", "playoffs_in_progress"),
-                new DiscordApplicationCommandOptionChoice("Complete Tournament", "complete"),
-            };
-
-            return new ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>>(choices);
+            return new ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>>(scenarios);
         }
     }
 }

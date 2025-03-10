@@ -6,6 +6,7 @@ namespace Wabbit.BotClient.Config
     public static class ConfigManager
     {
         // Local environment file for storing secrets
+        // Note: Place this file in the same directory as ConfigFile.json (Wabbit/Wabbit/)
         private const string ENV_FILE_PATH = ".env";
         private const string BOT_TOKEN_KEY = "WABBIT_BOT_TOKEN";
 
@@ -15,22 +16,47 @@ namespace Wabbit.BotClient.Config
 
         public static async Task ReadConfig()
         {
-            // Read environment variables from .env file if it exists
-            LoadEnvironmentFile();
-
-            // Check for token in environment file first
-            if (_envVariables.TryGetValue(BOT_TOKEN_KEY, out string? envToken) && !string.IsNullOrEmpty(envToken))
+            try
             {
-                Console.WriteLine($"Using Discord bot token from {ENV_FILE_PATH} file");
-                Config.Token = envToken;
+                // Try to load from .env file if it exists
+                try
+                {
+                    LoadEnvironmentFile();
 
-                // Still load the rest of the config from regular config file
-                await LoadConfigWithoutToken();
-                return;
+                    // Check for token in environment file
+                    if (_envVariables.TryGetValue(BOT_TOKEN_KEY, out string? envToken) && !string.IsNullOrEmpty(envToken))
+                    {
+                        Console.WriteLine($"Using Discord bot token from {ENV_FILE_PATH} file");
+                        Config.Token = envToken;
+
+                        // Still load the rest of the config from regular config file
+                        await LoadConfigWithoutToken();
+                        return;
+                    }
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    Console.WriteLine($"Warning: Cannot access {ENV_FILE_PATH} file due to permissions: {ex.Message}");
+                    Console.WriteLine("You may need to fix file permissions.");
+                }
+                catch (IOException ex)
+                {
+                    Console.WriteLine($"Warning: IO error accessing {ENV_FILE_PATH} file: {ex.Message}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Warning: Error reading {ENV_FILE_PATH} file: {ex.Message}");
+                }
+
+                // Fall back to asking for input and saving to .env file
+                await LoadFullConfig();
             }
-
-            // Fall back to file-based configuration if environment variable is not set
-            await LoadFullConfig();
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in ReadConfig: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+                throw;
+            }
         }
 
         private static void LoadEnvironmentFile()
@@ -41,31 +67,24 @@ namespace Wabbit.BotClient.Config
                 return;
             }
 
-            try
+            foreach (var line in File.ReadAllLines(ENV_FILE_PATH))
             {
-                foreach (var line in File.ReadAllLines(ENV_FILE_PATH))
+                // Skip comments and empty lines
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
+                    continue;
+
+                var parts = line.Split('=', 2);
+                if (parts.Length == 2)
                 {
-                    // Skip comments and empty lines
-                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
-                        continue;
+                    var key = parts[0].Trim();
+                    var value = parts[1].Trim();
 
-                    var parts = line.Split('=', 2);
-                    if (parts.Length == 2)
-                    {
-                        var key = parts[0].Trim();
-                        var value = parts[1].Trim();
+                    // Remove quotes if they exist
+                    if (value.StartsWith("\"") && value.EndsWith("\""))
+                        value = value.Substring(1, value.Length - 2);
 
-                        // Remove quotes if they exist
-                        if (value.StartsWith("\"") && value.EndsWith("\""))
-                            value = value.Substring(1, value.Length - 2);
-
-                        _envVariables[key] = value;
-                    }
+                    _envVariables[key] = value;
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error reading {ENV_FILE_PATH} file: {ex.Message}");
             }
         }
 
@@ -88,9 +107,23 @@ namespace Wabbit.BotClient.Config
                 // Ensure .env is in .gitignore
                 EnsureGitIgnore();
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                Console.WriteLine($"Error: Cannot write to {ENV_FILE_PATH} due to permissions: {ex.Message}");
+                Console.WriteLine($"You may need to run the following commands to set permissions:");
+                Console.WriteLine($"  touch {ENV_FILE_PATH}");
+                Console.WriteLine($"  chmod 600 {ENV_FILE_PATH}");
+                Console.WriteLine($"  echo '{BOT_TOKEN_KEY}=\"your-token-here\"' > {ENV_FILE_PATH}");
+
+                // On error, still store in memory for this session
+                Config.Token = value;
+            }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error writing {ENV_FILE_PATH} file: {ex.Message}");
+
+                // On error, still store in memory for this session
+                Config.Token = value;
             }
         }
 
@@ -142,7 +175,7 @@ namespace Wabbit.BotClient.Config
                 else
                     message = "Token was not found. Please enter Bot Token or press enter to close the application";
                 Console.WriteLine(message);
-                Console.WriteLine($"The token will be stored securely in {ENV_FILE_PATH} which is gitignored");
+                Console.WriteLine($"The token will be stored in {ENV_FILE_PATH}");
                 Console.WriteLine("Bot token:");
                 string? token = Console.ReadLine();
 
@@ -160,7 +193,7 @@ namespace Wabbit.BotClient.Config
 
                 Config ??= new(); // Might set to null during deserialization
 
-                // Store token in .env file
+                // Store token in .env file (will handle errors internally)
                 SaveEnvironmentVariable(BOT_TOKEN_KEY, token);
                 Config.Token = token;
 
