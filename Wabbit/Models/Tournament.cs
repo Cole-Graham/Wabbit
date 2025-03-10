@@ -26,7 +26,7 @@ namespace Wabbit.Models
 
         public class GroupParticipant
         {
-            public DiscordMember? Player { get; set; }
+            public object? Player { get; set; }
             public int Wins { get; set; } = 0;
             public int Draws { get; set; } = 0;
             public int Losses { get; set; } = 0;
@@ -55,17 +55,17 @@ namespace Wabbit.Models
 
         public class MatchParticipant
         {
-            public DiscordMember? Player { get; set; }
+            public object? Player { get; set; }
             public Group? SourceGroup { get; set; } // For playoff seeding
             public int SourceGroupPosition { get; set; } = 0; // 1 = first place, 2 = second place, etc.
             public int Score { get; set; } = 0;
             public bool IsWinner { get; set; } = false;
-            public string Display => Player?.DisplayName ?? $"{SourceGroup?.Name ?? "Unknown"} #{SourceGroupPosition}";
+            public string Display => Player?.ToString() ?? $"{SourceGroup?.Name ?? "Unknown"} #{SourceGroupPosition}";
         }
 
         public class MatchResult
         {
-            public DiscordMember? Winner { get; set; }
+            public object? Winner { get; set; }
             public List<string> MapResults { get; set; } = [];
             public DateTime CompletedAt { get; set; } = DateTime.Now;
         }

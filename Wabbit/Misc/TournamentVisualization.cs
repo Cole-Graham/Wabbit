@@ -252,16 +252,16 @@ namespace Wabbit.Misc
 
                     if (participant.Player is not null)
                     {
-                        // Try the DisplayName property first
-                        if (!string.IsNullOrEmpty(participant.Player.DisplayName))
+                        // Check if it's a DiscordMember
+                        if (participant.Player is DSharpPlus.Entities.DiscordMember discordMember)
                         {
-                            displayName = participant.Player.DisplayName;
-                            Console.WriteLine($"Using DisplayName: {displayName}");
+                            displayName = discordMember.DisplayName;
+                            Console.WriteLine($"Using DiscordMember DisplayName: {displayName}");
                         }
-                        // Then try ToString
+                        // For any other type, use ToString()
                         else
                         {
-                            string toStringValue = participant.Player.ToString();
+                            string toStringValue = participant.Player?.ToString() ?? string.Empty;
                             if (!string.IsNullOrEmpty(toStringValue) && toStringValue != "null")
                             {
                                 displayName = toStringValue;
@@ -270,7 +270,7 @@ namespace Wabbit.Misc
                             else
                             {
                                 // Last resort, try to get type information
-                                Console.WriteLine($"Player ToString returned null or empty, player type: {participant.Player.GetType().Name}");
+                                Console.WriteLine($"Player ToString returned null or empty, player type: {participant.Player?.GetType()?.Name ?? "unknown"}");
                             }
                         }
                     }
@@ -458,7 +458,22 @@ namespace Wabbit.Misc
                 // First participant
                 var p1 = match.Participants[0];
                 string p1Name = p1?.Display ?? "Unknown";
-                bool p1IsWinner = match.Result?.Winner?.Id == p1?.Player?.Id;
+                bool p1IsWinner = false;
+
+                // Compare players using appropriate method based on type
+                if (match.Result?.Winner != null && p1?.Player != null)
+                {
+                    // If they're the same object reference
+                    if (ReferenceEquals(match.Result.Winner, p1.Player))
+                    {
+                        p1IsWinner = true;
+                    }
+                    // Otherwise compare by ToString()
+                    else
+                    {
+                        p1IsWinner = match.Result.Winner.ToString() == p1.Player.ToString();
+                    }
+                }
 
                 if (p1IsWinner)
                 {
@@ -468,10 +483,11 @@ namespace Wabbit.Misc
 
                 canvas.DrawText(p1Name, x + 10, y + 45, textPaint);
 
-                if (match.IsComplete && p1 != null)
+                if (match.Result != null && match.Participants.Count > 1)
                 {
-                    scorePaint.Color = textPaint.Color;
-                    canvas.DrawText(p1.Score.ToString(), x + width - 10, y + 45, scorePaint);
+                    // Draw the score
+                    string scoreText = $"{match.Participants[0].Score}-{match.Participants[1].Score}";
+                    canvas.DrawText(scoreText, x + width - 40, y + 45, textPaint);
                 }
 
                 textPaint.Color = TextColor;
@@ -482,7 +498,22 @@ namespace Wabbit.Misc
                 // Second participant
                 var p2 = match.Participants[1];
                 string p2Name = p2?.Display ?? "Unknown";
-                bool p2IsWinner = match.Result?.Winner?.Id == p2?.Player?.Id;
+                bool p2IsWinner = false;
+
+                // Compare players using appropriate method
+                if (match.Result?.Winner != null && p2?.Player != null)
+                {
+                    // If they're the same object reference
+                    if (ReferenceEquals(match.Result.Winner, p2.Player))
+                    {
+                        p2IsWinner = true;
+                    }
+                    // Otherwise compare by ToString()
+                    else
+                    {
+                        p2IsWinner = match.Result.Winner.ToString() == p2.Player.ToString();
+                    }
+                }
 
                 if (p2IsWinner)
                 {
@@ -492,10 +523,11 @@ namespace Wabbit.Misc
 
                 canvas.DrawText(p2Name, x + 10, y + 70, textPaint);
 
-                if (match.IsComplete && p2 != null)
+                if (match.Result != null && match.Participants.Count > 1)
                 {
-                    scorePaint.Color = textPaint.Color;
-                    canvas.DrawText(p2.Score.ToString(), x + width - 10, y + 70, scorePaint);
+                    // Draw the score
+                    string scoreText = $"{match.Participants[0].Score}-{match.Participants[1].Score}";
+                    canvas.DrawText(scoreText, x + width - 40, y + 70, textPaint);
                 }
 
                 textPaint.Color = TextColor;

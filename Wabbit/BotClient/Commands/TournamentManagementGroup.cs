@@ -1104,7 +1104,15 @@ namespace Wabbit.BotClient.Commands
                     int loserScore = random.Next(0, 2);
 
                     // Update the match result
-                    _tournamentManager.UpdateMatchResult(tournament, match, winner, winnerScore, loserScore);
+                    if (winner is TestPlayer)
+                    {
+                        // Skip the update for test players - we've already updated the stats directly
+                        Console.WriteLine("[DEBUG] Skipping UpdateMatchResult for TestPlayer");
+                    }
+                    else
+                    {
+                        _tournamentManager.UpdateMatchResult(tournament, match, (DiscordMember)winner, winnerScore, loserScore);
+                    }
 
                     // Small delay between updates to avoid rate limits
                     await Task.Delay(100);
@@ -1145,7 +1153,15 @@ namespace Wabbit.BotClient.Commands
                     int loserScore = random.Next(0, 2);
 
                     // Update the match result
-                    _tournamentManager.UpdateMatchResult(tournament, match, winner, winnerScore, loserScore);
+                    if (winner is TestPlayer)
+                    {
+                        // Skip the update for test players - we've already updated the stats directly
+                        Console.WriteLine("[DEBUG] Skipping UpdateMatchResult for TestPlayer");
+                    }
+                    else
+                    {
+                        _tournamentManager.UpdateMatchResult(tournament, match, (DiscordMember)winner, winnerScore, loserScore);
+                    }
 
                     // Small delay between updates to avoid rate limits
                     await Task.Delay(100);
@@ -1246,25 +1262,15 @@ namespace Wabbit.BotClient.Commands
 
                 Console.WriteLine($"[DEBUG] Adding {mockPlayer} (Type: {mockPlayer.GetType().FullName}) to {group.Name}");
 
-                // Create a participant instance
-                var participant = new Tournament.GroupParticipant();
-
-                // Use reflection to set the Player property to our TestPlayer
-                var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
-                if (playerProperty != null)
+                // Add to participants - now we can directly set the property since it accepts object
+                var participant = new Tournament.GroupParticipant
                 {
-                    playerProperty.SetValue(participant, mockPlayer, null);
-                }
-                else
-                {
-                    Console.WriteLine("[DEBUG] ERROR: Could not find Player property on GroupParticipant");
-                }
+                    Player = mockPlayer
+                };
 
                 // Verify the player is set correctly
-                var playerValue = playerProperty?.GetValue(participant);
-
-                Console.WriteLine($"[DEBUG] Participant created - Player reference: {(playerValue == null ? "NULL" : playerValue.ToString())}");
-                Console.WriteLine($"[DEBUG] Player object type: {playerValue?.GetType().FullName ?? "unknown"}");
+                Console.WriteLine($"[DEBUG] Participant created - Player reference: {(participant.Player == null ? "NULL" : participant.Player.ToString())}");
+                Console.WriteLine($"[DEBUG] Player object type: {participant.Player?.GetType().FullName ?? "unknown"}");
 
                 group.Participants.Add(participant);
 
@@ -1278,10 +1284,7 @@ namespace Wabbit.BotClient.Commands
                 Console.WriteLine($"[DEBUG] Verifying players in {group.Name}:");
                 foreach (var participant in group.Participants)
                 {
-                    var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
-                    var playerValue = playerProperty?.GetValue(participant);
-
-                    Console.WriteLine($"[DEBUG] Participant player: {(playerValue == null ? "NULL" : playerValue.ToString())} Type: {playerValue?.GetType().FullName ?? "unknown"}");
+                    Console.WriteLine($"[DEBUG] Participant player: {(participant.Player == null ? "NULL" : participant.Player.ToString())} Type: {participant.Player?.GetType().FullName ?? "unknown"}");
                 }
             }
 
@@ -1686,26 +1689,20 @@ namespace Wabbit.BotClient.Commands
                         Type = Wabbit.Models.MatchType.GroupStage
                     };
 
-                    // Get player references via reflection
-                    var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
-                    var player1 = playerProperty?.GetValue(group.Participants[i]);
-                    var player2 = playerProperty?.GetValue(group.Participants[j]);
+                    // Get player references directly
+                    var player1 = group.Participants[i].Player;
+                    var player2 = group.Participants[j].Player;
 
-                    // Create first participant
-                    var participant1 = new Tournament.MatchParticipant();
-                    if (playerProperty != null)
+                    // Add participants with players
+                    match.Participants.Add(new Tournament.MatchParticipant
                     {
-                        playerProperty.SetValue(participant1, player1);
-                    }
-                    match.Participants.Add(participant1);
+                        Player = player1
+                    });
 
-                    // Create second participant
-                    var participant2 = new Tournament.MatchParticipant();
-                    if (playerProperty != null)
+                    match.Participants.Add(new Tournament.MatchParticipant
                     {
-                        playerProperty.SetValue(participant2, player2);
-                    }
-                    match.Participants.Add(participant2);
+                        Player = player2
+                    });
 
                     Console.WriteLine($"[DEBUG] Created match: {match.Name} between {player1} and {player2}");
 
@@ -1737,10 +1734,9 @@ namespace Wabbit.BotClient.Commands
                 {
                     try
                     {
-                        // Use reflection to get player values
-                        var playerProperty = typeof(Tournament.MatchParticipant).GetProperty("Player");
-                        var player1 = playerProperty?.GetValue(match.Participants[0]);
-                        var player2 = playerProperty?.GetValue(match.Participants[1]);
+                        // Get player references directly
+                        var player1 = match.Participants[0].Player;
+                        var player2 = match.Participants[1].Player;
 
                         // Skip if either participant doesn't have a player
                         if (match.Participants.Count < 2 || player1 == null || player2 == null)
@@ -1757,9 +1753,9 @@ namespace Wabbit.BotClient.Commands
                         int winnerIdx = random.Next(0, 2);
                         int loserIdx = 1 - winnerIdx;
 
-                        // Get player references via reflection
-                        var winner = playerProperty?.GetValue(match.Participants[winnerIdx]);
-                        var loser = playerProperty?.GetValue(match.Participants[loserIdx]);
+                        // Get player references directly
+                        var winner = match.Participants[winnerIdx].Player;
+                        var loser = match.Participants[loserIdx].Player;
 
                         // Set scores
                         int winnerScore = random.Next(3, 6); // Winner always gets 3-5 points
@@ -1770,19 +1766,12 @@ namespace Wabbit.BotClient.Commands
                         match.Participants[winnerIdx].Score = winnerScore;
                         match.Participants[loserIdx].Score = loserScore;
 
-                        // Create match result using reflection to set the Winner property
-                        var result = new Tournament.MatchResult
+                        // Create match result
+                        match.Result = new Tournament.MatchResult
                         {
+                            Winner = winner,
                             CompletedAt = DateTime.Now.AddHours(-random.Next(1, 24))
                         };
-
-                        var winnerProperty = typeof(Tournament.MatchResult).GetProperty("Winner");
-                        if (winnerProperty != null && winner != null)
-                        {
-                            winnerProperty.SetValue(result, winner);
-                        }
-
-                        match.Result = result;
 
                         Console.WriteLine($"[DEBUG] Match result in {group.Name}: {winner} defeated {loser} ({winnerScore}-{loserScore})");
 
@@ -1791,9 +1780,7 @@ namespace Wabbit.BotClient.Commands
                         // Check all group participants and update their stats
                         foreach (var participant in group.Participants)
                         {
-                            // Get player via reflection
-                            var participantPlayerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
-                            var playerValue = participantPlayerProperty?.GetValue(participant);
+                            var playerValue = participant.Player;
 
                             // Skip null players
                             if (playerValue == null)
@@ -1845,10 +1832,7 @@ namespace Wabbit.BotClient.Commands
                     Console.WriteLine($"[DEBUG] Final standings for {group.Name}:");
                     foreach (var p in group.Participants.OrderByDescending(p => p.Points))
                     {
-                        var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
-                        var playerValue = playerProperty?.GetValue(p);
-
-                        Console.WriteLine($"[DEBUG] {playerValue}: {p.Wins}W-{p.Draws}D-{p.Losses}L, {p.Points}pts");
+                        Console.WriteLine($"[DEBUG] {p.Player}: {p.Wins}W-{p.Draws}D-{p.Losses}L, {p.Points}pts");
                     }
 
                     // Determine which players advance to playoffs
@@ -1887,13 +1871,36 @@ namespace Wabbit.BotClient.Commands
                 foreach (var player in topPlayers)
                 {
                     player.AdvancedToPlayoffs = true;
-                    Console.WriteLine($"Player {player.Player?.DisplayName ?? player.Player?.ToString() ?? "Unknown"} advanced to playoffs");
+                    var playerName = player.Player is DiscordMember discordMember
+                        ? discordMember.DisplayName
+                        : player.Player?.ToString() ?? "Unknown";
+                    Console.WriteLine($"Player {playerName} advanced to playoffs");
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error determining playoff advancement: {ex.Message}");
             }
+        }
+
+        // Add this helper method to check if we're in test mode and handle conversion
+        private DiscordMember? ConvertToDiscordMember(object playerObj)
+        {
+            // If this is a TestPlayer (for our test code), create a mock DiscordMember
+            if (playerObj is TestPlayer testPlayer)
+            {
+                // In test scenarios, return null - we'll handle this in the test methods
+                return null;
+            }
+
+            // If it's already a DiscordMember, return it directly
+            if (playerObj is DiscordMember member)
+            {
+                return member;
+            }
+
+            // Otherwise, throw an error
+            throw new InvalidOperationException($"Cannot convert {playerObj.GetType().Name} to DiscordMember");
         }
     }
 
