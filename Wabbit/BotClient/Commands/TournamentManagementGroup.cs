@@ -751,7 +751,33 @@ namespace Wabbit.BotClient.Commands
                 // Immediately acknowledge the interaction to prevent timeouts
                 await context.DeferResponseAsync();
 
-                string testName = $"TestFlow_{DateTime.Now:yyyyMMddHHmmss}";
+                // Generate a test name only for step 1, reuse existing for later steps
+                string testName = "";
+
+                // For step 1, create a new name
+                if (startStep == 1)
+                {
+                    testName = $"TestFlow_{DateTime.Now:yyyyMMddHHmmss}";
+                }
+                else
+                {
+                    // For steps after step 1, try to find the most recent test signup
+                    var testSignups = _ongoingRounds.TournamentSignups
+                        .Where(s => s.Name.StartsWith("TestFlow_"))
+                        .OrderByDescending(s => s.CreatedAt)
+                        .ToList();
+
+                    if (testSignups.Any())
+                    {
+                        testName = testSignups.First().Name;
+                        Console.WriteLine($"Found existing test signup: {testName}");
+                    }
+                    else
+                    {
+                        testName = $"TestFlow_{DateTime.Now:yyyyMMddHHmmss}";
+                        Console.WriteLine($"No existing test signups found, using new name: {testName}");
+                    }
+                }
 
                 // Start the step based on the request
                 try
