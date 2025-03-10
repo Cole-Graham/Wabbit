@@ -551,38 +551,33 @@ namespace Wabbit.BotClient.Commands
 
             try
             {
-                // Generate a unique tournament name
-                string tournamentName = $"Test_{DateTime.Now.Ticks}";
+                // Create a new tournament with a test name
+                string tournamentName = $"Test Tournament {DateTime.Now:yyyyMMdd-HHmmss}";
 
-                await context.EditResponseAsync($"Creating test tournament: {tournamentName}");
-
-                // 1. Create a tournament signup
-                var signup = new TournamentSignup
+                // Create the tournament directly
+                var tournament = new Tournament
                 {
                     Name = tournamentName,
                     Format = Enum.Parse<TournamentFormat>(format),
-                    CreatedBy = context.User,
-                    IsOpen = true
+                    AnnouncementChannel = context.Channel
                 };
 
-                _ongoingRounds.TournamentSignups.Add(signup);
+                // Add tournament to active tournaments
+                _ongoingRounds.Tournaments.Add(tournament);
 
-                // 2. Add test participants to the signup
-                var members = GetTestParticipants(context, participantCount);
-                if (members.Count < 2)
-                {
-                    await context.EditResponseAsync("Failed to get enough test participants. Need at least 2.");
-                    return;
-                }
+                // Create mock players for the tournament
+                CreateTestGroups(tournament, participantCount,
+                    format == "RoundRobin" ? 1 : Math.Max(2, participantCount / 4),
+                    false);
 
-                signup.Participants.AddRange(members);
+                // Generate and show the tournament visualization
+                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+                using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                var builder = new DiscordWebhookBuilder()
+                    .WithContent($"Test tournament '{tournamentName}' created with {participantCount} participants.")
+                    .AddFile("tournament.png", fs);
 
-                // Create a signup message
-                var embed = CreateSignupEmbed(signup);
-                var message = await context.Channel.SendMessageAsync(embed);
-                signup.SignupListMessage = message;
-
-                await context.EditResponseAsync($"Test tournament signup '{tournamentName}' created with {members.Count} participants. Use `/tournament_manager test_create_tournament {tournamentName}` to create the tournament.");
+                await context.EditResponseAsync(builder);
             }
             catch (Exception ex)
             {
@@ -747,22 +742,11 @@ namespace Wabbit.BotClient.Commands
 
         private List<DiscordMember> GetTestParticipants(CommandContext context, int count)
         {
-            // Create mock participants instead of getting real server members
-            var mockParticipants = new List<DiscordMember>();
+            // Instead of casting which causes null reference errors,
+            // we'll add the mock players directly to the tournament
 
-            for (int i = 0; i < count; i++)
-            {
-                var mockPlayer = new MockDiscordMember
-                {
-                    UserId = 100000000000000000 + (ulong)i,
-                    UserName = $"TestPlayer{i + 1}"
-                };
-
-                // Add the mock player to the list (using the explicit cast operator)
-                mockParticipants.Add((DiscordMember)mockPlayer);
-            }
-
-            return mockParticipants;
+            // Just return empty list - we'll use the mockplayers directly in TestSetup
+            return new List<DiscordMember>();
         }
 
         private async Task SimulateGroupMatches(CommandContext context, Tournament tournament)
