@@ -1140,221 +1140,289 @@ namespace Wabbit.BotClient.Commands
 
         private void CreateTestGroups(Tournament tournament, int playerCount, int groupCount, bool playMatches, double completionRate = 0.0)
         {
-            // Create the groups
-            var random = new Random();
+            // Create groups
             for (int i = 0; i < groupCount; i++)
             {
                 var group = new Tournament.Group
                 {
                     Name = $"Group {(char)('A' + i)}"
                 };
-
-                int playersPerGroup = playerCount / groupCount;
-                int remainder = playerCount % groupCount;
-                int groupSize = playersPerGroup + (i < remainder ? 1 : 0);
-
-                // Add players to the group
-                for (int j = 0; j < groupSize; j++)
-                {
-                    // Create a better display name for mock players
-                    string playerName = $"Player {(char)('A' + i)}{j + 1}";
-
-                    // Create a more detailed mock player
-                    var mockPlayer = new MockDiscordMember
-                    {
-                        UserId = 100000000000000000 + (ulong)(i * playersPerGroup + j),
-                        UserName = playerName
-                    };
-
-                    // Add to participants
-                    group.Participants.Add(new Tournament.GroupParticipant
-                    {
-                        Player = (DiscordMember)mockPlayer
-                    });
-                }
-
-                // Add the group to the tournament
                 tournament.Groups.Add(group);
+            }
+
+            // Create participants and distribute them among groups
+            var random = new Random();
+            int groupIndex = 0;
+
+            for (int i = 0; i < playerCount; i++)
+            {
+                var group = tournament.Groups[groupIndex];
+
+                // Create a mock player with a more descriptive name
+                var player = new MockDiscordMember
+                {
+                    UserId = (ulong)(1000000 + i),
+                    UserName = $"Player {i + 1}"
+                };
+
+                group.Participants.Add(new Tournament.GroupParticipant
+                {
+                    Player = (DSharpPlus.Entities.DiscordMember)player
+                });
+
+                // Move to next group
+                groupIndex = (groupIndex + 1) % tournament.Groups.Count;
             }
 
             // Generate matches for each group
             foreach (var group in tournament.Groups)
             {
                 GenerateGroupMatches(tournament, group);
+            }
 
-                // Play matches if required
-                if (playMatches)
+            // Play matches if requested
+            if (playMatches)
+            {
+                foreach (var group in tournament.Groups)
                 {
                     PlayGroupMatches(group, random, completionRate);
                 }
-            }
-
-            // If we're playing matches and all groups are complete, set up playoffs
-            if (playMatches && tournament.Groups.All(g => g.IsComplete))
-            {
-                SetupTestPlayoffs(tournament, playMatches, completionRate);
             }
         }
 
         private void SetupTestPlayoffs(Tournament tournament, bool playMatches, double completionRate = 0.0)
         {
-            // Create playoff bracket
-            List<Tournament.MatchParticipant> qualifiedPlayers = new();
-
-            // Get qualified players from groups
-            foreach (var group in tournament.Groups)
+            try
             {
-                for (int position = 1; position <= 2; position++)
+                // Make sure we have at least one group with advanced players
+                bool hasAdvancedPlayers = false;
+                foreach (var group in tournament.Groups)
                 {
-                    var qualifier = group.Participants
-                        .Where(p => p.AdvancedToPlayoffs)
-                        .OrderByDescending(p => p.Points)
-                        .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                        .ElementAtOrDefault(position - 1);
+                    if (group.Participants.Any(p => p.AdvancedToPlayoffs))
+                    {
+                        hasAdvancedPlayers = true;
+                        break;
+                    }
+                }
 
-                    if (qualifier != null)
+                if (!hasAdvancedPlayers)
+                {
+                    Console.WriteLine("Warning: No players have advanced to playoffs, marking some as advanced");
+                    // Mark top players in each group as advanced
+                    foreach (var group in tournament.Groups)
+                    {
+                        var topPlayer = group.Participants
+                            .OrderByDescending(p => p.Points)
+                            .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                            .FirstOrDefault();
+
+                        if (topPlayer != null)
+                        {
+                            topPlayer.AdvancedToPlayoffs = true;
+                        }
+                    }
+                }
+
+                // Create semifinals, final, and third-place match
+                var sf1 = new Tournament.Match
+                {
+                    Name = "Semifinal 1",
+                    Type = Wabbit.Models.MatchType.Semifinal,
+                    DisplayPosition = "Semifinal 1",
+                    BestOf = 3,
+                    Participants = []
+                };
+
+                var sf2 = new Tournament.Match
+                {
+                    Name = "Semifinal 2",
+                    Type = Wabbit.Models.MatchType.Semifinal,
+                    DisplayPosition = "Semifinal 2",
+                    BestOf = 3,
+                    Participants = []
+                };
+
+                var final = new Tournament.Match
+                {
+                    Name = "Final",
+                    Type = Wabbit.Models.MatchType.Final,
+                    DisplayPosition = "Final",
+                    BestOf = 5,
+                    Participants = []
+                };
+
+                var thirdPlace = new Tournament.Match
+                {
+                    Name = "Third Place",
+                    Type = Wabbit.Models.MatchType.ThirdPlace,
+                    DisplayPosition = "Third Place",
+                    BestOf = 3,
+                    Participants = []
+                };
+
+                // Link the matches
+                sf1.NextMatch = final;
+                sf2.NextMatch = final;
+
+                // Add them to the tournament
+                tournament.PlayoffMatches.Add(sf1);
+                tournament.PlayoffMatches.Add(sf2);
+                tournament.PlayoffMatches.Add(final);
+                tournament.PlayoffMatches.Add(thirdPlace);
+
+                // Seed the semifinal matches with qualified players
+                List<Tournament.MatchParticipant> qualifiedPlayers = [];
+
+                // Gather qualified players from each group
+                foreach (var group in tournament.Groups)
+                {
+                    foreach (var participant in group.Participants.Where(p => p.AdvancedToPlayoffs && p.Player is not null))
                     {
                         qualifiedPlayers.Add(new Tournament.MatchParticipant
                         {
-                            Player = qualifier.Player,
+                            Player = participant.Player,
                             SourceGroup = group,
-                            SourceGroupPosition = position
+                            SourceGroupPosition = group.Participants
+                                .OrderByDescending(p => p.Points)
+                                .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                                .ToList()
+                                .IndexOf(participant) + 1
                         });
                     }
                 }
+
+                // Make sure we have at least 2 qualified players for semifinals
+                if (qualifiedPlayers.Count < 2)
+                {
+                    Console.WriteLine("Error: Not enough qualified players for playoffs");
+                    return;
+                }
+
+                // Assign to semifinals (crossing groups if possible)
+                if (qualifiedPlayers.Count >= 1)
+                    sf1.Participants.Add(qualifiedPlayers[0]);
+                if (qualifiedPlayers.Count >= 3)
+                    sf1.Participants.Add(qualifiedPlayers[2]);
+                else if (qualifiedPlayers.Count >= 2)
+                    sf1.Participants.Add(qualifiedPlayers[1]); // Only 2 players total
+
+                if (qualifiedPlayers.Count >= 2)
+                    sf2.Participants.Add(qualifiedPlayers[1]);
+                if (qualifiedPlayers.Count >= 4)
+                    sf2.Participants.Add(qualifiedPlayers[3]);
+                else if (qualifiedPlayers.Count >= 3)
+                    sf2.Participants.Add(qualifiedPlayers[2]); // Only 3 players total
+
+                // Mark tournament as in playoff stage
+                tournament.CurrentStage = TournamentStage.Playoffs;
+
+                // Simulate matches if needed
+                if (playMatches)
+                {
+                    var random = new Random();
+                    var allMatches = tournament.PlayoffMatches.ToList();
+                    int matchesToPlay = (int)(allMatches.Count * completionRate);
+
+                    // Play semifinals
+                    if (matchesToPlay >= 2 &&
+                        sf1.Participants.Count == 2 && sf1.Participants[0].Player is not null && sf1.Participants[1].Player is not null &&
+                        sf2.Participants.Count == 2 && sf2.Participants[0].Player is not null && sf2.Participants[1].Player is not null)
+                    {
+                        PlayTestMatch(sf1, random);
+                        PlayTestMatch(sf2, random);
+
+                        if (sf1.Result?.Winner is not null && sf2.Result?.Winner is not null)
+                        {
+                            // Add participants to final
+                            final.Participants.Add(new Tournament.MatchParticipant
+                            {
+                                Player = sf1.Result.Winner,
+                                SourceGroup = sf1.Participants.First(p =>
+                                    p.Player is not null && sf1.Result.Winner is not null &&
+                                    (p.Player.Id == sf1.Result.Winner.Id ||
+                                     p.Player.ToString() == sf1.Result.Winner.ToString())).SourceGroup
+                            });
+
+                            final.Participants.Add(new Tournament.MatchParticipant
+                            {
+                                Player = sf2.Result.Winner,
+                                SourceGroup = sf2.Participants.First(p =>
+                                    p.Player is not null && sf2.Result.Winner is not null &&
+                                    (p.Player.Id == sf2.Result.Winner.Id ||
+                                     p.Player.ToString() == sf2.Result.Winner.ToString())).SourceGroup
+                            });
+
+                            // Add participants to third place match
+                            thirdPlace.Participants.Add(new Tournament.MatchParticipant
+                            {
+                                Player = sf1.Participants.First(p => !p.IsWinner).Player,
+                                SourceGroup = sf1.Participants.First(p => !p.IsWinner).SourceGroup
+                            });
+
+                            thirdPlace.Participants.Add(new Tournament.MatchParticipant
+                            {
+                                Player = sf2.Participants.First(p => !p.IsWinner).Player,
+                                SourceGroup = sf2.Participants.First(p => !p.IsWinner).SourceGroup
+                            });
+                        }
+                    }
+
+                    // Play final and third place
+                    if (matchesToPlay >= 4 &&
+                        final.Participants.Count == 2 && final.Participants[0].Player is not null && final.Participants[1].Player is not null &&
+                        thirdPlace.Participants.Count == 2 && thirdPlace.Participants[0].Player is not null && thirdPlace.Participants[1].Player is not null)
+                    {
+                        PlayTestMatch(final, random);
+                        PlayTestMatch(thirdPlace, random);
+
+                        // Mark tournament as complete
+                        tournament.IsComplete = true;
+                        tournament.CurrentStage = TournamentStage.Complete;
+                    }
+                }
             }
-
-            // Create semifinal matches
-            var sf1 = new Tournament.Match
+            catch (Exception ex)
             {
-                Name = "Semifinal 1",
-                Type = Wabbit.Models.MatchType.Semifinal,
-                DisplayPosition = "Semifinal 1",
-                BestOf = 5
-            };
-
-            var sf2 = new Tournament.Match
-            {
-                Name = "Semifinal 2",
-                Type = Wabbit.Models.MatchType.Semifinal,
-                DisplayPosition = "Semifinal 2",
-                BestOf = 5
-            };
-
-            // Add participants - cross-seeding
-            if (qualifiedPlayers.Count >= 4)
-            {
-                // Ensure proper seeding: A1 vs B2, A2 vs B1
-                sf1.Participants.Add(qualifiedPlayers.First(p => p.SourceGroup is not null && p.SourceGroup.Name == "Group A" && p.SourceGroupPosition == 1));
-                sf1.Participants.Add(qualifiedPlayers.First(p => p.SourceGroup is not null && p.SourceGroup.Name == "Group B" && p.SourceGroupPosition == 2));
-
-                sf2.Participants.Add(qualifiedPlayers.First(p => p.SourceGroup is not null && p.SourceGroup.Name == "Group B" && p.SourceGroupPosition == 1));
-                sf2.Participants.Add(qualifiedPlayers.First(p => p.SourceGroup is not null && p.SourceGroup.Name == "Group A" && p.SourceGroupPosition == 2));
-            }
-
-            // Create final and third place matches
-            var final = new Tournament.Match
-            {
-                Name = "Final",
-                Type = Wabbit.Models.MatchType.Final,
-                DisplayPosition = "Final",
-                BestOf = 5
-            };
-
-            var thirdPlace = new Tournament.Match
-            {
-                Name = "Third Place",
-                Type = Wabbit.Models.MatchType.ThirdPlace,
-                DisplayPosition = "Third Place",
-                BestOf = 3
-            };
-
-            // Link matches to the bracket
-            sf1.NextMatch = final;
-            sf2.NextMatch = final;
-
-            // Add matches to tournament
-            tournament.PlayoffMatches.Add(sf1);
-            tournament.PlayoffMatches.Add(sf2);
-            tournament.PlayoffMatches.Add(final);
-            tournament.PlayoffMatches.Add(thirdPlace);
-
-            // Simulate matches if needed
-            if (playMatches)
-            {
-                var random = new Random();
-                var allMatches = tournament.PlayoffMatches.ToList();
-                int matchesToPlay = (int)(allMatches.Count * completionRate);
-
-                // Play semifinals
-                if (matchesToPlay >= 2)
-                {
-                    PlayTestMatch(sf1, random);
-                    PlayTestMatch(sf2, random);
-
-                    // Add participants to final and third place matches
-                    final.Participants.Add(new Tournament.MatchParticipant
-                    {
-                        Player = sf1.Result?.Winner,
-                        SourceGroup = sf1.Participants.First(p =>
-                            p.Player is not null &&
-                            sf1.Result?.Winner is not null &&
-                            p.Player.Id == sf1.Result.Winner.Id).SourceGroup
-                    });
-
-                    final.Participants.Add(new Tournament.MatchParticipant
-                    {
-                        Player = sf2.Result?.Winner,
-                        SourceGroup = sf2.Participants.First(p =>
-                            p.Player is not null &&
-                            sf2.Result?.Winner is not null &&
-                            p.Player.Id == sf2.Result.Winner.Id).SourceGroup
-                    });
-
-                    thirdPlace.Participants.Add(new Tournament.MatchParticipant
-                    {
-                        Player = sf1.Participants.First(p => !p.IsWinner).Player,
-                        SourceGroup = sf1.Participants.First(p => !p.IsWinner).SourceGroup
-                    });
-
-                    thirdPlace.Participants.Add(new Tournament.MatchParticipant
-                    {
-                        Player = sf2.Participants.First(p => !p.IsWinner).Player,
-                        SourceGroup = sf2.Participants.First(p => !p.IsWinner).SourceGroup
-                    });
-                }
-
-                // Play third place match
-                if (matchesToPlay >= 3)
-                {
-                    PlayTestMatch(thirdPlace, random);
-                }
-
-                // Play final
-                if (matchesToPlay >= 4)
-                {
-                    PlayTestMatch(final, random);
-                    tournament.IsComplete = true;
-                }
+                Console.WriteLine($"Error in SetupTestPlayoffs: {ex.Message}");
             }
         }
 
         private void PlayTestMatch(Tournament.Match match, Random random)
         {
-            // Randomly determine winner
-            int winnerIdx = random.Next(0, 2);
-            var winner = match.Participants[winnerIdx].Player;
-
-            // Create result
-            match.Result = new Tournament.MatchResult
+            // Check if there are enough participants
+            if (match.Participants == null || match.Participants.Count < 2)
             {
-                Winner = winner,
-                CompletedAt = DateTime.Now.AddHours(-random.Next(1, 24))
-            };
+                Console.WriteLine($"Warning: Cannot play match '{match.Name}' - not enough participants");
+                return;
+            }
 
-            match.Participants[winnerIdx].IsWinner = true;
-            match.Participants[winnerIdx].Score = random.Next(3, 5);
-            match.Participants[1 - winnerIdx].Score = random.Next(match.BestOf / 2);
+            try
+            {
+                // Randomly determine winner
+                int winnerIdx = random.Next(0, 2);
+                var winner = match.Participants[winnerIdx].Player;
+
+                if (winner is null)
+                {
+                    Console.WriteLine($"Warning: Player at index {winnerIdx} is null in match '{match.Name}'");
+                    return;
+                }
+
+                // Create result
+                match.Result = new Tournament.MatchResult
+                {
+                    Winner = winner,
+                    CompletedAt = DateTime.Now.AddHours(-random.Next(1, 24))
+                };
+
+                match.Participants[winnerIdx].IsWinner = true;
+                match.Participants[winnerIdx].Score = random.Next(3, 5);
+                match.Participants[1 - winnerIdx].Score = random.Next(match.BestOf / 2);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error playing test match '{match.Name}': {ex.Message}");
+            }
         }
 
         private ulong? GetSignupChannelId(CommandContext context)
@@ -1460,89 +1528,110 @@ namespace Wabbit.BotClient.Commands
 
         private void PlayGroupMatches(Tournament.Group group, Random random, double completionRate = 1.0)
         {
-            int matchesToPlay = (int)(group.Matches.Count * completionRate);
-            int matchesPlayed = 0;
-
-            foreach (var match in group.Matches)
+            try
             {
-                if (matchesPlayed >= matchesToPlay)
-                    break;
+                // Determine how many matches to play based on completion rate
+                int matchesToPlay = (int)(group.Matches.Count * completionRate);
 
-                // Randomly determine winner (biased to give more realistic scores) 
-                int winnerIdx = random.Next(0, 2);
-
-                // Get player references
-                var player1 = match.Participants[0].Player;
-                var player2 = match.Participants[1].Player;
-
-                // Skip if either player is null
-                if (player1 is null || player2 is null)
-                    continue;
-
-                var winner = match.Participants[winnerIdx].Player;
-                var loser = match.Participants[1 - winnerIdx].Player;
-
-                // Create result
-                match.Result = new Tournament.MatchResult
+                for (int i = 0; i < matchesToPlay; i++)
                 {
-                    Winner = winner,
-                    CompletedAt = DateTime.Now.AddDays(-random.Next(1, 5))
-                };
+                    var match = group.Matches[i];
 
-                match.Participants[winnerIdx].IsWinner = true;
-                match.Participants[winnerIdx].Score = random.Next(2, 4);
-                match.Participants[1 - winnerIdx].Score = random.Next(0, 2);
+                    // Skip if match is already completed
+                    if (match.IsComplete)
+                        continue;
 
-                // Update group participants stats
-                try
-                {
-                    // Find the corresponding participant in the group for the winner
-                    var winnerParticipant = group.Participants.First(p =>
-                        p.Player is not null && winner is not null &&
-                        (p.Player.Id == winner.Id ||
-                         p.Player.ToString() == winner.ToString()));
+                    // Skip if either participant doesn't have a player (should never happen)
+                    if (match.Participants.Count < 2 ||
+                        match.Participants[0].Player is null ||
+                        match.Participants[1].Player is null)
+                    {
+                        Console.WriteLine($"Warning: Skipping match in {group.Name} due to missing player");
+                        continue;
+                    }
 
-                    // Find the corresponding participant in the group for the loser
-                    var loserParticipant = group.Participants.First(p =>
-                        p.Player is not null && loser is not null &&
-                        (p.Player.Id == loser.Id ||
-                         p.Player.ToString() == loser.ToString()));
+                    // Determine winner (random)
+                    int winnerIdx = random.Next(0, 2);
 
-                    // Update stats
-                    winnerParticipant.Wins++;
-                    winnerParticipant.GamesWon += match.Participants[winnerIdx].Score;
-                    winnerParticipant.GamesLost += match.Participants[1 - winnerIdx].Score;
+                    // Get player references
+                    var player1 = match.Participants[0].Player;
+                    var player2 = match.Participants[1].Player;
 
-                    loserParticipant.Losses++;
-                    loserParticipant.GamesWon += match.Participants[1 - winnerIdx].Score;
-                    loserParticipant.GamesLost += match.Participants[winnerIdx].Score;
+                    // Skip if either player is null
+                    if (player1 is null || player2 is null)
+                        continue;
 
-                    matchesPlayed++;
+                    var winner = match.Participants[winnerIdx].Player;
+                    var loser = match.Participants[1 - winnerIdx].Player;
+
+                    // Create result
+                    match.Result = new Tournament.MatchResult
+                    {
+                        Winner = winner,
+                        CompletedAt = DateTime.Now.AddDays(-random.Next(1, 5))
+                    };
+
+                    match.Participants[winnerIdx].IsWinner = true;
+                    match.Participants[winnerIdx].Score = random.Next(2, 4);
+                    match.Participants[1 - winnerIdx].Score = random.Next(0, 2);
+
+                    // Update group participants stats
+                    try
+                    {
+                        // Find the corresponding participant in the group for the winner
+                        var winnerParticipant = group.Participants.First(p =>
+                            p.Player is not null && winner is not null &&
+                            (p.Player.Id == winner.Id ||
+                             p.Player.ToString() == winner.ToString()));
+
+                        // Find the corresponding participant in the group for the loser
+                        var loserParticipant = group.Participants.First(p =>
+                            p.Player is not null && loser is not null &&
+                            (p.Player.Id == loser.Id ||
+                             p.Player.ToString() == loser.ToString()));
+
+                        // Update stats
+                        winnerParticipant.Wins++;
+                        winnerParticipant.GamesWon += match.Participants[winnerIdx].Score;
+                        winnerParticipant.GamesLost += match.Participants[1 - winnerIdx].Score;
+
+                        loserParticipant.Losses++;
+                        loserParticipant.GamesWon += match.Participants[1 - winnerIdx].Score;
+                        loserParticipant.GamesLost += match.Participants[winnerIdx].Score;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error updating stats: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+
+                // Mark group as complete if all matches have been played
+                group.IsComplete = group.Matches.Count > 0 &&
+                                  group.Matches.Count(m => m.IsComplete) >= matchesToPlay;
+
+                // Determine which players advance to playoffs
+                if (group.IsComplete)
                 {
-                    Console.WriteLine($"Error updating match stats: {ex.Message}");
-                    // Continue with next match
+                    DeterminePlayoffAdvancement(group);
                 }
             }
-
-            // Mark group as complete if all matches are played
-            if (matchesPlayed > 0 && group.Matches.Count(m => m.IsComplete) >= matchesToPlay)
+            catch (Exception ex)
             {
-                group.IsComplete = true;
+                Console.WriteLine($"Error in PlayGroupMatches: {ex.Message}");
+            }
+        }
 
-                // Mark top 2 players as advanced (or just 1 if only 1 player in group)
-                int advanceCount = Math.Min(2, group.Participants.Count);
+        private void DeterminePlayoffAdvancement(Tournament.Group group)
+        {
+            int advanceCount = group.Participants.Count > 4 ? 2 : 1;
+            var topPlayers = group.Participants
+                .OrderByDescending(p => p.Points)
+                .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                .Take(advanceCount);
 
-                var topPlayers = group.Participants
-                    .OrderByDescending(p => p.Points)
-                    .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                    .Take(advanceCount);
-
-                foreach (var player in topPlayers)
-                {
-                    player.AdvancedToPlayoffs = true;
-                }
+            foreach (var player in topPlayers)
+            {
+                player.AdvancedToPlayoffs = true;
             }
         }
     }
