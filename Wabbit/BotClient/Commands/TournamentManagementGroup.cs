@@ -812,24 +812,41 @@ namespace Wabbit.BotClient.Commands
                         }
 
                         // Add mock participants
-                        for (int i = 0; i < 3; i++)
+                        try
                         {
-                            var mockPlayer = new MockDiscordMember
+                            for (int i = 0; i < 3; i++)
                             {
-                                UserId = 100000000000000000 + (ulong)i,
-                                UserName = $"TestPlayer{i + 1}"
-                            };
+                                var mockPlayer = new MockDiscordMember
+                                {
+                                    UserId = 100000000000000000 + (ulong)i,
+                                    UserName = $"TestPlayer{i + 1}"
+                                };
 
-                            if (!existingSignup.Participants.Any(p => p.Id == mockPlayer.Id))
-                            {
-                                existingSignup.Participants.Add((DiscordMember)mockPlayer);
+                                if (!existingSignup.Participants.Any(p => p.Id == mockPlayer.Id))
+                                {
+                                    existingSignup.Participants.Add((DiscordMember)mockPlayer);
+                                }
                             }
+
+                            // Try to update the signup message
+                            if (existingSignup.SignupListMessage is not null)
+                            {
+                                try
+                                {
+                                    await UpdateSignupMessage(existingSignup, context.Client);
+                                }
+                                catch (Exception ex)
+                                {
+                                    await context.Channel.SendMessageAsync($"Warning: Could not update signup message: {ex.Message}");
+                                }
+                            }
+
+                            await context.EditResponseAsync($"✅ **Step 2 Complete**: Added participants to signup '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
                         }
-
-                        // Update the signup message
-                        await UpdateSignupMessage(existingSignup, context.Client);
-
-                        await context.Channel.SendMessageAsync($"✅ **Step 2 Complete**: Added participants to signup '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
+                        catch (Exception ex)
+                        {
+                            await context.EditResponseAsync($"Error adding mock participants: {ex.Message}");
+                        }
                         break;
 
                     case 3: // Create tournament from signup using the actual command
@@ -1386,19 +1403,23 @@ namespace Wabbit.BotClient.Commands
 
         private async Task UpdateSignupMessage(TournamentSignup signup, DSharpPlus.DiscordClient client)
         {
-            if (signup.SignupListMessage is null)
-                return;
-
             try
             {
-                // Create updated embed
-                var embed = CreateSignupEmbed(signup);
+                // Check if the signup message exists
+                if (signup.SignupListMessage == null)
+                {
+                    // Can't create a new message without a channel reference
+                    Console.WriteLine("Cannot update signup message: No existing message reference");
+                    return;
+                }
 
-                // Update the message
-                await signup.SignupListMessage.ModifyAsync(embed: embed);
+                // Update the existing message
+                var updatedEmbed = CreateSignupEmbed(signup);
+                await signup.SignupListMessage.ModifyAsync(updatedEmbed);
             }
             catch (Exception ex)
             {
+                // Log the error but don't throw so the test can continue
                 Console.WriteLine($"Error updating signup message: {ex.Message}");
             }
         }
