@@ -167,9 +167,9 @@ namespace Wabbit.Misc
                 yOffset += RowHeight;
 
                 // Calculate column widths
-                int nameWidth = (int)(width * 0.35); // Reduced from 0.5 to 0.35
+                int nameWidth = (int)(width * 0.30); // Reduced from 0.35 to 0.30
                 int statsWidth = (int)(width * 0.125);
-                int statusWidth = (int)(width * 0.15);
+                int statusWidth = (int)(width * 0.20); // Increased from 0.15 to 0.20
 
                 // Draw header row
                 int xPos = Padding;
@@ -236,6 +236,17 @@ namespace Wabbit.Misc
                     if (string.IsNullOrEmpty(displayName) && participant.Player is not null)
                     {
                         displayName = participant.Player.ToString() ?? string.Empty;
+                    }
+
+                    // If still empty, try to extract a name from the Player's ToString representation
+                    if (string.IsNullOrEmpty(displayName) && participant.Player is not null)
+                    {
+                        // Try to get the name from the ToString representation
+                        var typeString = participant.Player.ToString();
+                        if (!string.IsNullOrEmpty(typeString) && typeString != "null")
+                        {
+                            displayName = typeString;
+                        }
                     }
 
                     // If still empty, use the default fallback text

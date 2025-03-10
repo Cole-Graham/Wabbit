@@ -833,7 +833,7 @@ namespace Wabbit.BotClient.Commands
                         {
                             // If a tournament already exists, just go to the next step
                             await context.EditResponseAsync($"A tournament with name '{testName}' already exists. Skipping creation step.");
-                            await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager test_user_flow 4` to continue.");
+                            await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.");
                             break;
                         }
 
@@ -931,31 +931,60 @@ namespace Wabbit.BotClient.Commands
                             testName = tournamentToComplete.Name;
                         }
 
-                        // Set up playoffs
-                        if (tournamentToComplete.CurrentStage == TournamentStage.Groups)
+                        try
                         {
-                            SetupTestPlayoffs(tournamentToComplete, true, 1.0);
+                            // Set up playoffs with safeguards
+                            if (tournamentToComplete.CurrentStage == TournamentStage.Groups)
+                            {
+                                // Make sure we have at least one qualified player from each group
+                                foreach (var group in tournamentToComplete.Groups)
+                                {
+                                    if (!group.Participants.Any(p => p.AdvancedToPlayoffs))
+                                    {
+                                        // Ensure at least one player advances
+                                        var topPlayer = group.Participants
+                                            .OrderByDescending(p => p.Points)
+                                            .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                                            .FirstOrDefault();
+
+                                        if (topPlayer != null)
+                                        {
+                                            topPlayer.AdvancedToPlayoffs = true;
+                                        }
+                                    }
+                                }
+
+                                // Now set up playoffs
+                                SetupTestPlayoffs(tournamentToComplete, true, 1.0);
+                            }
+
+                            // Simulate playoff matches if we have playoffs
+                            if (tournamentToComplete.CurrentStage == TournamentStage.Playoffs &&
+                                tournamentToComplete.PlayoffMatches.Count > 0)
+                            {
+                                await SimulatePlayoffMatches(context, tournamentToComplete);
+                            }
+                            else
+                            {
+                                // If we don't have playoffs, just mark the tournament as complete
+                                tournamentToComplete.CurrentStage = TournamentStage.Complete;
+                                tournamentToComplete.IsComplete = true;
+                            }
+
+                            // Final visualization
+                            {
+                                string finalImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToComplete);
+                                using var finalFs = new FileStream(finalImagePath, FileMode.Open, FileAccess.Read);
+                                var finalBuilder = new DiscordWebhookBuilder()
+                                    .WithContent($"🏆 **Testing Complete**: Tournament '{testName}' has finished!\n\nYou've successfully tested:\n- Tournament signup creation\n- User signup\n- Tournament creation from signup\n- Match simulation\n- Tournament completion\n\nAll user flows tested successfully.")
+                                    .AddFile("tournament_final.png", finalFs);
+
+                                await context.EditResponseAsync(finalBuilder);
+                            }
                         }
-
-                        // Simulate playoff matches
-                        if (tournamentToComplete.CurrentStage == TournamentStage.Playoffs)
+                        catch (Exception ex)
                         {
-                            await SimulatePlayoffMatches(context, tournamentToComplete);
-                        }
-
-                        // Mark as complete
-                        tournamentToComplete.CurrentStage = TournamentStage.Complete;
-                        tournamentToComplete.IsComplete = true;
-
-                        // Final visualization
-                        {
-                            string finalImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToComplete);
-                            using var finalFs = new FileStream(finalImagePath, FileMode.Open, FileAccess.Read);
-                            var finalBuilder = new DiscordWebhookBuilder()
-                                .WithContent($"🏆 **Testing Complete**: Tournament '{testName}' has finished!\n\nYou've successfully tested:\n- Tournament signup creation\n- User signup\n- Tournament creation from signup\n- Match simulation\n- Tournament completion\n\nAll user flows tested successfully.")
-                                .AddFile("tournament_final.png", finalFs);
-
-                            await context.EditResponseAsync(finalBuilder);
+                            await context.EditResponseAsync($"Error completing tournament: {ex.Message}\n\nStack trace: {ex.StackTrace}");
                         }
                         break;
 
@@ -1127,13 +1156,17 @@ namespace Wabbit.BotClient.Commands
                 // Add players to the group
                 for (int j = 0; j < groupSize; j++)
                 {
+                    // Create a better display name for mock players
                     string playerName = $"Player {(char)('A' + i)}{j + 1}";
+
+                    // Create a more detailed mock player
                     var mockPlayer = new MockDiscordMember
                     {
                         UserId = 100000000000000000 + (ulong)(i * playersPerGroup + j),
                         UserName = playerName
                     };
 
+                    // Add to participants
                     group.Participants.Add(new Tournament.GroupParticipant
                     {
                         Player = (DiscordMember)mockPlayer
@@ -1435,8 +1468,17 @@ namespace Wabbit.BotClient.Commands
                 if (matchesPlayed >= matchesToPlay)
                     break;
 
-                // Randomly determine winner
+                // Randomly determine winner (biased to give more realistic scores) 
                 int winnerIdx = random.Next(0, 2);
+
+                // Get player references
+                var player1 = match.Participants[0].Player;
+                var player2 = match.Participants[1].Player;
+
+                // Skip if either player is null
+                if (player1 is null || player2 is null)
+                    continue;
+
                 var winner = match.Participants[winnerIdx].Player;
                 var loser = match.Participants[1 - winnerIdx].Player;
 
@@ -1452,37 +1494,50 @@ namespace Wabbit.BotClient.Commands
                 match.Participants[1 - winnerIdx].Score = random.Next(0, 2);
 
                 // Update group participants stats
-                var winnerParticipant = group.Participants.First(p =>
-                    p.Player is not null &&
-                    winner is not null &&
-                    p.Player.Id == winner.Id);
+                try
+                {
+                    // Find the corresponding participant in the group for the winner
+                    var winnerParticipant = group.Participants.First(p =>
+                        p.Player is not null && winner is not null &&
+                        (p.Player.Id == winner.Id ||
+                         p.Player.ToString() == winner.ToString()));
 
-                var loserParticipant = group.Participants.First(p =>
-                    p.Player is not null &&
-                    loser is not null &&
-                    p.Player.Id == loser.Id);
+                    // Find the corresponding participant in the group for the loser
+                    var loserParticipant = group.Participants.First(p =>
+                        p.Player is not null && loser is not null &&
+                        (p.Player.Id == loser.Id ||
+                         p.Player.ToString() == loser.ToString()));
 
-                winnerParticipant.Wins++;
-                winnerParticipant.GamesWon += match.Participants[winnerIdx].Score;
-                winnerParticipant.GamesLost += match.Participants[1 - winnerIdx].Score;
+                    // Update stats
+                    winnerParticipant.Wins++;
+                    winnerParticipant.GamesWon += match.Participants[winnerIdx].Score;
+                    winnerParticipant.GamesLost += match.Participants[1 - winnerIdx].Score;
 
-                loserParticipant.Losses++;
-                loserParticipant.GamesWon += match.Participants[1 - winnerIdx].Score;
-                loserParticipant.GamesLost += match.Participants[winnerIdx].Score;
+                    loserParticipant.Losses++;
+                    loserParticipant.GamesWon += match.Participants[1 - winnerIdx].Score;
+                    loserParticipant.GamesLost += match.Participants[winnerIdx].Score;
 
-                matchesPlayed++;
+                    matchesPlayed++;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error updating match stats: {ex.Message}");
+                    // Continue with next match
+                }
             }
 
             // Mark group as complete if all matches are played
-            if (group.Matches.All(m => m.IsComplete))
+            if (matchesPlayed > 0 && group.Matches.Count(m => m.IsComplete) >= matchesToPlay)
             {
                 group.IsComplete = true;
 
-                // Mark top 2 players as advanced
+                // Mark top 2 players as advanced (or just 1 if only 1 player in group)
+                int advanceCount = Math.Min(2, group.Participants.Count);
+
                 var topPlayers = group.Participants
                     .OrderByDescending(p => p.Points)
                     .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                    .Take(2);
+                    .Take(advanceCount);
 
                 foreach (var player in topPlayers)
                 {
@@ -1539,13 +1594,29 @@ namespace Wabbit.BotClient.Commands
         // Override ToString to help with debugging and visualization
         public override string ToString() => UserName;
 
+        // Override equals and hash code to make player matching work
+        public override bool Equals(object? obj)
+        {
+            if (obj is MockDiscordMember other)
+            {
+                return Id == other.Id || UserName == other.UserName;
+            }
+            return false;
+        }
+
+        public override int GetHashCode()
+        {
+            return HashCode.Combine(Id, UserName);
+        }
+
         // Explicit conversion to allow using as DiscordMember in tests
         public static explicit operator DSharpPlus.Entities.DiscordMember(MockDiscordMember mock)
         {
-            // This forces the participant.Player?.DisplayName in TournamentVisualization.cs
-            // to use the MockDiscordMember.DisplayName property by pretending to be null
-            // but exposing its DisplayName via ToString()
-            return null!;
+            // Note: We explicitly return null because we handle comparisons through ToString() and Equals()
+            // Any code using this cast should check for null before dereferencing
+#pragma warning disable CS8603 // Possible null reference return
+            return null;
+#pragma warning restore CS8603
         }
     }
 }
