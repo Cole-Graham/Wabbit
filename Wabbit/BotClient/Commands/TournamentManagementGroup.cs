@@ -15,6 +15,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using DSharpPlus;
+using System.Reflection;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -798,15 +799,15 @@ namespace Wabbit.BotClient.Commands
                         case 2: // Testing signup functionality
                             await context.EditResponseAsync($"**Step 2**: Testing signup functionality for '{testName}'...");
 
-                            var existingSignup = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
-                            if (existingSignup == null)
+                            var signupForTournament = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
+                            if (signupForTournament == null)
                             {
                                 await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run step 1 first.");
                                 return;
                             }
 
                             // Check if user has signed up themselves
-                            bool userSignedUp = existingSignup.Participants.Any(p => p.Id == context.User.Id);
+                            bool userSignedUp = signupForTournament.Participants.Any(p => p.Id == context.User.Id);
 
                             if (!userSignedUp)
                             {
@@ -820,60 +821,46 @@ namespace Wabbit.BotClient.Commands
                             await context.EditResponseAsync($"✅ **Step 2 Complete**: Verified signup for '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
                             break;
 
-                        case 3: // Create tournament from signup using the actual command
-                            await context.EditResponseAsync($"**Step 3**: Creating tournament from signup '{testName}' using the command...");
-
-                            // First, check if the signup exists
-                            var signupToConvert = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
-                            if (signupToConvert == null)
+                        case 3: // Create tournament from signup
                             {
-                                await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run steps 1-2 first.");
-                                return;
-                            }
+                                Console.WriteLine($"Test flow step 3: Creating tournament from signup '{testName}'");
 
-                            // Check if a tournament with this name already exists
-                            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(testName, StringComparison.OrdinalIgnoreCase)))
-                            {
-                                // If a tournament already exists, just go to the next step
-                                await context.EditResponseAsync($"A tournament with name '{testName}' already exists. Skipping creation step.");
-                                await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.");
+                                // Get the signup
+                                var step3Signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
+                                if (step3Signup == null)
+                                {
+                                    await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run step 1 first.");
+                                    return;
+                                }
+
+                                // Check if a tournament with this name already exists
+                                var existingTournament = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
+                                if (existingTournament != null)
+                                {
+                                    // If a tournament already exists, just go to the next step
+                                    await context.EditResponseAsync($"A tournament with name '{testName}' already exists. Skipping creation step.");
+                                    await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.");
+                                    break;
+                                }
+
+                                // Create a new tournament - make sure it has at least 4 players for playoffs
+                                var tournament = new Tournament
+                                {
+                                    Name = testName,
+                                    Format = TournamentFormat.GroupStageWithPlayoffs,
+                                    CurrentStage = TournamentStage.Groups,
+                                    AnnouncementChannel = context.Channel
+                                };
+
+                                // Add to active tournaments
+                                _ongoingRounds.Tournaments.Add(tournament);
+
+                                // Create groups with sufficient players (at least 4)
+                                CreateTestGroups(tournament, 8, 2, true, 1.0);
+
+                                await context.EditResponseAsync($"✅ **Step 3 Complete**: Created tournament '{testName}' with 8 players in 2 groups.\nRun `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.");
                                 break;
                             }
-
-                            // Create the tournament directly rather than from signup
-                            // Since we're testing, we'll create it manually with the real user and mock players
-
-                            // Start with the real user
-                            var realPlayers = signupToConvert.Participants.ToList();
-
-                            // Create the tournament
-                            var tournament = new Tournament
-                            {
-                                Name = testName,
-                                Format = signupToConvert.Format,
-                                AnnouncementChannel = context.Channel
-                            };
-
-                            // Add the tournament to the active list
-                            _ongoingRounds.Tournaments.Add(tournament);
-
-                            // Create groups with the real user and mock players
-                            CreateTestGroups(tournament, 8, 2, false);
-
-                            // Mark signup as closed
-                            signupToConvert.IsOpen = false;
-
-                            // Generate and show standings
-                            {
-                                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
-                                using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
-                                var builder = new DiscordWebhookBuilder()
-                                    .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}'.\nYou can use `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.")
-                                    .AddFile("tournament.png", fs);
-
-                                await context.EditResponseAsync(builder);
-                            }
-                            break;
 
                         case 4: // Test simulating matches
                             await context.EditResponseAsync($"**Step 4**: Simulating matches for tournament '{testName}'...");
@@ -1216,6 +1203,8 @@ namespace Wabbit.BotClient.Commands
         {
             try
             {
+                Console.WriteLine("Setting up playoffs...");
+
                 // Make sure we have at least one group with advanced players
                 bool hasAdvancedPlayers = false;
                 foreach (var group in tournament.Groups)
@@ -1229,18 +1218,23 @@ namespace Wabbit.BotClient.Commands
 
                 if (!hasAdvancedPlayers)
                 {
-                    Console.WriteLine("Warning: No players have advanced to playoffs, marking some as advanced");
+                    Console.WriteLine("No players have advanced to playoffs, forcing advancement...");
                     // Mark top players in each group as advanced
                     foreach (var group in tournament.Groups)
                     {
-                        var topPlayer = group.Participants
+                        // Advance top 2 players from each group to ensure we have enough players
+                        var topPlayers = group.Participants
                             .OrderByDescending(p => p.Points)
                             .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                            .FirstOrDefault();
+                            .Take(2)
+                            .ToList();
 
-                        if (topPlayer != null)
+                        Console.WriteLine($"Advancing {topPlayers.Count} players from {group.Name}");
+
+                        foreach (var player in topPlayers)
                         {
-                            topPlayer.AdvancedToPlayoffs = true;
+                            player.AdvancedToPlayoffs = true;
+                            Console.WriteLine($"Forced advancement for {player.Player?.DisplayName ?? player.Player?.ToString() ?? "Unknown"}");
                         }
                     }
                 }
@@ -1252,7 +1246,7 @@ namespace Wabbit.BotClient.Commands
                     Type = Wabbit.Models.MatchType.Semifinal,
                     DisplayPosition = "Semifinal 1",
                     BestOf = 3,
-                    Participants = []
+                    Participants = new List<Tournament.MatchParticipant>()
                 };
 
                 var sf2 = new Tournament.Match
@@ -1261,7 +1255,7 @@ namespace Wabbit.BotClient.Commands
                     Type = Wabbit.Models.MatchType.Semifinal,
                     DisplayPosition = "Semifinal 2",
                     BestOf = 3,
-                    Participants = []
+                    Participants = new List<Tournament.MatchParticipant>()
                 };
 
                 var final = new Tournament.Match
@@ -1270,7 +1264,7 @@ namespace Wabbit.BotClient.Commands
                     Type = Wabbit.Models.MatchType.Final,
                     DisplayPosition = "Final",
                     BestOf = 5,
-                    Participants = []
+                    Participants = new List<Tournament.MatchParticipant>()
                 };
 
                 var thirdPlace = new Tournament.Match
@@ -1279,7 +1273,7 @@ namespace Wabbit.BotClient.Commands
                     Type = Wabbit.Models.MatchType.ThirdPlace,
                     DisplayPosition = "Third Place",
                     BestOf = 3,
-                    Participants = []
+                    Participants = new List<Tournament.MatchParticipant>()
                 };
 
                 // Link the matches
@@ -1293,47 +1287,42 @@ namespace Wabbit.BotClient.Commands
                 tournament.PlayoffMatches.Add(thirdPlace);
 
                 // Seed the semifinal matches with qualified players
-                List<Tournament.MatchParticipant> qualifiedPlayers = [];
+                List<Tournament.MatchParticipant> qualifiedPlayers = new List<Tournament.MatchParticipant>();
 
                 // Gather qualified players from each group
                 foreach (var group in tournament.Groups)
                 {
-                    foreach (var participant in group.Participants.Where(p => p.AdvancedToPlayoffs && p.Player is not null))
+                    foreach (var participant in group.Participants.Where(p => p.AdvancedToPlayoffs))
                     {
-                        qualifiedPlayers.Add(new Tournament.MatchParticipant
+                        if (participant.Player is not null)
                         {
-                            Player = participant.Player,
-                            SourceGroup = group,
-                            SourceGroupPosition = group.Participants
-                                .OrderByDescending(p => p.Points)
-                                .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                                .ToList()
-                                .IndexOf(participant) + 1
-                        });
+                            qualifiedPlayers.Add(new Tournament.MatchParticipant
+                            {
+                                Player = participant.Player,
+                                SourceGroup = group
+                            });
+                            Console.WriteLine($"Added {participant.Player.DisplayName ?? participant.Player.ToString()} from {group.Name} to qualified players");
+                        }
                     }
                 }
 
-                // Make sure we have at least 2 qualified players for semifinals
-                if (qualifiedPlayers.Count < 2)
+                // Make sure we have at least 4 qualified players for semifinals
+                if (qualifiedPlayers.Count < 4)
                 {
-                    Console.WriteLine("Error: Not enough qualified players for playoffs");
+                    Console.WriteLine($"Error: Not enough qualified players for playoffs (only {qualifiedPlayers.Count})");
                     return;
                 }
 
-                // Assign to semifinals (crossing groups if possible)
-                if (qualifiedPlayers.Count >= 1)
-                    sf1.Participants.Add(qualifiedPlayers[0]);
-                if (qualifiedPlayers.Count >= 3)
-                    sf1.Participants.Add(qualifiedPlayers[2]);
-                else if (qualifiedPlayers.Count >= 2)
-                    sf1.Participants.Add(qualifiedPlayers[1]); // Only 2 players total
+                Console.WriteLine($"Total qualified players: {qualifiedPlayers.Count}");
 
-                if (qualifiedPlayers.Count >= 2)
-                    sf2.Participants.Add(qualifiedPlayers[1]);
-                if (qualifiedPlayers.Count >= 4)
-                    sf2.Participants.Add(qualifiedPlayers[3]);
-                else if (qualifiedPlayers.Count >= 3)
-                    sf2.Participants.Add(qualifiedPlayers[2]); // Only 3 players total
+                // Assign to semifinals - ensure we have players in both semifinals
+                sf1.Participants.Add(qualifiedPlayers[0]);
+                sf1.Participants.Add(qualifiedPlayers[2]);
+
+                sf2.Participants.Add(qualifiedPlayers[1]);
+                sf2.Participants.Add(qualifiedPlayers[3]);
+
+                Console.WriteLine($"Set up semifinals with {sf1.Participants.Count} and {sf2.Participants.Count} players");
 
                 // Mark tournament as in playoff stage
                 tournament.CurrentStage = TournamentStage.Playoffs;
@@ -1342,19 +1331,19 @@ namespace Wabbit.BotClient.Commands
                 if (playMatches)
                 {
                     var random = new Random();
-                    var allMatches = tournament.PlayoffMatches.ToList();
-                    int matchesToPlay = (int)(allMatches.Count * completionRate);
+
+                    Console.WriteLine("Simulating playoff matches...");
 
                     // Play semifinals
-                    if (matchesToPlay >= 2 &&
-                        sf1.Participants.Count == 2 && sf1.Participants[0].Player is not null && sf1.Participants[1].Player is not null &&
-                        sf2.Participants.Count == 2 && sf2.Participants[0].Player is not null && sf2.Participants[1].Player is not null)
+                    if (sf1.Participants.Count == 2 && sf2.Participants.Count == 2)
                     {
                         PlayTestMatch(sf1, random);
                         PlayTestMatch(sf2, random);
 
                         if (sf1.Result?.Winner is not null && sf2.Result?.Winner is not null)
                         {
+                            Console.WriteLine("Semifinals completed, setting up final and third place match");
+
                             // Add participants to final
                             final.Participants.Add(new Tournament.MatchParticipant
                             {
@@ -1386,13 +1375,13 @@ namespace Wabbit.BotClient.Commands
                                 Player = sf2.Participants.First(p => !p.IsWinner).Player,
                                 SourceGroup = sf2.Participants.First(p => !p.IsWinner).SourceGroup
                             });
+
+                            Console.WriteLine($"Set up final with {final.Participants.Count} players and third place with {thirdPlace.Participants.Count} players");
                         }
                     }
 
                     // Play final and third place
-                    if (matchesToPlay >= 4 &&
-                        final.Participants.Count == 2 && final.Participants[0].Player is not null && final.Participants[1].Player is not null &&
-                        thirdPlace.Participants.Count == 2 && thirdPlace.Participants[0].Player is not null && thirdPlace.Participants[1].Player is not null)
+                    if (final.Participants.Count == 2 && thirdPlace.Participants.Count == 2)
                     {
                         PlayTestMatch(final, random);
                         PlayTestMatch(thirdPlace, random);
@@ -1400,6 +1389,8 @@ namespace Wabbit.BotClient.Commands
                         // Mark tournament as complete
                         tournament.IsComplete = true;
                         tournament.CurrentStage = TournamentStage.Complete;
+
+                        Console.WriteLine($"Tournament completed with winner: {final.Result?.Winner?.DisplayName ?? final.Result?.Winner?.ToString() ?? "Unknown"}");
                     }
                 }
             }
@@ -1747,7 +1738,7 @@ namespace Wabbit.BotClient.Commands
         }
     }
 
-    // Simple class that can be cast to DiscordMember for testing
+    // Simple class that mimics a DiscordMember for testing
     public class MockDiscordMember
     {
         public ulong UserId { get; set; }
@@ -1756,6 +1747,14 @@ namespace Wabbit.BotClient.Commands
         public ulong Id => UserId;
         public string Username => UserName;
         public string DisplayName => UserName;
+
+        // Explicit conversion to DiscordMember
+        public static explicit operator DSharpPlus.Entities.DiscordMember(MockDiscordMember mock)
+        {
+#pragma warning disable CS8603 // Possible null reference return
+            return null;
+#pragma warning restore CS8603
+        }
 
         // Override ToString to help with debugging and visualization
         public override string ToString() => UserName;
@@ -1767,22 +1766,16 @@ namespace Wabbit.BotClient.Commands
             {
                 return Id == other.Id || UserName == other.UserName;
             }
+            else if (obj is DSharpPlus.Entities.DiscordMember member)
+            {
+                return Id == member.Id || UserName == member.DisplayName;
+            }
             return false;
         }
 
         public override int GetHashCode()
         {
             return HashCode.Combine(Id, UserName);
-        }
-
-        // Explicit conversion to allow using as DiscordMember in tests
-        public static explicit operator DSharpPlus.Entities.DiscordMember(MockDiscordMember mock)
-        {
-            // We're explicitly returning null and handling mock players separately with ToString()
-            // This is fine because we compare both by ID and string representation in our code
-#pragma warning disable CS8603, CS8625 // Possible null reference return
-            return null;
-#pragma warning restore CS8603, CS8625
         }
     }
 }

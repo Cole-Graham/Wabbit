@@ -137,27 +137,43 @@ namespace Wabbit.Misc
 
         private static void DrawGroupStandings(SKCanvas canvas, Tournament tournament, int width, ref int yOffset)
         {
-            using var headerPaint = new SKPaint
+            // Setup paint objects
+            var borderPaint = new SKPaint
             {
-                Color = GroupHeaderColor,
-                IsAntialias = true
-            };
-
-            using var borderPaint = new SKPaint
-            {
-                Color = BorderColor,
-                IsAntialias = true,
                 Style = SKPaintStyle.Stroke,
+                Color = BorderColor,
                 StrokeWidth = 1
             };
 
-            using var textPaint = new SKPaint
+            var headerPaint = new SKPaint
+            {
+                Style = SKPaintStyle.Fill,
+                Color = HeaderColor
+            };
+
+            var groupHeaderPaint = new SKPaint
+            {
+                Style = SKPaintStyle.Fill,
+                Color = GroupHeaderColor
+            };
+
+            var textPaint = new SKPaint
             {
                 Color = TextColor,
                 TextSize = 16,
                 IsAntialias = true,
-                TextAlign = SKTextAlign.Center
+                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Normal, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
             };
+
+            // Draw section header
+            canvas.DrawRect(Padding, yOffset, width - (Padding * 2), HeaderHeight, groupHeaderPaint);
+            textPaint.TextSize = 24;
+            textPaint.TextAlign = SKTextAlign.Center;
+            canvas.DrawText("Group Stage", width / 2, yOffset + HeaderHeight - CellPadding, textPaint);
+            yOffset += HeaderHeight;
+
+            // Debug information
+            Console.WriteLine($"Drawing group standings for {tournament.Groups.Count} groups");
 
             foreach (var group in tournament.Groups)
             {
@@ -167,9 +183,9 @@ namespace Wabbit.Misc
                 yOffset += RowHeight;
 
                 // Calculate column widths
-                int nameWidth = (int)(width * 0.30); // Reduced from 0.35 to 0.30
+                int nameWidth = (int)(width * 0.30);
                 int statsWidth = (int)(width * 0.125);
-                int statusWidth = (int)(width * 0.20); // Increased from 0.15 to 0.20
+                int statusWidth = (int)(width * 0.20);
 
                 // Draw header row
                 int xPos = Padding;
@@ -181,22 +197,22 @@ namespace Wabbit.Misc
                 canvas.DrawText("Player", xPos + (nameWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += nameWidth;
 
-                // Wins column header
+                // W column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("W", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                // Draws column header
+                // D column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("D", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                // Losses column header
+                // L column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("L", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                // Points column header
+                // P column header
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("P", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
@@ -214,6 +230,8 @@ namespace Wabbit.Misc
                     .ThenBy(p => p.GamesLost)
                     .ToList();
 
+                Console.WriteLine($"Group {group.Name} has {sortedParticipants.Count} participants");
+
                 // Draw each participant row
                 foreach (var participant in sortedParticipants)
                 {
@@ -225,78 +243,89 @@ namespace Wabbit.Misc
                     textPaint.TextSize = 16;
                     textPaint.Color = TextColor;
 
-                    // Draw the participant name
-                    textPaint.TextAlign = SKTextAlign.Left;
-                    textPaint.Color = TextColor;
+                    // Get the display name with detailed fallback logging
+                    string displayName = "Unknown Player";
 
-                    // Get the display name, with fallback for mock objects
-                    string displayName = participant.Player?.DisplayName ?? string.Empty;
-
-                    // If DisplayName is empty, try using the string representation
-                    if (string.IsNullOrEmpty(displayName) && participant.Player is not null)
+                    if (participant.Player is not null)
                     {
-                        displayName = participant.Player.ToString() ?? string.Empty;
-                    }
-
-                    // If still empty, try to extract a name from the Player's ToString representation
-                    if (string.IsNullOrEmpty(displayName) && participant.Player is not null)
-                    {
-                        // Try to get the name from the ToString representation
-                        var typeString = participant.Player.ToString();
-                        if (!string.IsNullOrEmpty(typeString) && typeString != "null")
+                        // Try the DisplayName property first
+                        if (!string.IsNullOrEmpty(participant.Player.DisplayName))
                         {
-                            displayName = typeString;
+                            displayName = participant.Player.DisplayName;
+                            Console.WriteLine($"Using DisplayName: {displayName}");
+                        }
+                        // Then try ToString
+                        else
+                        {
+                            string toStringValue = participant.Player.ToString();
+                            if (!string.IsNullOrEmpty(toStringValue) && toStringValue != "null")
+                            {
+                                displayName = toStringValue;
+                                Console.WriteLine($"Using ToString: {displayName}");
+                            }
+                            else
+                            {
+                                // Last resort, try to get type information
+                                Console.WriteLine($"Player ToString returned null or empty, player type: {participant.Player.GetType().Name}");
+                            }
                         }
                     }
-
-                    // If still empty, use the default fallback text
-                    if (string.IsNullOrEmpty(displayName))
+                    else
                     {
-                        displayName = "Unknown Player";
+                        Console.WriteLine("Player reference is null");
                     }
+
+                    // Log stats for debugging
+                    Console.WriteLine($"Player: {displayName}, W: {participant.Wins}, D: {participant.Draws}, L: {participant.Losses}, P: {participant.Points}");
 
                     canvas.DrawText(displayName, xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
                     xPos += nameWidth;
 
-                    // Wins
+                    // W column
                     canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                     textPaint.TextAlign = SKTextAlign.Center;
                     canvas.DrawText(participant.Wins.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     xPos += statsWidth;
 
-                    // Draws
+                    // D column
                     canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                     canvas.DrawText(participant.Draws.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     xPos += statsWidth;
 
-                    // Losses
+                    // L column
                     canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                     canvas.DrawText(participant.Losses.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     xPos += statsWidth;
 
-                    // Points
+                    // P column
                     canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                     canvas.DrawText(participant.Points.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     xPos += statsWidth;
 
-                    // Status (qualified for playoffs, etc)
+                    // Status column
                     canvas.DrawRect(xPos, yOffset, statusWidth, RowHeight, borderPaint);
+                    textPaint.TextAlign = SKTextAlign.Center;
+                    textPaint.TextSize = 14;
+
+                    // Draw status text with appropriate color
+                    string statusText = "Pending";
                     if (participant.AdvancedToPlayoffs)
                     {
+                        statusText = "Advanced";
                         textPaint.Color = WinColor;
-                        canvas.DrawText("Qualified", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     }
                     else if (group.IsComplete)
                     {
+                        statusText = "Eliminated";
                         textPaint.Color = LossColor;
-                        canvas.DrawText("Eliminated", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     }
                     else
                     {
-                        textPaint.Color = TextColor;
-                        canvas.DrawText("Pending", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                        textPaint.Color = DrawColor;
                     }
 
+                    canvas.DrawText(statusText, xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                    textPaint.Color = TextColor;
                     yOffset += RowHeight;
                 }
 
