@@ -60,7 +60,7 @@ namespace Wabbit.BotClient.Commands
             await context.DeferResponseAsync();
 
             // Get the server config, or create if none exists
-            var serverConfig = GetOrCreateServerConfig(context.Guild.Id);
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
 
             // Update the bot channel
             serverConfig.BotChannelId = channel.Id;
@@ -80,7 +80,7 @@ namespace Wabbit.BotClient.Commands
             await context.DeferResponseAsync();
 
             // Get the server config, or create if none exists
-            var serverConfig = GetOrCreateServerConfig(context.Guild.Id);
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
 
             // Update the replay channel
             serverConfig.ReplayChannelId = channel.Id;
@@ -100,7 +100,7 @@ namespace Wabbit.BotClient.Commands
             await context.DeferResponseAsync();
 
             // Get the server config, or create if none exists
-            var serverConfig = GetOrCreateServerConfig(context.Guild.Id);
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
 
             // Update the deck channel
             serverConfig.DeckChannelId = channel.Id;
@@ -120,14 +120,14 @@ namespace Wabbit.BotClient.Commands
             await context.DeferResponseAsync();
 
             // Check permissions
-            if (!context.Member.Permissions.HasPermission(DSharpPlus.Permissions.ManageGuild))
+            if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageGuild))
             {
                 await context.EditResponseAsync("You don't have permission to configure the bot.");
                 return;
             }
 
             // Get the server config, or create if none exists
-            var serverConfig = GetOrCreateServerConfig(context.Guild.Id);
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
 
             // Update the signup channel
             serverConfig.SignupChannelId = channel.Id;

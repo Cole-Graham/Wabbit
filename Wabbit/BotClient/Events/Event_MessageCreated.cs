@@ -1,12 +1,17 @@
 using DSharpPlus;
 using DSharpPlus.EventArgs;
+using System.Threading.Tasks;
+using System.Collections.Generic;
 using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
+using System;
+using System.Linq;
+using DSharpPlus.Entities;
 
 namespace Wabbit.BotClient.Events
 {
-    public class Event_MessageCreated : IEventHandler<MessageCreateEventArgs>
+    public class Event_MessageCreated : IEventHandler<MessageCreatedEventArgs>
     {
         private readonly OngoingRounds _ongoingRounds;
         private readonly TournamentManager _tournamentManager;
@@ -17,17 +22,19 @@ namespace Wabbit.BotClient.Events
             _tournamentManager = new TournamentManager(ongoingRounds);
         }
 
-        public async Task HandleEventAsync(DiscordClient sender, MessageCreateEventArgs e)
+        public async Task HandleEventAsync(DiscordClient sender, MessageCreatedEventArgs e)
         {
             // Ignore messages from bots
             if (e.Author.IsBot)
                 return;
 
             // Check if this is a response to the tournament creation message
-            if (e.Message.ReferencedMessage != null)
+            if (e.Message.ReferencedMessage is not null)
             {
                 // Check if the referenced message is from the bot and contains "Tournament creation started"
-                if (e.Message.ReferencedMessage.Author.Id == sender.CurrentUser.Id &&
+                if (e.Message.ReferencedMessage.Author is not null &&
+                    e.Message.ReferencedMessage.Content is not null &&
+                    e.Message.ReferencedMessage.Author.Id == sender.CurrentUser.Id &&
                     e.Message.ReferencedMessage.Content.Contains("Tournament creation started"))
                 {
                     await HandleTournamentCreation(sender, e);
@@ -36,18 +43,25 @@ namespace Wabbit.BotClient.Events
             }
 
             // Check if this is in the signup channel
-            var serverConfig = ConfigManager.Config.Servers.FirstOrDefault(s => s.ServerId == e.Guild.Id);
-            if (serverConfig?.SignupChannelId == e.Channel.Id)
+            var serverConfig = ConfigManager.Config?.Servers?.FirstOrDefault(s => s.ServerId == e.Guild?.Id);
+            if (serverConfig?.SignupChannelId == e.Channel?.Id)
             {
                 // Handle interactions in the signup channel
                 // This could include special commands or reactions
             }
         }
 
-        private async Task HandleTournamentCreation(DiscordClient sender, MessageCreateEventArgs e)
+        private async Task HandleTournamentCreation(DiscordClient sender, MessageCreatedEventArgs e)
         {
             try
             {
+                // Ensure referenced message exists
+                if (e.Message.ReferencedMessage is null || e.Message.ReferencedMessage.Content is null)
+                {
+                    await e.Channel.SendMessageAsync("Referenced message not found or has no content.");
+                    return;
+                }
+
                 // Get the tournament name from the referenced message
                 string referencedContent = e.Message.ReferencedMessage.Content;
                 int nameStartIndex = referencedContent.IndexOf('\'') + 1;
@@ -99,17 +113,12 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Parse mentions to get player list
-                List<Player> players = [];
+                List<DiscordMember> players = [];
 
                 foreach (var user in e.Message.MentionedUsers)
                 {
                     var member = await e.Guild.GetMemberAsync(user.Id);
-
-                    players.Add(new Player
-                    {
-                        Name = member.DisplayName,
-                        DiscordId = member.Id
-                    });
+                    players.Add(member);
                 }
 
                 if (players.Count < 2)
@@ -119,7 +128,7 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Create the tournament
-                var tournament = _tournamentManager.CreateTournament(tournamentName, format, players);
+                var tournament = _tournamentManager.CreateTournament(tournamentName, players, format, e.Channel);
 
                 await e.Channel.SendMessageAsync($"Tournament '{tournamentName}' created successfully with {players.Count} participants!");
 
