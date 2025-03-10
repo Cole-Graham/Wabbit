@@ -152,13 +152,18 @@ namespace Wabbit.BotClient.Commands
         [Description("List all tournaments")]
         public async Task ListTournaments(CommandContext context)
         {
-            await context.DeferResponseAsync();
-
-            try
+            await SafeExecute(context, async () =>
             {
+                // Log the tournaments in the collection for debugging
+                Console.WriteLine($"DEBUG: Found {_ongoingRounds.Tournaments.Count} tournaments in _ongoingRounds.Tournaments");
+                foreach (var t in _ongoingRounds.Tournaments)
+                {
+                    Console.WriteLine($"DEBUG: Tournament in list: Name={t.Name}, ID={(t.GetHashCode())}, Type={t.GetType().Name}");
+                }
+
                 if (!_ongoingRounds.Tournaments.Any())
                 {
-                    await SafeResponse(context, "No active tournaments.");
+                    await context.EditResponseAsync("No active tournaments.");
                     return;
                 }
 
@@ -195,17 +200,8 @@ namespace Wabbit.BotClient.Commands
                     );
                 }
 
-                await SafeResponse(context, "", () =>
-                {
-                    // Since SafeResponse doesn't support embedding directly, we need a workaround
-                    context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed)).GetAwaiter().GetResult();
-                });
-            }
-            catch (Exception ex)
-            {
-                await SafeResponse(context, $"Error listing tournaments: {ex.Message}");
-                Console.WriteLine($"Error in ListTournaments: {ex}");
-            }
+                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            }, "Failed to list tournaments");
         }
 
         [Command("signup_create")]
@@ -472,32 +468,209 @@ namespace Wabbit.BotClient.Commands
         }
 
         [Command("delete")]
-        [Description("Delete a tournament")]
+        [Description("Delete a tournament or signup")]
         public async Task DeleteTournament(
             CommandContext context,
-            [Description("Tournament name")] string tournamentName)
+            [Description("Tournament/signup name")] string name)
         {
-            await context.DeferResponseAsync();
-
-            try
+            await SafeExecute(context, async () =>
             {
-                // Find the tournament
-                var tournament = _tournamentManager.GetTournament(tournamentName);
-                if (tournament == null)
+                bool deleted = false;
+
+                // Debug info
+                Console.WriteLine($"DEBUG: Attempting to delete tournament/signup: '{name}'");
+                Console.WriteLine($"DEBUG: _ongoingRounds.Tournaments.Count = {_ongoingRounds.Tournaments.Count}");
+                foreach (var t in _ongoingRounds.Tournaments)
                 {
-                    await context.EditResponseAsync($"Tournament '{tournamentName}' not found.");
-                    return;
+                    Console.WriteLine($"DEBUG: Tournament available: Name={t.Name}, ID={t.GetHashCode()}, Type={t.GetType().Name}");
                 }
 
-                // Remove from list
-                _ongoingRounds.Tournaments.RemoveAll(t => t.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+                List<string> availableTournaments = _ongoingRounds.Tournaments.Select(t => t.Name).ToList();
+                List<string> availableSignups = _ongoingRounds.TournamentSignups.Select(s => s.Name).ToList();
 
-                await context.EditResponseAsync($"Tournament '{tournamentName}' has been deleted.");
-            }
-            catch (Exception ex)
+                // Try exact match first
+                Console.WriteLine($"DEBUG: Trying to find tournament with _tournamentManager.GetTournament('{name}')");
+                var tournament = _tournamentManager.GetTournament(name);
+                if (tournament != null)
+                {
+                    Console.WriteLine($"DEBUG: Found tournament via GetTournament: {tournament.Name}");
+                }
+
+                // Try direct collection search if manager method fails
+                if (tournament == null)
+                {
+                    Console.WriteLine($"DEBUG: Trying to find tournament with direct collection search");
+                    tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
+                        t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                    if (tournament != null)
+                    {
+                        Console.WriteLine($"DEBUG: Found tournament via direct collection: {tournament.Name}");
+                    }
+                }
+
+                // Try partial match if direct search fails
+                if (tournament == null)
+                {
+                    Console.WriteLine($"DEBUG: Trying to find tournament with partial name match");
+                    tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
+                        t.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+
+                    if (tournament != null)
+                    {
+                        Console.WriteLine($"DEBUG: Found tournament via partial match: {tournament.Name}");
+                    }
+                }
+
+                if (tournament != null)
+                {
+                    // Remove from list - important: remove the exact instance, not by name
+                    int countBefore = _ongoingRounds.Tournaments.Count;
+                    Console.WriteLine($"DEBUG: Removing tournament '{tournament.Name}' (ID={tournament.GetHashCode()})");
+
+                    // Use RemoveAll with reference equality
+                    _ongoingRounds.Tournaments.RemoveAll(t => ReferenceEquals(t, tournament));
+
+                    int countAfter = _ongoingRounds.Tournaments.Count;
+                    Console.WriteLine($"DEBUG: Tournament count before: {countBefore}, after: {countAfter}");
+
+                    if (countBefore == countAfter)
+                    {
+                        // If reference equality didn't work, try removing by name
+                        Console.WriteLine($"DEBUG: Failed to remove by reference, trying by name");
+                        int removeByName = _ongoingRounds.Tournaments.RemoveAll(t =>
+                            t.Name.Equals(tournament.Name, StringComparison.OrdinalIgnoreCase));
+                        Console.WriteLine($"DEBUG: Removed {removeByName} tournaments by name");
+                    }
+
+                    await context.EditResponseAsync($"Tournament '{tournament.Name}' has been deleted.");
+                    deleted = true;
+                }
+                else
+                {
+                    Console.WriteLine($"DEBUG: No tournament found with name '{name}'");
+                }
+
+                // Check for signups if no tournament was found or deleted
+                if (!deleted)
+                {
+                    // Try to find a signup with the given name
+                    var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                        s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                    // Try partial match if exact match fails
+                    if (signup == null)
+                    {
+                        signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                            s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (signup != null)
+                    {
+                        // Remove from list
+                        _ongoingRounds.TournamentSignups.Remove(signup);
+                        await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been deleted.");
+                        deleted = true;
+                    }
+                }
+
+                if (!deleted)
+                {
+                    // If everything failed, try a brute force approach for tournaments
+                    Console.WriteLine($"DEBUG: Trying brute force approach to clear test tournaments");
+                    int removedCount = _ongoingRounds.Tournaments.RemoveAll(t =>
+                        t.Name.StartsWith("TestFlow_", StringComparison.OrdinalIgnoreCase) ||
+                        t.Name.StartsWith("Test", StringComparison.OrdinalIgnoreCase));
+
+                    if (removedCount > 0)
+                    {
+                        await context.EditResponseAsync($"Removed {removedCount} test tournaments by pattern matching.");
+                        return;
+                    }
+
+                    // If still not found, show debug info
+                    string debug = $"No tournament or signup found with name '{name}'\n\nAvailable tournaments ({availableTournaments.Count}): {string.Join(", ", availableTournaments)}\n\nAvailable signups ({availableSignups.Count}): {string.Join(", ", availableSignups)}";
+                    await context.EditResponseAsync(debug);
+                }
+            }, "Failed to delete tournament/signup");
+        }
+
+        [Command("purge_test_tournaments")]
+        [Description("Purge all test tournaments from the system")]
+        public async Task PurgeTestTournaments(CommandContext context)
+        {
+            await SafeExecute(context, async () =>
             {
-                await SafeResponse(context, $"Error deleting tournament: {ex.Message}");
-            }
+                int countBefore = _ongoingRounds.Tournaments.Count;
+                Console.WriteLine($"DEBUG: Tournament count before purge: {countBefore}");
+
+                // Remove all test tournaments
+                int removedCount = _ongoingRounds.Tournaments.RemoveAll(t =>
+                    t.Name.StartsWith("TestFlow_", StringComparison.OrdinalIgnoreCase) ||
+                    t.Name.StartsWith("Test", StringComparison.OrdinalIgnoreCase));
+
+                Console.WriteLine($"DEBUG: Removed {removedCount} test tournaments");
+                Console.WriteLine($"DEBUG: Tournament count after purge: {_ongoingRounds.Tournaments.Count}");
+
+                await context.EditResponseAsync($"Purged {removedCount} test tournaments from the system.");
+            }, "Failed to purge test tournaments");
+        }
+
+        [Command("signup_reopen")]
+        [Description("Reopen a closed tournament signup")]
+        public async Task ReopenSignup(
+            CommandContext context,
+            [Description("Tournament name")] string tournamentName,
+            [Description("Duration in minutes to keep open (0 = indefinite)")] int durationMinutes = 0)
+        {
+            await SafeExecute(context, async () =>
+            {
+                // Find the signup (search case-insensitive)
+                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                if (signup == null)
+                {
+                    // Try to find by partial name match if exact match fails
+                    signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                        s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                    if (signup == null)
+                    {
+                        await context.EditResponseAsync($"Tournament signup '{tournamentName}' not found. Available signups: {string.Join(", ", _ongoingRounds.TournamentSignups.Select(s => s.Name))}");
+                        return;
+                    }
+                }
+
+                // Reopen the signup
+                signup.IsOpen = true;
+
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
+
+                string durationMessage = durationMinutes > 0
+                    ? $" It will remain open for {durationMinutes} minutes."
+                    : " It will remain open indefinitely.";
+
+                await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been reopened.{durationMessage}");
+
+                // Schedule auto-close if duration is specified
+                if (durationMinutes > 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromMinutes(durationMinutes));
+
+                        // Make sure the signup is still open before closing it
+                        if (signup.IsOpen)
+                        {
+                            signup.IsOpen = false;
+                            await UpdateSignupMessage(signup, context.Client);
+                            await context.Channel.SendMessageAsync($"Tournament signup '{signup.Name}' has been automatically closed after {durationMinutes} minutes.");
+                        }
+                    });
+                }
+            }, "Failed to reopen signup");
         }
 
         private ulong? GetSignupChannelId(CommandContext context)
@@ -551,11 +724,29 @@ namespace Wabbit.BotClient.Commands
                 var message = await channel.GetMessageAsync(signup.MessageId);
 
                 DiscordEmbed embed = CreateSignupEmbed(signup);
-                await message.ModifyAsync(new DiscordMessageBuilder().AddEmbed(embed));
+
+                // If the signup is still open, include the button
+                if (signup.IsOpen)
+                {
+                    var builder = new DiscordMessageBuilder()
+                        .AddEmbed(embed)
+                        .AddComponents(new DiscordButtonComponent(
+                            DiscordButtonStyle.Success,
+                            $"signup_{signup.Name.Replace(" ", "_")}",
+                            "Sign Up"
+                        ));
+
+                    await message.ModifyAsync(builder);
+                }
+                else
+                {
+                    var builder = new DiscordMessageBuilder().AddEmbed(embed);
+                    await message.ModifyAsync(builder);
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error updating signup message: {ex.Message}");
+                Console.WriteLine($"Error updating signup message: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -577,6 +768,48 @@ namespace Wabbit.BotClient.Commands
                 catch
                 {
                     Console.WriteLine($"Failed to send message to channel as fallback: {message}");
+                }
+            }
+        }
+
+        private async Task SafeExecute(CommandContext context, Func<Task> action, string errorPrefix = "Command failed")
+        {
+            try
+            {
+                // Call DeferResponseAsync early to avoid timeouts
+                await context.DeferResponseAsync();
+                await action();
+            }
+            catch (DSharpPlus.Exceptions.NotFoundException ex)
+            {
+                Console.WriteLine($"Discord API timeout: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    // Try to send a message to the channel directly
+                    await context.Channel.SendMessageAsync($"{errorPrefix}: The interaction timed out, but the command may have succeeded. Please check if the requested changes were applied.");
+                }
+                catch (Exception secondEx)
+                {
+                    Console.WriteLine($"Failed to send fallback message: {secondEx.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Command error: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    await SafeResponse(context, $"{errorPrefix}: {ex.Message}");
+                }
+                catch
+                {
+                    try
+                    {
+                        await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
+                    }
+                    catch
+                    {
+                        Console.WriteLine("Failed to send any error messages to the user");
+                    }
                 }
             }
         }
