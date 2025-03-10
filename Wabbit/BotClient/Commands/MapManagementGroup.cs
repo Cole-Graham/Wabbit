@@ -17,7 +17,12 @@ namespace Wabbit.BotClient.Commands
     {
         [Command("add_map")]
         [Description("Add map to map list")]
-        public async Task AddMap(CommandContext context, [Description("Map name")] string mapName, [Description("Map ID")] string id, [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size, [Description("Include into random map pool?")] bool inRandom, [Description("Map image URL or local path (data/images/filename.png)")] string? thumbnail = null)
+        public async Task AddMap(CommandContext context,
+            [Description("Map name")] string mapName,
+            [Description("Map ID")] string id,
+            [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size,
+            [Description("Include into random map pool?")] bool inRandom,
+            [Description("Map image URL or local path (data/images/filename.png)")] string thumbnail = "")
         {
             await context.DeferResponseAsync();
 
@@ -35,7 +40,7 @@ namespace Wabbit.BotClient.Commands
                 IsInRandomPool = inRandom
             };
 
-            if (thumbnail is not null)
+            if (!string.IsNullOrEmpty(thumbnail))
             {
                 // Check if it's a local path and not a URL
                 if (!thumbnail.StartsWith("http") && !File.Exists(thumbnail))
@@ -64,11 +69,23 @@ namespace Wabbit.BotClient.Commands
 
         [Command("edit_map")]
         [Description("Edit selected map")]
-        public async Task RemoveMap(CommandContext context, [SlashAutoCompleteProvider<MapNameAutoCompleteProvider>] string? mapName, [Description("New name")] string? newName = null, [Description("Map ID")] string? id = null, [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string? size = null, [Description("Include into random map pool?")] bool? inRandom = null)
+        public async Task EditMap(CommandContext context,
+            [SlashAutoCompleteProvider<MapNameAutoCompleteProvider>] string mapName,
+            [Description("New name")] string newName = "",
+            [Description("Map ID")] string id = "",
+            [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size = "",
+            [Description("Include into random map pool (true/false)")] int inRandomInt = -1)
         {
             await context.DeferResponseAsync();
 
-            if (newName is null && id is null && size is null && inRandom is null)
+            bool? inRandom = inRandomInt switch
+            {
+                1 => true,
+                0 => false,
+                _ => null
+            };
+
+            if (string.IsNullOrEmpty(newName) && string.IsNullOrEmpty(id) && string.IsNullOrEmpty(size) && inRandom is null)
             {
                 await context.EditResponseAsync("No values to edit provided");
                 return;
@@ -81,11 +98,11 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            if (newName is not null)
+            if (!string.IsNullOrEmpty(newName))
                 map.Name = newName;
-            if (id is not null)
+            if (!string.IsNullOrEmpty(id))
                 map.Id = id;
-            if (size is not null)
+            if (!string.IsNullOrEmpty(size))
                 map.Size = size;
             if (inRandom is not null)
                 map.IsInRandomPool = (bool)inRandom;
@@ -103,7 +120,8 @@ namespace Wabbit.BotClient.Commands
 
         [Command("remove_map")]
         [Description("Remove map from map list")]
-        public async Task RemoveMap(CommandContext context, [SlashAutoCompleteProvider<MapNameAutoCompleteProvider>] string? mapName)
+        public async Task RemoveMap(CommandContext context,
+            [SlashAutoCompleteProvider<MapNameAutoCompleteProvider>] string mapName)
         {
             await context.DeferResponseAsync();
 

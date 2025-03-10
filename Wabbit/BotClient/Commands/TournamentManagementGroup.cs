@@ -61,9 +61,12 @@ namespace Wabbit.BotClient.Commands
         public async Task CreateFromSignup(
             CommandContext context,
             [Description("Signup name")] string signupName,
-            [Description("Tournament name (optional)")] string? tournamentName = null)
+            [Description("Tournament name (optional)")] string tournamentName = "")
         {
             await context.DeferResponseAsync();
+
+            // Use signupName as tournamentName if not provided
+            string actualTournamentName = string.IsNullOrEmpty(tournamentName) ? signupName : tournamentName;
 
             // Find the signup
             var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
@@ -81,13 +84,10 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            // Use provided tournament name or default to signup name if not specified
-            string finalTournamentName = string.IsNullOrEmpty(tournamentName) ? signupName : tournamentName;
-
             // Check if a tournament with this name already exists
-            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(finalTournamentName, StringComparison.OrdinalIgnoreCase)))
+            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(actualTournamentName, StringComparison.OrdinalIgnoreCase)))
             {
-                await context.EditResponseAsync($"A tournament with the name '{finalTournamentName}' already exists.");
+                await context.EditResponseAsync($"A tournament with the name '{actualTournamentName}' already exists.");
                 return;
             }
 
@@ -96,12 +96,12 @@ namespace Wabbit.BotClient.Commands
 
             // Create tournament
             var tournament = _tournamentManager.CreateTournament(
-                finalTournamentName,
+                actualTournamentName,
                 players,
                 Enum.Parse<TournamentFormat>(signup.Format.ToString()),
                 context.Channel);
 
-            await context.EditResponseAsync($"Tournament '{finalTournamentName}' created successfully with {players.Count} participants from signup '{signupName}'.");
+            await context.EditResponseAsync($"Tournament '{actualTournamentName}' created successfully with {players.Count} participants from signup '{signupName}'.");
 
             // Close the signup
             signup.IsOpen = false;
@@ -238,9 +238,14 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Tournament name")] string name,
             [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format,
-            [Description("Scheduled start time (optional)")] DateTime? startTime = null)
+            [Description("Scheduled start time (Unix timestamp, 0 for none)")] long startTimeUnix = 0)
         {
             await context.DeferResponseAsync();
+
+            // Convert Unix timestamp to DateTime if provided
+            DateTime? startTime = startTimeUnix > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime
+                : null;
 
             // Check if this is the signup channel
             ulong? signupChannelId = GetSignupChannelId(context);

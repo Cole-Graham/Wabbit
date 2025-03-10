@@ -107,10 +107,17 @@ namespace Wabbit.BotClient.Commands
         [Description("Print a list of registered maps")]
         public async Task ListMaps(
             CommandContext context,
-            [Description("Filter by size (e.g., 1v1 to 4v4, or 'all' for all sizes")][SlashChoiceProvider<MapSizeChoiceProvider>] string? size = "all",
-            [Description("Show only maps in random pool")] bool? inRandomPool = null)
+            [Description("Filter by size (e.g., 1v1 to 4v4, or 'all' for all sizes")][SlashChoiceProvider<MapSizeChoiceProvider>] string size = "all",
+            [Description("Show only maps in random pool (-1=all, 0=no, 1=yes)")] int inRandomPoolInt = -1)
         {
             await context.DeferResponseAsync();
+
+            bool? inRandomPool = inRandomPoolInt switch
+            {
+                0 => false,
+                1 => true,
+                _ => null
+            };
 
             if (Maps.MapCollection is null || Maps.MapCollection.Count == 0) // null ref safeguard
             {
