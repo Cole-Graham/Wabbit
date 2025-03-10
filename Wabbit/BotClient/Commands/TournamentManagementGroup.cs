@@ -1227,38 +1227,28 @@ namespace Wabbit.BotClient.Commands
             var random = new Random();
             int groupIndex = 0;
 
-            // Create player-like objects that directly mimic what we need
-            List<object> mockPlayers = new List<object>();
-
-            for (int i = 0; i < playerCount; i++)
-            {
-                // Create a dynamic proxy that can be used as a DiscordMember-like object
-                var mockPlayer = new
-                {
-                    Id = (ulong)(1000000 + i),
-                    Username = $"Player {i + 1}",
-                    DisplayName = $"Player {i + 1}",
-                    ToString = new Func<string>(() => $"Player {i + 1}")
-                };
-
-                mockPlayers.Add(mockPlayer);
-            }
-
-            // Add players to groups - using player field reflection
-            var playerFieldInfo = typeof(Tournament.GroupParticipant).GetField("Player");
-
+            // Use a custom class for players that will work with reflection
             for (int i = 0; i < playerCount; i++)
             {
                 var group = tournament.Groups[groupIndex];
-                var mockPlayer = mockPlayers[i];
+                var playerName = $"Player {i + 1}";
 
-                // Create a new participant
+                // Create a TestPlayer object that works with the system
+                var mockPlayer = new TestPlayer(playerName, (ulong)(1000000 + i));
+
+                Console.WriteLine($"Created {mockPlayer.DisplayName} in {group.Name}");
+
+                // Add to participants - use reflection
                 var participant = new Tournament.GroupParticipant();
 
-                // Use reflection to set the player field
-                playerFieldInfo?.SetValue(participant, mockPlayer);
+                // Get the field info and set it
+                var playerField = typeof(Tournament.GroupParticipant).GetField("Player",
+                   System.Reflection.BindingFlags.Public |
+                   System.Reflection.BindingFlags.NonPublic |
+                   System.Reflection.BindingFlags.Instance);
 
-                Console.WriteLine($"Created {mockPlayer} in {group.Name}");
+                playerField?.SetValue(participant, mockPlayer);
+
                 group.Participants.Add(participant);
 
                 // Move to next group
@@ -1283,44 +1273,69 @@ namespace Wabbit.BotClient.Commands
             }
         }
 
+        // A simple test player class that can be used with the system
+        private class TestPlayer
+        {
+            public ulong Id { get; }
+            public string Username { get; }
+            public string DisplayName { get; }
+
+            public TestPlayer(string name, ulong id)
+            {
+                Username = name;
+                DisplayName = name;
+                Id = id;
+            }
+
+            public override string ToString()
+            {
+                return DisplayName;
+            }
+        }
+
         private void SetupTestPlayoffs(Tournament tournament, bool playMatches, double completionRate = 0.0)
         {
             try
             {
                 Console.WriteLine("Setting up playoffs...");
 
-                // Make sure we have at least one group with advanced players
-                bool hasAdvancedPlayers = false;
-                foreach (var group in tournament.Groups)
+                // Force advancement for at least 4 players (2 from each group) if none have advanced
+                int advancedCount = tournament.Groups.Sum(g => g.Participants.Count(p => p.AdvancedToPlayoffs));
+
+                if (advancedCount < 4)
                 {
-                    if (group.Participants.Any(p => p.AdvancedToPlayoffs))
+                    Console.WriteLine($"Only {advancedCount} players advanced, forcing advancement for at least 4 players");
+
+                    // Force advancement for top players in each group
+                    foreach (var group in tournament.Groups)
                     {
-                        hasAdvancedPlayers = true;
-                        break;
+                        // Get players who haven't advanced yet
+                        var notAdvanced = group.Participants
+                            .Where(p => !p.AdvancedToPlayoffs)
+                            .OrderByDescending(p => p.Points)
+                            .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                            .ToList();
+
+                        // Advance at least 2 per group
+                        int groupAdvanced = group.Participants.Count(p => p.AdvancedToPlayoffs);
+                        int needToAdvance = Math.Max(0, 2 - groupAdvanced);
+
+                        for (int i = 0; i < needToAdvance && i < notAdvanced.Count; i++)
+                        {
+                            notAdvanced[i].AdvancedToPlayoffs = true;
+                            Console.WriteLine($"Forced advancement for {notAdvanced[i].Player} in {group.Name}");
+                        }
                     }
                 }
 
-                if (!hasAdvancedPlayers)
+                // Get total advanced count after forcing advancement
+                advancedCount = tournament.Groups.Sum(g => g.Participants.Count(p => p.AdvancedToPlayoffs));
+                Console.WriteLine($"Total advanced players: {advancedCount}");
+
+                if (advancedCount < 4)
                 {
-                    Console.WriteLine("No players have advanced to playoffs, forcing advancement...");
-                    // Mark top players in each group as advanced
-                    foreach (var group in tournament.Groups)
-                    {
-                        // Advance top 2 players from each group to ensure we have enough players
-                        var topPlayers = group.Participants
-                            .OrderByDescending(p => p.Points)
-                            .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                            .Take(2)
-                            .ToList();
-
-                        Console.WriteLine($"Advancing {topPlayers.Count} players from {group.Name}");
-
-                        foreach (var player in topPlayers)
-                        {
-                            player.AdvancedToPlayoffs = true;
-                            Console.WriteLine($"Forced advancement for {player.Player?.ToString() ?? "Unknown"}");
-                        }
-                    }
+                    Console.WriteLine($"Error: Still not enough qualified players for playoffs (only {advancedCount})");
+                    return;
                 }
 
                 // Create semifinals, final, and third-place match
@@ -1370,54 +1385,54 @@ namespace Wabbit.BotClient.Commands
                 tournament.PlayoffMatches.Add(final);
                 tournament.PlayoffMatches.Add(thirdPlace);
 
-                // Seed the semifinal matches with qualified players
-                List<Tournament.GroupParticipant> qualifiedPlayers = new List<Tournament.GroupParticipant>();
+                // Get all qualified players in a flat list
+                var advancedPlayers = new List<(Tournament.GroupParticipant Participant, Tournament.Group Group)>();
 
-                // Gather qualified players from each group
                 foreach (var group in tournament.Groups)
                 {
                     foreach (var participant in group.Participants.Where(p => p.AdvancedToPlayoffs && p.Player is not null))
                     {
-                        qualifiedPlayers.Add(participant);
-                        Console.WriteLine($"Added {participant.Player?.ToString() ?? "Unknown"} from {group.Name} to qualified players");
+                        advancedPlayers.Add((participant, group));
+                        Console.WriteLine($"Added {participant.Player} from {group.Name} to playoffs");
                     }
                 }
 
-                // Make sure we have at least 4 qualified players for semifinals
-                if (qualifiedPlayers.Count < 4)
+                // Assign players to semifinals
+                if (advancedPlayers.Count >= 4)
                 {
-                    Console.WriteLine($"Error: Not enough qualified players for playoffs (only {qualifiedPlayers.Count})");
+                    // Semifinal 1: Player 0 vs Player 2
+                    sf1.Participants.Add(new Tournament.MatchParticipant
+                    {
+                        Player = advancedPlayers[0].Participant.Player,
+                        SourceGroup = advancedPlayers[0].Group
+                    });
+
+                    sf1.Participants.Add(new Tournament.MatchParticipant
+                    {
+                        Player = advancedPlayers[2].Participant.Player,
+                        SourceGroup = advancedPlayers[2].Group
+                    });
+
+                    // Semifinal 2: Player 1 vs Player 3
+                    sf2.Participants.Add(new Tournament.MatchParticipant
+                    {
+                        Player = advancedPlayers[1].Participant.Player,
+                        SourceGroup = advancedPlayers[1].Group
+                    });
+
+                    sf2.Participants.Add(new Tournament.MatchParticipant
+                    {
+                        Player = advancedPlayers[3].Participant.Player,
+                        SourceGroup = advancedPlayers[3].Group
+                    });
+
+                    Console.WriteLine($"Set up semifinals with {sf1.Participants.Count} and {sf2.Participants.Count} players");
+                }
+                else
+                {
+                    Console.WriteLine($"Error: Not enough players to set up semifinals (need 4, have {advancedPlayers.Count})");
                     return;
                 }
-
-                Console.WriteLine($"Total qualified players: {qualifiedPlayers.Count}");
-
-                // Assign qualified players to the semifinal matches
-                sf1.Participants.Add(new Tournament.MatchParticipant
-                {
-                    Player = qualifiedPlayers[0].Player,
-                    SourceGroup = qualifiedPlayers[0].Player is not null ? tournament.Groups[0] : null
-                });
-
-                sf1.Participants.Add(new Tournament.MatchParticipant
-                {
-                    Player = qualifiedPlayers[2].Player,
-                    SourceGroup = qualifiedPlayers[2].Player is not null ? tournament.Groups[1] : null
-                });
-
-                sf2.Participants.Add(new Tournament.MatchParticipant
-                {
-                    Player = qualifiedPlayers[1].Player,
-                    SourceGroup = qualifiedPlayers[1].Player is not null ? tournament.Groups[0] : null
-                });
-
-                sf2.Participants.Add(new Tournament.MatchParticipant
-                {
-                    Player = qualifiedPlayers[3].Player,
-                    SourceGroup = qualifiedPlayers[3].Player is not null ? tournament.Groups[1] : null
-                });
-
-                Console.WriteLine($"Set up semifinals with {sf1.Participants.Count} and {sf2.Participants.Count} players");
 
                 // Mark tournament as in playoff stage
                 tournament.CurrentStage = TournamentStage.Playoffs;
@@ -1439,7 +1454,7 @@ namespace Wabbit.BotClient.Commands
                         {
                             Console.WriteLine("Semifinals completed, setting up final and third place match");
 
-                            // Add finals participants with basic direct player assignment
+                            // Add finals participants
                             final.Participants.Add(new Tournament.MatchParticipant
                             {
                                 Player = sf1.Result.Winner,
@@ -1449,14 +1464,14 @@ namespace Wabbit.BotClient.Commands
                             final.Participants.Add(new Tournament.MatchParticipant
                             {
                                 Player = sf2.Result.Winner,
-                                SourceGroup = tournament.Groups[1]
+                                SourceGroup = tournament.Groups[0]
                             });
 
-                            // Get losers through simple inference - first loser from sf1, second from sf2
+                            // Get losers through simple inference
                             var sf1Loser = sf1.Participants.FirstOrDefault(p => !p.IsWinner)?.Player;
                             var sf2Loser = sf2.Participants.FirstOrDefault(p => !p.IsWinner)?.Player;
 
-                            // Add third place participants
+                            // Add third place participants if they exist
                             if (sf1Loser is not null)
                             {
                                 thirdPlace.Participants.Add(new Tournament.MatchParticipant
@@ -1479,17 +1494,19 @@ namespace Wabbit.BotClient.Commands
                         }
                     }
 
-                    // Play final and third place
-                    if (final.Participants.Count == 2 && thirdPlace.Participants.Count == 2)
+                    // Play final and third place if they have enough players
+                    if (final.Participants.Count == 2)
                     {
                         PlayTestMatch(final, random);
-                        PlayTestMatch(thirdPlace, random);
+
+                        if (thirdPlace.Participants.Count == 2)
+                            PlayTestMatch(thirdPlace, random);
 
                         // Mark tournament as complete
                         tournament.IsComplete = true;
                         tournament.CurrentStage = TournamentStage.Complete;
 
-                        Console.WriteLine($"Tournament completed with winner: {final.Result?.Winner?.ToString() ?? "Unknown"}");
+                        Console.WriteLine($"Tournament completed with winner: {final.Result?.Winner}");
                     }
                 }
             }
@@ -1694,45 +1711,27 @@ namespace Wabbit.BotClient.Commands
 
                         Console.WriteLine($"Match result in {group.Name}: {winner} defeated {loser} ({winnerScore}-{loserScore})");
 
-                        // Try to find participants in the group and update stats
-                        var winnerIdx2 = -1;
-                        var loserIdx2 = -1;
+                        // Find the participants in the group by comparing ToString values
+                        int winnerIdx2 = -1;
+                        int loserIdx2 = -1;
 
-                        // Instead of using helper methods, check IDs directly
+                        // Look through participants
                         for (int i = 0; i < group.Participants.Count; i++)
                         {
-                            var participant = group.Participants[i];
-                            if (participant.Player is not null)
+                            if (group.Participants[i].Player is not null)
                             {
-                                // Only use dynamic if the objects are not null
-                                if (winner is not null && loser is not null)
-                                {
-                                    // Use dynamic to compare IDs or ToString
-                                    dynamic dynamicPlayer = participant.Player;
-                                    dynamic dynamicWinner = winner;
-                                    dynamic dynamicLoser = loser;
+                                // Match by string representation with null checks
+                                string participantStr = group.Participants[i].Player?.ToString() ?? "";
+                                string winnerStr = winner?.ToString() ?? "";
+                                string loserStr = loser?.ToString() ?? "";
 
-                                    if (dynamicPlayer.Id == dynamicWinner.Id)
-                                    {
-                                        winnerIdx2 = i;
-                                    }
-                                    else if (dynamicPlayer.Id == dynamicLoser.Id)
-                                    {
-                                        loserIdx2 = i;
-                                    }
-                                }
-                                else
+                                if (participantStr == winnerStr)
                                 {
-                                    // If winner or loser is null, try to match by string representation
-                                    var playerStr = participant.Player.ToString();
-                                    if (winner is not null && playerStr == winner.ToString())
-                                    {
-                                        winnerIdx2 = i;
-                                    }
-                                    else if (loser is not null && playerStr == loser.ToString())
-                                    {
-                                        loserIdx2 = i;
-                                    }
+                                    winnerIdx2 = i;
+                                }
+                                else if (participantStr == loserStr)
+                                {
+                                    loserIdx2 = i;
                                 }
                             }
                         }
