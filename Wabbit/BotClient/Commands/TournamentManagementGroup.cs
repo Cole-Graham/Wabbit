@@ -41,22 +41,23 @@ namespace Wabbit.BotClient.Commands
             [Description("Tournament name")] string name,
             [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format)
         {
-            await context.DeferResponseAsync();
-
-            // Check if a tournament with this name already exists
-            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
-                return;
-            }
+                // Check if a tournament with this name already exists
+                if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
+                    return;
+                }
 
-            // Inform user about next steps
-            await context.EditResponseAsync(
-                $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
-                $"For example: @Player1 @Player2 @Player3...");
+                // Inform user about next steps
+                await context.EditResponseAsync(
+                    $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
+                    $"For example: @Player1 @Player2 @Player3...");
 
-            // Tournament creation will be handled by user mentioning players in follow-up message
-            // which will be processed in an event handler
+                // Tournament creation will be handled by user mentioning players in follow-up message
+                // which will be processed in an event handler
+            }, "Failed to create tournament");
         }
 
         [Command("create_from_signup")]
@@ -209,7 +210,7 @@ namespace Wabbit.BotClient.Commands
         public async Task CreateSignup(
             CommandContext context,
             [Description("Tournament name")] string name,
-            [Description("Tournament format")] string format,
+            [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format,
             [Description("Scheduled start time (Unix timestamp, 0 for none)")] long startTimeUnix = 0)
         {
             await SafeExecute(context, async () =>
@@ -446,33 +447,34 @@ namespace Wabbit.BotClient.Commands
             [Description("Tournament name")] string tournamentName,
             [Description("Player to remove")] DiscordMember player)
         {
-            await context.DeferResponseAsync();
-
-            // Find the signup
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
-
-            if (signup == null)
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
-                return;
-            }
+                // Find the signup
+                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
 
-            // Check if the player is in the signup
-            var participant = signup.Participants.FirstOrDefault(p => p.Id == player.Id);
-            if (participant is null)
-            {
-                await context.EditResponseAsync($"{player.DisplayName} is not signed up for tournament '{tournamentName}'.");
-                return;
-            }
+                if (signup == null)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
+                    return;
+                }
 
-            // Remove the player from the signup
-            signup.Participants.Remove(participant);
+                // Check if the player is in the signup
+                var participant = signup.Participants.FirstOrDefault(p => p.Id == player.Id);
+                if (participant is null)
+                {
+                    await context.EditResponseAsync($"{player.DisplayName} is not signed up for tournament '{tournamentName}'.");
+                    return;
+                }
 
-            // Update the signup message
-            await UpdateSignupMessage(signup, context.Client);
+                // Remove the player from the signup
+                signup.Participants.Remove(participant);
 
-            await context.EditResponseAsync($"{player.DisplayName} has been removed from the tournament '{tournamentName}'.");
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
+
+                await context.EditResponseAsync($"{player.DisplayName} has been removed from the tournament '{tournamentName}'.");
+            }, "Failed to remove player from signup");
         }
 
         [Command("delete")]
