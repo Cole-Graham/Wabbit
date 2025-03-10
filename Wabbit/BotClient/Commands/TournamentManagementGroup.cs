@@ -16,6 +16,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using DSharpPlus;
 using System.Reflection;
+using System.Dynamic;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -1142,9 +1143,6 @@ namespace Wabbit.BotClient.Commands
 
         private void CreateTestGroups(Tournament tournament, int playerCount, int groupCount, bool playMatches, double completionRate = 0.0)
         {
-            // Use reflection to set the player field directly
-            var playerFieldInfo = typeof(Tournament.GroupParticipant).GetField("Player", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-
             // Create groups
             for (int i = 0; i < groupCount; i++)
             {
@@ -1157,6 +1155,9 @@ namespace Wabbit.BotClient.Commands
 
             Console.WriteLine($"Created {tournament.Groups.Count} groups");
 
+            // Get PlayerField using reflection
+            var playerField = typeof(Tournament.GroupParticipant).GetField("Player");
+
             // Create participants and distribute them among groups
             var random = new Random();
             int groupIndex = 0;
@@ -1165,14 +1166,20 @@ namespace Wabbit.BotClient.Commands
             {
                 var group = tournament.Groups[groupIndex];
                 string playerName = $"Player {i + 1}";
+                ulong playerId = (ulong)(1000000 + i);
 
-                // Create a participant and set fields directly
+                // Create test mock data object
+                var mockPlayer = new MockPlayer
+                {
+                    Name = playerName,
+                    Id = playerId
+                };
+
+                // Create participant and add to group
                 var participant = new Tournament.GroupParticipant();
 
-                // Use reflection to bypass type restrictions
-                var mockPlayer = new StubPlayer(playerName, (ulong)(1000000 + i));
-                // Set the player field directly
-                playerFieldInfo?.SetValue(participant, mockPlayer);
+                // Use reflection to set the player field directly
+                playerField?.SetValue(participant, mockPlayer);
 
                 Console.WriteLine($"Created {playerName} in {group.Name}");
                 group.Participants.Add(participant);
@@ -1199,32 +1206,15 @@ namespace Wabbit.BotClient.Commands
             }
         }
 
-        // Simple stub class that can be used in place of DiscordMember but doesn't inherit
-        public class StubPlayer
+        // Simple test data class used internally
+        public class MockPlayer
         {
-            public ulong Id { get; }
-            public string Username { get; }
-            public string DisplayName { get; }
+            public string Name { get; set; } = string.Empty;
+            public ulong Id { get; set; }
+            public string DisplayName => Name;
+            public string Username => Name;
 
-            public StubPlayer(string name, ulong id)
-            {
-                Username = name;
-                DisplayName = name;
-                Id = id;
-            }
-
-            public override string ToString() => DisplayName;
-
-            public override bool Equals(object? obj)
-            {
-                if (obj is StubPlayer other)
-                {
-                    return Id == other.Id;
-                }
-                return false;
-            }
-
-            public override int GetHashCode() => Id.GetHashCode();
+            public override string ToString() => Name;
         }
 
         private void SetupTestPlayoffs(Tournament tournament, bool playMatches, double completionRate = 0.0)

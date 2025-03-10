@@ -166,7 +166,8 @@ namespace Wabbit.Misc
             };
 
             // Draw section header
-            canvas.DrawRect(Padding, yOffset, width - (Padding * 2), HeaderHeight, groupHeaderPaint);
+            int tableWidth = width - (Padding * 2);
+            canvas.DrawRect(Padding, yOffset, tableWidth, HeaderHeight, groupHeaderPaint);
             textPaint.TextSize = 24;
             textPaint.TextAlign = SKTextAlign.Center;
             canvas.DrawText("Group Stage", width / 2, yOffset + HeaderHeight - CellPadding, textPaint);
@@ -178,14 +179,16 @@ namespace Wabbit.Misc
             foreach (var group in tournament.Groups)
             {
                 // Draw group header
-                canvas.DrawRect(Padding, yOffset, width - (Padding * 2), RowHeight, headerPaint);
+                canvas.DrawRect(Padding, yOffset, tableWidth, RowHeight, headerPaint);
+                textPaint.TextSize = 18; // Set consistent header text size
+                textPaint.TextAlign = SKTextAlign.Center;
                 canvas.DrawText(group.Name, width / 2, yOffset + RowHeight - CellPadding, textPaint);
                 yOffset += RowHeight;
 
                 // Calculate column widths
-                int nameWidth = (int)(width * 0.30);
-                int statsWidth = (int)(width * 0.125);
-                int statusWidth = (int)(width * 0.20);
+                int nameWidth = (int)(tableWidth * 0.30);
+                int statsWidth = (int)(tableWidth * 0.125);
+                int statusWidth = tableWidth - nameWidth - (statsWidth * 4); // Ensure exact fit
 
                 // Draw header row
                 int xPos = Padding;
@@ -197,22 +200,23 @@ namespace Wabbit.Misc
                 canvas.DrawText("Player", xPos + (nameWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += nameWidth;
 
-                // W column header
+                // Participant stats
+                // W column
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("W", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                // D column header
+                // D column
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("D", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                // L column header
+                // L column
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("L", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
 
-                // P column header
+                // P column
                 canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
                 canvas.DrawText("P", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += statsWidth;
@@ -281,9 +285,9 @@ namespace Wabbit.Misc
                     canvas.DrawText(displayName, xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
                     xPos += nameWidth;
 
+                    // Participant stats
                     // W column
                     canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                    textPaint.TextAlign = SKTextAlign.Center;
                     canvas.DrawText(participant.Wins.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                     xPos += statsWidth;
 
