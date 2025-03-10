@@ -153,8 +153,11 @@ namespace Wabbit.BotClient.Commands
         [Description("List all tournaments")]
         public async Task ListTournaments(CommandContext context)
         {
-            await SafeExecute(context, async () =>
+            try
             {
+                // Don't defer the response, that's what's causing issues
+                // Instead, we'll send a direct message to the channel
+
                 // Log the tournaments in the collection for debugging
                 Console.WriteLine($"LIST DEBUG: Attempting to list tournaments");
                 Console.WriteLine($"LIST DEBUG: _ongoingRounds.Tournaments is {(_ongoingRounds.Tournaments == null ? "NULL" : "NOT NULL")}");
@@ -184,7 +187,8 @@ namespace Wabbit.BotClient.Commands
 
                 if (tournamentsToShow == null || !tournamentsToShow.Any())
                 {
-                    await context.EditResponseAsync("No active tournaments.");
+                    // Send a direct message instead of using interaction response
+                    await context.Channel.SendMessageAsync("No active tournaments.");
                     return;
                 }
 
@@ -221,8 +225,34 @@ namespace Wabbit.BotClient.Commands
                     );
                 }
 
-                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-            }, "Failed to list tournaments");
+                // Send as a direct message to avoid interaction timing issues
+                var messageBuilder = new DiscordMessageBuilder().AddEmbed(embed);
+                await context.Channel.SendMessageAsync(messageBuilder);
+
+                // Try to acknowledge the interaction to avoid the "This interaction failed" message
+                try
+                {
+                    // Just send an empty deferred response to satisfy Discord
+                    await context.DeferResponseAsync();
+                }
+                catch (Exception ex)
+                {
+                    // Ignore any errors from the defer - we already sent our content
+                    Console.WriteLine($"Non-critical error acknowledging list command: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in ListTournaments: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    await context.Channel.SendMessageAsync($"Error listing tournaments: {ex.Message}");
+                }
+                catch
+                {
+                    Console.WriteLine("Failed to send error message");
+                }
+            }
         }
 
         [Command("signup_create")]
@@ -762,14 +792,23 @@ namespace Wabbit.BotClient.Commands
         {
             try
             {
-                // Give the API a short delay to be ready - this helps with "Unknown interaction" errors
-                await Task.Delay(200);
+                // Give the API a much longer delay to be ready - this helps with "Unknown interaction" errors
+                await Task.Delay(500);  // Increased from 200ms
 
-                // Call DeferResponseAsync early to avoid timeouts
-                await context.DeferResponseAsync();
+                // Try to defer the interaction, but ignore if it fails
+                try
+                {
+                    // Call DeferResponseAsync early to avoid timeouts
+                    await context.DeferResponseAsync();
+                }
+                catch (Exception deferEx)
+                {
+                    // If deferring fails, log it but continue - the interaction might already be deferred
+                    Console.WriteLine($"Failed to defer response: {deferEx.Message}. Continuing execution...");
+                }
 
-                // Wait a bit to give Discord more time to process the defer
-                await Task.Delay(500);
+                // Wait a longer time to give Discord more time to process the defer
+                await Task.Delay(1000);  // Increased from 500ms
 
                 // Now execute the action
                 await action();
@@ -787,22 +826,37 @@ namespace Wabbit.BotClient.Commands
                     Console.WriteLine($"Failed to send fallback message: {secondEx.Message}");
                 }
             }
+            catch (DSharpPlus.Exceptions.BadRequestException ex)
+            {
+                Console.WriteLine($"Discord API bad request: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    // Try to send a message to the channel directly
+                    await context.Channel.SendMessageAsync($"{errorPrefix}: Discord rejected the request. This often happens when a command times out. Your command might still have worked.");
+                }
+                catch (Exception secondEx)
+                {
+                    Console.WriteLine($"Failed to send fallback message: {secondEx.Message}");
+                }
+            }
             catch (Exception ex)
             {
                 Console.WriteLine($"Command error: {ex.Message}\n{ex.StackTrace}");
                 try
                 {
-                    await SafeResponse(context, $"{errorPrefix}: {ex.Message}");
+                    // Try to send a message directly to the channel first - most reliable
+                    await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
                 }
-                catch
+                catch (Exception directEx)
                 {
+                    Console.WriteLine($"Failed to send direct channel message: {directEx.Message}");
                     try
                     {
-                        await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
+                        await SafeResponse(context, $"{errorPrefix}: {ex.Message}");
                     }
-                    catch
+                    catch (Exception responseEx)
                     {
-                        Console.WriteLine("Failed to send any error messages to the user");
+                        Console.WriteLine($"Failed to send safe response: {responseEx.Message}");
                     }
                 }
             }

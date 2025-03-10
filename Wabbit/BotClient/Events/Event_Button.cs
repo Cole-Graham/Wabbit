@@ -367,7 +367,21 @@ namespace Wabbit.BotClient.Events
             try
             {
                 // Immediately acknowledge the interaction to prevent timeouts
-                await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                // Give Discord some time to prepare for the interaction
+                await Task.Delay(500);
+
+                try
+                {
+                    // Then try to create the response
+                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+
+                    // Give Discord some more time after the response
+                    await Task.Delay(1000);
+                }
+                catch (Exception deferEx)
+                {
+                    Console.WriteLine($"Failed to defer signup button response: {deferEx.Message}. Will try to continue...");
+                }
 
                 // Log details for debugging
                 Console.WriteLine($"Signup button clicked: {e.Id} by user {e.User.Username}");
@@ -381,15 +395,32 @@ namespace Wabbit.BotClient.Events
 
                 if (signup == null)
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"Signup '{tournamentName}' not found. It may have been removed."));
+                    try
+                    {
+                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                            .WithContent($"Signup '{tournamentName}' not found. It may have been removed."));
+                    }
+                    catch (Exception followupEx)
+                    {
+                        Console.WriteLine($"Failed to send followup message: {followupEx.Message}");
+                        // Try direct channel message as fallback
+                        await e.Channel.SendMessageAsync($"Signup '{tournamentName}' not found. It may have been removed.");
+                    }
                     return;
                 }
 
                 if (!signup.IsOpen)
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"Signup for '{tournamentName}' is closed."));
+                    try
+                    {
+                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                            .WithContent($"Signup for '{tournamentName}' is closed."));
+                    }
+                    catch (Exception followupEx)
+                    {
+                        Console.WriteLine($"Failed to send followup message: {followupEx.Message}");
+                        await e.Channel.SendMessageAsync($"Signup for '{tournamentName}' is closed.");
+                    }
                     return;
                 }
 
@@ -401,14 +432,22 @@ namespace Wabbit.BotClient.Events
                 {
                     // User is already signed up - handle cancellation
                     // Create a confirmation message with buttons
-                    var confirmationMessage = new DiscordFollowupMessageBuilder()
-                        .WithContent($"You are already signed up for tournament '{tournamentName}'. Would you like to cancel your signup?")
-                        .AddComponents(
-                            new DiscordButtonComponent(DiscordButtonStyle.Danger, $"cancel_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Cancel Signup"),
-                            new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"keep_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Keep Signup")
-                        );
+                    try
+                    {
+                        var confirmationMessage = new DiscordFollowupMessageBuilder()
+                            .WithContent($"You are already signed up for tournament '{tournamentName}'. Would you like to cancel your signup?")
+                            .AddComponents(
+                                new DiscordButtonComponent(DiscordButtonStyle.Danger, $"cancel_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Cancel Signup"),
+                                new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"keep_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Keep Signup")
+                            );
 
-                    await e.Interaction.CreateFollowupMessageAsync(confirmationMessage);
+                        await e.Interaction.CreateFollowupMessageAsync(confirmationMessage);
+                    }
+                    catch (Exception followupEx)
+                    {
+                        Console.WriteLine($"Failed to send confirmation message: {followupEx.Message}");
+                        await e.Channel.SendMessageAsync($"You are already signed up for tournament '{tournamentName}'.");
+                    }
                     return;
                 }
 
@@ -418,8 +457,16 @@ namespace Wabbit.BotClient.Events
                 // Update the signup message
                 await UpdateSignupMessage(sender, signup);
 
-                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                    .WithContent($"You have been added to the tournament '{tournamentName}'."));
+                try
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"You have been added to the tournament '{tournamentName}'."));
+                }
+                catch (Exception followupEx)
+                {
+                    Console.WriteLine($"Failed to send confirmation message: {followupEx.Message}");
+                    await e.Channel.SendMessageAsync($"You have been added to the tournament '{tournamentName}'.");
+                }
             }
             catch (Exception ex)
             {
@@ -431,7 +478,15 @@ namespace Wabbit.BotClient.Events
                 }
                 catch
                 {
-                    // Ignore if we can't send a message
+                    try
+                    {
+                        // Direct message as a final fallback
+                        await e.Channel.SendMessageAsync($"An error occurred processing your signup: {ex.Message}");
+                    }
+                    catch
+                    {
+                        Console.WriteLine("Failed to send any error messages");
+                    }
                 }
             }
         }
