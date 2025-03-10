@@ -36,53 +36,45 @@ namespace Wabbit.Misc
         /// </summary>
         public static string GenerateStandingsImage(Tournament tournament)
         {
-            // Calculate dimensions based on the tournament structure
-            int width = 800;
-            int totalGroupHeight = CalculateGroupSectionHeight(tournament);
-            int playoffsHeight = tournament.CurrentStage != TournamentStage.Groups ? CalculatePlayoffsSectionHeight(tournament) : 0;
+            // Calculate sizes
+            int width = 900; // Increase width to accommodate standings
 
-            int height = HeaderHeight + totalGroupHeight +
-                         (tournament.CurrentStage != TournamentStage.Groups ? PlayoffsSpacing + playoffsHeight : 0) +
-                         FooterHeight;
+            int groupSectionHeight = CalculateGroupSectionHeight(tournament);
+            int playoffsSectionHeight = CalculatePlayoffsSectionHeight(tournament);
 
-            // Create the surface and canvas
-            using var surface = SKSurface.Create(new SKImageInfo(width, height));
-            var canvas = surface.Canvas;
+            int height = HeaderHeight + groupSectionHeight + playoffsSectionHeight + FooterHeight;
 
-            // Clear the canvas
+            // Create bitmap and canvas
+            using var bitmap = new SKBitmap(width, height);
+            using var canvas = new SKCanvas(bitmap);
+
+            // Draw background
             canvas.Clear(BackgroundColor);
 
-            // Draw the tournament header
+            // Draw header
             DrawTournamentHeader(canvas, tournament, width);
 
-            // Draw group stages
-            int yOffset = HeaderHeight;
+            // Draw group standings
+            int yOffset = HeaderHeight + Padding;
             DrawGroupStandings(canvas, tournament, width, ref yOffset);
 
             // Draw playoffs if applicable
-            if (tournament.CurrentStage != TournamentStage.Groups)
+            if (tournament.CurrentStage == TournamentStage.Playoffs || tournament.CurrentStage == TournamentStage.Complete)
             {
-                yOffset += PlayoffsSpacing;
                 DrawPlayoffs(canvas, tournament, width, ref yOffset);
             }
 
-            // Draw footer with timestamp
+            // Draw footer
             DrawFooter(canvas, width, height);
 
-            // Save the image to a file
-            string fileName = $"tournament_standings_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-            string directory = Path.Combine(Directory.GetCurrentDirectory(), "Images");
-            Directory.CreateDirectory(directory);
-            string filePath = Path.Combine(directory, fileName);
+            // Save to file
+            string fileName = $"Images/tournament_{DateTime.Now:yyyyMMddHHmmss}.png";
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            using var stream = File.OpenWrite(fileName);
+            data.SaveTo(stream);
 
-            using (var image = surface.Snapshot())
-            using (var data = image.Encode(SKEncodedImageFormat.Png, 100))
-            using (var stream = File.OpenWrite(filePath))
-            {
-                data.SaveTo(stream);
-            }
-
-            return filePath;
+            return fileName;
         }
 
         private static int CalculateGroupSectionHeight(Tournament tournament)
@@ -131,14 +123,16 @@ namespace Wabbit.Misc
                 Color = TextColor,
                 TextSize = 28,
                 IsAntialias = true,
-                TextAlign = SKTextAlign.Center
+                TextAlign = SKTextAlign.Left
             };
 
-            canvas.DrawText(tournament.Name, width / 2, HeaderHeight / 2 + 10, textPaint);
+            // Position the tournament name on the left
+            canvas.DrawText(tournament.Name, Padding * 2, HeaderHeight / 2 + 10, textPaint);
 
-            // Draw current stage
+            // Draw current stage on the right
             textPaint.TextSize = 18;
-            canvas.DrawText($"Stage: {tournament.CurrentStage}", width / 2, HeaderHeight - 15, textPaint);
+            textPaint.TextAlign = SKTextAlign.Right;
+            canvas.DrawText($"Stage: {tournament.CurrentStage}", width - Padding * 2, HeaderHeight / 2 + 10, textPaint);
         }
 
         private static void DrawGroupStandings(SKCanvas canvas, Tournament tournament, int width, ref int yOffset)
@@ -221,7 +215,28 @@ namespace Wabbit.Misc
                     canvas.DrawRect(xPos, yOffset, nameWidth, RowHeight, borderPaint);
                     textPaint.TextAlign = SKTextAlign.Left;
                     textPaint.TextSize = 16;
-                    canvas.DrawText(participant.Player?.DisplayName ?? "Unknown", xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
+                    textPaint.Color = TextColor;
+
+                    // Draw the participant name
+                    textPaint.TextAlign = SKTextAlign.Left;
+                    textPaint.Color = TextColor;
+
+                    // Get the display name, with fallback for mock objects
+                    string displayName = participant.Player?.DisplayName ?? string.Empty;
+
+                    // If DisplayName is empty, try using the string representation
+                    if (string.IsNullOrEmpty(displayName) && participant.Player is not null)
+                    {
+                        displayName = participant.Player.ToString() ?? string.Empty;
+                    }
+
+                    // If still empty, use the default fallback text
+                    if (string.IsNullOrEmpty(displayName))
+                    {
+                        displayName = "Unknown Player";
+                    }
+
+                    canvas.DrawText(displayName, xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
                     xPos += nameWidth;
 
                     // Wins

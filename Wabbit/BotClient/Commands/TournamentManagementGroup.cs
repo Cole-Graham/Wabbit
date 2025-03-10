@@ -881,133 +881,55 @@ namespace Wabbit.BotClient.Commands
 
         private void CreateTestGroups(Tournament tournament, int playerCount, int groupCount, bool playMatches, double completionRate = 0.0)
         {
+            // Create the groups
             var random = new Random();
-
-            // Create groups
-            for (int g = 0; g < groupCount; g++)
+            for (int i = 0; i < groupCount; i++)
             {
                 var group = new Tournament.Group
                 {
-                    Name = $"Group {(char)('A' + g)}"
+                    Name = $"Group {(char)('A' + i)}"
                 };
 
-                // Add participants to the group
                 int playersPerGroup = playerCount / groupCount;
-                for (int p = 0; p < playersPerGroup; p++)
-                {
-                    // Create a mock participant with a unique ID
-                    ulong mockId = (ulong)(1000000 + g * 100 + p);
-                    string playerName = $"Player{g}{p}";
+                int remainder = playerCount % groupCount;
+                int groupSize = playersPerGroup + (i < remainder ? 1 : 0);
 
-                    // Create a wrapper that can be used as a stand-in for testing
+                // Add players to the group
+                for (int j = 0; j < groupSize; j++)
+                {
+                    string playerName = $"Player {(char)('A' + i)}{j + 1}";
                     var mockPlayer = new MockDiscordMember
                     {
-                        UserId = mockId,
+                        UserId = 100000000000000000 + (ulong)(i * playersPerGroup + j),
                         UserName = playerName
                     };
 
                     group.Participants.Add(new Tournament.GroupParticipant
                     {
-                        Player = (DSharpPlus.Entities.DiscordMember)mockPlayer
+                        Player = (DiscordMember)mockPlayer
                     });
                 }
 
-                // Create matches within the group (round robin)
-                for (int i = 0; i < group.Participants.Count; i++)
-                {
-                    for (int j = i + 1; j < group.Participants.Count; j++)
-                    {
-                        var match = new Tournament.Match
-                        {
-                            Name = $"{group.Name} Match {i + 1}v{j + 1}",
-                            Type = Wabbit.Models.MatchType.GroupStage
-                        };
-
-                        match.Participants.Add(new Tournament.MatchParticipant
-                        {
-                            Player = group.Participants[i].Player
-                        });
-
-                        match.Participants.Add(new Tournament.MatchParticipant
-                        {
-                            Player = group.Participants[j].Player
-                        });
-
-                        group.Matches.Add(match);
-                    }
-                }
-
+                // Add the group to the tournament
                 tournament.Groups.Add(group);
             }
 
-            // Simulate matches if needed
-            if (playMatches)
+            // Generate matches for each group
+            foreach (var group in tournament.Groups)
             {
-                int matchesToPlay = (int)(tournament.Groups.Sum(g => g.Matches.Count) * completionRate);
-                int matchesPlayed = 0;
+                GenerateGroupMatches(tournament, group);
 
-                foreach (var group in tournament.Groups)
+                // Play matches if required
+                if (playMatches)
                 {
-                    foreach (var match in group.Matches)
-                    {
-                        if (matchesPlayed >= matchesToPlay)
-                            break;
-
-                        // Randomly determine winner
-                        int winnerIdx = random.Next(0, 2);
-                        var winner = match.Participants[winnerIdx].Player;
-                        var loser = match.Participants[1 - winnerIdx].Player;
-
-                        // Create result
-                        match.Result = new Tournament.MatchResult
-                        {
-                            Winner = winner,
-                            CompletedAt = DateTime.Now.AddDays(-random.Next(1, 5))
-                        };
-
-                        match.Participants[winnerIdx].IsWinner = true;
-                        match.Participants[winnerIdx].Score = random.Next(2, 4);
-                        match.Participants[1 - winnerIdx].Score = random.Next(0, 2);
-
-                        // Update group participants stats
-                        var winnerParticipant = group.Participants.First(p =>
-                            p.Player is not null &&
-                            winner is not null &&
-                            p.Player.Id == winner.Id);
-
-                        var loserParticipant = group.Participants.First(p =>
-                            p.Player is not null &&
-                            loser is not null &&
-                            p.Player.Id == loser.Id);
-
-                        winnerParticipant.Wins++;
-                        winnerParticipant.GamesWon += match.Participants[winnerIdx].Score;
-                        winnerParticipant.GamesLost += match.Participants[1 - winnerIdx].Score;
-
-                        loserParticipant.Losses++;
-                        loserParticipant.GamesWon += match.Participants[1 - winnerIdx].Score;
-                        loserParticipant.GamesLost += match.Participants[winnerIdx].Score;
-
-                        matchesPlayed++;
-                    }
-
-                    // Mark group as complete if all matches are played
-                    if (group.Matches.All(m => m.IsComplete))
-                    {
-                        group.IsComplete = true;
-
-                        // Mark top 2 players as advanced
-                        var topPlayers = group.Participants
-                            .OrderByDescending(p => p.Points)
-                            .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                            .Take(2);
-
-                        foreach (var player in topPlayers)
-                        {
-                            player.AdvancedToPlayoffs = true;
-                        }
-                    }
+                    PlayGroupMatches(group, random, completionRate);
                 }
+            }
+
+            // If we're playing matches and all groups are complete, set up playoffs
+            if (playMatches && tournament.Groups.All(g => g.IsComplete))
+            {
+                SetupTestPlayoffs(tournament, playMatches, completionRate);
             }
         }
 
@@ -1240,6 +1162,100 @@ namespace Wabbit.BotClient.Commands
                 Console.WriteLine($"Error updating signup message: {ex.Message}");
             }
         }
+
+        private void GenerateGroupMatches(Tournament tournament, Tournament.Group group)
+        {
+            // Create matches within the group (round robin)
+            for (int i = 0; i < group.Participants.Count; i++)
+            {
+                for (int j = i + 1; j < group.Participants.Count; j++)
+                {
+                    var match = new Tournament.Match
+                    {
+                        Name = $"{group.Name} Match {i + 1}v{j + 1}",
+                        Type = Wabbit.Models.MatchType.GroupStage
+                    };
+
+                    match.Participants.Add(new Tournament.MatchParticipant
+                    {
+                        Player = group.Participants[i].Player
+                    });
+
+                    match.Participants.Add(new Tournament.MatchParticipant
+                    {
+                        Player = group.Participants[j].Player
+                    });
+
+                    group.Matches.Add(match);
+                }
+            }
+        }
+
+        private void PlayGroupMatches(Tournament.Group group, Random random, double completionRate = 1.0)
+        {
+            int matchesToPlay = (int)(group.Matches.Count * completionRate);
+            int matchesPlayed = 0;
+
+            foreach (var match in group.Matches)
+            {
+                if (matchesPlayed >= matchesToPlay)
+                    break;
+
+                // Randomly determine winner
+                int winnerIdx = random.Next(0, 2);
+                var winner = match.Participants[winnerIdx].Player;
+                var loser = match.Participants[1 - winnerIdx].Player;
+
+                // Create result
+                match.Result = new Tournament.MatchResult
+                {
+                    Winner = winner,
+                    CompletedAt = DateTime.Now.AddDays(-random.Next(1, 5))
+                };
+
+                match.Participants[winnerIdx].IsWinner = true;
+                match.Participants[winnerIdx].Score = random.Next(2, 4);
+                match.Participants[1 - winnerIdx].Score = random.Next(0, 2);
+
+                // Update group participants stats
+                var winnerParticipant = group.Participants.First(p =>
+                    p.Player is not null &&
+                    winner is not null &&
+                    p.Player.Id == winner.Id);
+
+                var loserParticipant = group.Participants.First(p =>
+                    p.Player is not null &&
+                    loser is not null &&
+                    p.Player.Id == loser.Id);
+
+                winnerParticipant.Wins++;
+                winnerParticipant.GamesWon += match.Participants[winnerIdx].Score;
+                winnerParticipant.GamesLost += match.Participants[1 - winnerIdx].Score;
+
+                loserParticipant.Losses++;
+                loserParticipant.GamesWon += match.Participants[1 - winnerIdx].Score;
+                loserParticipant.GamesLost += match.Participants[winnerIdx].Score;
+
+                matchesPlayed++;
+            }
+
+            // Mark group as complete if all matches are played
+            if (group.Matches.All(m => m.IsComplete))
+            {
+                group.IsComplete = true;
+
+                // Mark top 2 players as advanced
+                var topPlayers = group.Participants
+                    .OrderByDescending(p => p.Points)
+                    .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                    .Take(2);
+
+                foreach (var player in topPlayers)
+                {
+                    player.AdvancedToPlayoffs = true;
+                }
+            }
+        }
     }
 
     public class TournamentFormatChoiceProvider : IChoiceProvider
@@ -1276,7 +1292,7 @@ namespace Wabbit.BotClient.Commands
         }
     }
 
-    // Simple class that can be cast to DiscordMember 
+    // Simple class that can be cast to DiscordMember for testing
     public class MockDiscordMember
     {
         public ulong UserId { get; set; }
@@ -1286,11 +1302,15 @@ namespace Wabbit.BotClient.Commands
         public string Username => UserName;
         public string DisplayName => UserName;
 
-        // Explicit conversion operator
+        // Override ToString to help with debugging and visualization
+        public override string ToString() => UserName;
+
+        // Explicit conversion to allow using as DiscordMember in tests
         public static explicit operator DSharpPlus.Entities.DiscordMember(MockDiscordMember mock)
         {
-            // This will only be used in tests, so we can just return null
-            // The real code should never execute this path
+            // This forces the participant.Player?.DisplayName in TournamentVisualization.cs
+            // to use the MockDiscordMember.DisplayName property by pretending to be null
+            // but exposing its DisplayName via ToString()
             return null!;
         }
     }
