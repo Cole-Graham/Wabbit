@@ -7,10 +7,6 @@ using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Runtime.CompilerServices;
 
 namespace Wabbit.BotClient.Events
 {
@@ -347,133 +343,107 @@ namespace Wabbit.BotClient.Events
 
         private async Task HandleTournamentCreateModal(DiscordClient sender, ModalSubmittedEventArgs modal)
         {
+            await modal.Interaction.DeferAsync();
+
             try
             {
-                await modal.Interaction.DeferAsync();
+                // Extract tournament name from modal ID
+                string tournamentName = modal.Interaction.Data.CustomId.Replace("tournament_create_modal_", "");
 
-                // Parse custom ID to get tournament name and format
-                string customId = modal.Interaction.Data.CustomId;
-                string[] parts = customId.Split('_');
+                // Extract players from the input
+                string playersText = modal.Values["players"];
 
-                if (parts.Length < 5)
+                // Extract user mentions using regex
+                var userMentionRegex = new Regex(@"<@!?(\d+)>");
+                var matches = userMentionRegex.Matches(playersText);
+
+                List<DiscordMember> players = [];
+
+                if (modal.Interaction.Guild is null)
                 {
-                    await modal.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Invalid tournament data. Please try again."));
+                    await modal.Interaction.CreateFollowupMessageAsync(
+                        new DiscordFollowupMessageBuilder().WithContent("Guild information is missing."));
                     return;
                 }
 
-                // Get tournament name and format from custom ID
-                string tournamentName = parts[^2]; // Second last part
-                tournamentName = tournamentName.Replace("-", "_"); // Convert back dashes to underscores
-                string formatStr = parts[^1]; // Last part
-
-                if (!Enum.TryParse<TournamentFormat>(formatStr, out TournamentFormat format))
+                // Get DiscordMember objects for all mentioned users
+                foreach (Match match in matches)
                 {
-                    format = TournamentFormat.GroupStageWithPlayoffs; // Default format
-                }
-
-                // Get players from the modal input
-                string playersInput = modal.Values["players"];
-
-                if (string.IsNullOrWhiteSpace(playersInput))
-                {
-                    await modal.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("No players were specified. Please try again with at least 2 players."));
-                    return;
-                }
-
-                // Parse player names - supporting both comma and newline separators
-                var playerNames = playersInput
-                    .Replace("\r", "")
-                    .Split(new[] { ',', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(name => name.Trim())
-                    .Where(name => !string.IsNullOrWhiteSpace(name))
-                    .ToList();
-
-                if (playerNames.Count < 2)
-                {
-                    await modal.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("At least 2 players are required for a tournament."));
-                    return;
-                }
-
-                // Convert player names to DiscordMember objects
-                var players = new List<DiscordMember>();
-                var guild = modal.Interaction.Guild;
-
-                foreach (var playerName in playerNames)
-                {
-                    DiscordMember? member = null;
-
-                    // Try to parse as mention/ID first
-                    if (ulong.TryParse(playerName.Trim('<', '@', '>', '!'), out ulong userId))
+                    if (ulong.TryParse(match.Groups[1].Value, out ulong userId))
                     {
                         try
                         {
-                            member = await guild!.GetMemberAsync(userId);
+                            var member = await modal.Interaction.Guild.GetMemberAsync(userId);
+                            if (member is not null)
+                            {
+                                players.Add(member);
+                            }
                         }
                         catch
                         {
-                            // User ID not found, continue to next check
+                            // User might not be in the server or other issue
+                            continue;
                         }
-                    }
-
-                    // If not found by ID, try by name
-                    if (member is null)
-                    {
-                        // Get all members manually using the guild's REST API
-                        var membersList = guild?.Members.Values.ToList();
-
-                        // Now search the list
-                        member = membersList?.FirstOrDefault(m =>
-                            (m.Username != null && m.Username.Equals(playerName, StringComparison.OrdinalIgnoreCase)) ||
-                            (m.DisplayName != null && m.DisplayName.Equals(playerName, StringComparison.OrdinalIgnoreCase)) ||
-                            (m.Nickname != null && m.Nickname.Equals(playerName, StringComparison.OrdinalIgnoreCase)));
-                    }
-
-                    if (member is not null)
-                    {
-                        players.Add(member);
-                    }
-                    else
-                    {
-                        await modal.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                            .WithContent($"Could not find player: {playerName}"));
-                        return;
                     }
                 }
 
-                // Create tournament
+                if (players.Count < 3)
+                {
+                    await modal.Interaction.CreateFollowupMessageAsync(
+                        new DiscordFollowupMessageBuilder().WithContent(
+                            "At least 3 players are required to create a tournament. Please mention valid server members."));
+                    return;
+                }
+
+                // Create the tournament
                 var tournament = _tournamentManager.CreateTournament(
                     tournamentName,
                     players,
-                    format,
+                    TournamentFormat.GroupStageWithPlayoffs,
                     modal.Interaction.Channel);
 
-                // Generate and show standings
+                // Add to ongoing tournaments
+                _roundsHolder.Tournaments.Add(tournament);
+
+                // Generate and send standings image
                 string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
-                using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
 
-                var responseBuilder = new DiscordFollowupMessageBuilder()
-                    .WithContent($"Tournament '{tournamentName}' has been created with {players.Count} players!")
-                    .AddFile("tournament.png", fs);
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"🏆 Tournament Created: {tournament.Name}")
+                    .WithDescription($"Format: Group Stage + Playoffs\nPlayers: {players.Count}\nGroups: {tournament.Groups.Count}")
+                    .WithColor(DiscordColor.Green)
+                    .WithFooter("Use /tournament_manager show_standings to view the current standings");
 
-                await modal.Interaction.CreateFollowupMessageAsync(responseBuilder);
+                // Send the tournament info with the standings image
+                var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                var messageBuilder = new DiscordFollowupMessageBuilder()
+                    .AddEmbed(embed)
+                    .AddFile(Path.GetFileName(imagePath), fileStream);
+
+                await modal.Interaction.CreateFollowupMessageAsync(messageBuilder);
+
+                // Notify all players
+                var notificationEmbed = new DiscordEmbedBuilder()
+                    .WithTitle($"🏆 You've been added to tournament: {tournament.Name}")
+                    .WithDescription("Check the tournament channel for details and your group assignments.")
+                    .WithColor(DiscordColor.Green);
+
+                foreach (var player in players)
+                {
+                    try
+                    {
+                        await player.SendMessageAsync(notificationEmbed);
+                    }
+                    catch
+                    {
+                        // Player may have DMs disabled, continue anyway
+                    }
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error handling tournament modal: {ex.Message}");
-
-                try
-                {
-                    var messageBuilder = new DiscordFollowupMessageBuilder()
-                        .WithContent($"Error creating tournament: {ex.Message}");
-                    await modal.Interaction.CreateFollowupMessageAsync(messageBuilder);
-                }
-                catch (Exception innerEx)
-                {
-                    Console.WriteLine($"Error sending error response: {innerEx.Message}");
-                }
+                await modal.Interaction.CreateFollowupMessageAsync(
+                    new DiscordFollowupMessageBuilder().WithContent($"Failed to create tournament: {ex.Message}"));
             }
         }
     }

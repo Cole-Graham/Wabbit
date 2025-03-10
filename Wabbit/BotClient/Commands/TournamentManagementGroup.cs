@@ -39,29 +39,24 @@ namespace Wabbit.BotClient.Commands
         public async Task CreateTournament(
             CommandContext context,
             [Description("Tournament name")] string name,
-            [Description("Tournament format")] string format)
+            [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format)
         {
             await context.DeferResponseAsync();
 
-            try
+            // Check if a tournament with this name already exists
+            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
             {
-                // Check if a tournament with this name already exists
-                if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
-                    return;
-                }
+                await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
+                return;
+            }
 
-                // For now, use the original mention-based approach since modal integration appears problematic
-                await context.EditResponseAsync(
-                    $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
-                    $"For example: @Player1 @Player2 @Player3...");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error creating tournament: {ex.Message}\n{ex.StackTrace}");
-                await SafeResponse(context, $"Error creating tournament: {ex.Message}");
-            }
+            // Inform user about next steps
+            await context.EditResponseAsync(
+                $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
+                $"For example: @Player1 @Player2 @Player3...");
+
+            // Tournament creation will be handled by user mentioning players in follow-up message
+            // which will be processed in an event handler
         }
 
         [Command("create_from_signup")]
@@ -257,7 +252,7 @@ namespace Wabbit.BotClient.Commands
         public async Task CreateSignup(
             CommandContext context,
             [Description("Tournament name")] string name,
-            [Description("Tournament format")] string format,
+            [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format,
             [Description("Scheduled start time (Unix timestamp, 0 for none)")] long startTimeUnix = 0)
         {
             await context.DeferResponseAsync();
@@ -565,7 +560,7 @@ namespace Wabbit.BotClient.Commands
         public async Task TestSetup(
             CommandContext context,
             [Description("Number of participants")] int participantCount = 8,
-            [Description("Tournament format")] string format = "GroupStageWithPlayoffs")
+            [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format = "GroupStageWithPlayoffs")
         {
             await context.DeferResponseAsync();
 
@@ -737,7 +732,7 @@ namespace Wabbit.BotClient.Commands
         [Description("Test tournament visualization with various tournament states")]
         public async Task TestVisualization(
             CommandContext context,
-            [Description("Test scenario")] string scenario = "complete")
+            [Description("Test scenario")][SlashChoiceProvider<VisualizationTestChoiceProvider>] string scenario = "complete")
         {
             await context.DeferResponseAsync();
 
@@ -1934,7 +1929,7 @@ namespace Wabbit.BotClient.Commands
         [Description("Test tournament with specific group configurations")]
         public async Task TestSpecificGroups(
             CommandContext context,
-            [Description("Test scenario")] string scenario = "2groups_2players")
+            [Description("Test scenario")][SlashChoiceProvider<GroupTestScenarioProvider>] string scenario = "2groups_2players")
         {
             await context.DeferResponseAsync();
 
@@ -2004,6 +1999,23 @@ namespace Wabbit.BotClient.Commands
                 default:
                     CreateTestGroups(tournament, 4, 2, playMatches, 1.0);
                     break;
+            }
+        }
+
+        // Choice provider for test scenarios
+        public class GroupTestScenarioProvider : IChoiceProvider
+        {
+            private static readonly IEnumerable<DiscordApplicationCommandOptionChoice> scenarios = new DiscordApplicationCommandOptionChoice[]
+            {
+                new("2 Groups with 2 Players Each", "2groups_2players"),
+                new("2 Groups with 3 Players Each", "2groups_3players"),
+                new("2 Groups + Playoffs", "groups_and_playoffs"),
+                new("Complete Tournament", "complete_tournament"),
+            };
+
+            public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter)
+            {
+                return new ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>>(scenarios);
             }
         }
 
