@@ -702,8 +702,8 @@ namespace Wabbit.BotClient.Commands
 
                 var finalFileStream = new FileStream(finalImagePath, FileMode.Open, FileAccess.Read);
                 var finalMessageBuilder = new DiscordWebhookBuilder()
-                    .WithContent($"Tournament '{tournamentName}' completed!")
-                    .AddFile(Path.GetFileName(finalImagePath), finalFileStream);
+                    .WithContent($"�� **Testing Complete**: Tournament '{tournamentName}' has finished!\n\nYou've successfully tested:\n- Tournament signup creation\n- User signup\n- Tournament creation from signup\n- Match simulation\n- Tournament completion\n\nAll user flows tested successfully.")
+                    .AddFile("tournament_final.png", finalFileStream);
 
                 await context.EditResponseAsync(finalMessageBuilder);
             }
@@ -767,230 +767,245 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
-                switch (startStep)
+                // Start the step based on the request
+                try
                 {
-                    case 1: // Create a tournament signup using the actual command logic
-                        await context.EditResponseAsync($"**Step 1**: Creating tournament signup '{testName}'...");
+                    switch (startStep)
+                    {
+                        case 1: // Create a tournament signup using the actual command logic
+                            await context.EditResponseAsync($"**Step 1**: Creating tournament signup '{testName}'...");
 
-                        // Use the actual command logic
-                        var signup = new TournamentSignup
-                        {
-                            Name = testName,
-                            Format = TournamentFormat.GroupStageWithPlayoffs,
-                            CreatedBy = context.User,
-                            IsOpen = true,
-                            CreatedAt = DateTime.Now
-                        };
+                            // Use the actual command logic
+                            var signup = new TournamentSignup
+                            {
+                                Name = testName,
+                                Format = TournamentFormat.GroupStageWithPlayoffs,
+                                CreatedBy = context.User,
+                                IsOpen = true,
+                                CreatedAt = DateTime.Now
+                            };
 
-                        _ongoingRounds.TournamentSignups.Add(signup);
+                            _ongoingRounds.TournamentSignups.Add(signup);
 
-                        // Create a signup message
-                        var embed = CreateSignupEmbed(signup);
-                        var message = await context.Channel.SendMessageAsync(embed);
-                        signup.SignupListMessage = message;
+                            // Create a signup message
+                            var embed = CreateSignupEmbed(signup);
+                            var message = await context.Channel.SendMessageAsync(embed);
+                            signup.SignupListMessage = message;
 
-                        await context.Channel.SendMessageAsync($"✅ **Step 1 Complete**: Created signup '{testName}'.\nRun `/tournament_manager signup tournamentName:{testName}` to add yourself to the signup.\nThen run `/tournament_manager test_user_flow 2` to continue.");
-                        break;
-
-                    case 2: // Testing signup functionality
-                        await context.EditResponseAsync($"**Step 2**: Testing signup functionality for '{testName}'...");
-
-                        var existingSignup = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
-                        if (existingSignup == null)
-                        {
-                            await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run step 1 first.");
-                            return;
-                        }
-
-                        // Check if user has signed up themselves
-                        bool userSignedUp = existingSignup.Participants.Any(p => p.Id == context.User.Id);
-
-                        if (!userSignedUp)
-                        {
-                            await context.EditResponseAsync($"⚠️ You haven't signed up for the tournament yet. Please run `/tournament_manager signup tournamentName:{testName}` first, then retry this step.");
-                            return;
-                        }
-
-                        // Skip adding mock participants in the flow - we'll create them directly in the tournament
-                        // Just proceed with the current user as participant
-
-                        await context.EditResponseAsync($"✅ **Step 2 Complete**: Verified signup for '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
-                        break;
-
-                    case 3: // Create tournament from signup using the actual command
-                        await context.EditResponseAsync($"**Step 3**: Creating tournament from signup '{testName}' using the command...");
-
-                        // First, check if the signup exists
-                        var signupToConvert = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
-                        if (signupToConvert == null)
-                        {
-                            await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run steps 1-2 first.");
-                            return;
-                        }
-
-                        // Check if a tournament with this name already exists
-                        if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(testName, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            // If a tournament already exists, just go to the next step
-                            await context.EditResponseAsync($"A tournament with name '{testName}' already exists. Skipping creation step.");
-                            await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.");
+                            await context.Channel.SendMessageAsync($"✅ **Step 1 Complete**: Created signup '{testName}'.\nRun `/tournament_manager signup tournamentName:{testName}` to add yourself to the signup.\nThen run `/tournament_manager test_user_flow 2` to continue.");
                             break;
-                        }
 
-                        // Create the tournament directly rather than from signup
-                        // Since we're testing, we'll create it manually with the real user and mock players
+                        case 2: // Testing signup functionality
+                            await context.EditResponseAsync($"**Step 2**: Testing signup functionality for '{testName}'...");
 
-                        // Start with the real user
-                        var realPlayers = signupToConvert.Participants.ToList();
+                            var existingSignup = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
+                            if (existingSignup == null)
+                            {
+                                await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run step 1 first.");
+                                return;
+                            }
 
-                        // Create the tournament
-                        var tournament = new Tournament
-                        {
-                            Name = testName,
-                            Format = signupToConvert.Format,
-                            AnnouncementChannel = context.Channel
-                        };
+                            // Check if user has signed up themselves
+                            bool userSignedUp = existingSignup.Participants.Any(p => p.Id == context.User.Id);
 
-                        // Add the tournament to the active list
-                        _ongoingRounds.Tournaments.Add(tournament);
+                            if (!userSignedUp)
+                            {
+                                await context.EditResponseAsync($"⚠️ You haven't signed up for the tournament yet. Please run `/tournament_manager signup tournamentName:{testName}` first, then retry this step.");
+                                return;
+                            }
 
-                        // Create groups with the real user and mock players
-                        CreateTestGroups(tournament, 8, 2, false);
+                            // Skip adding mock participants in the flow - we'll create them directly in the tournament
+                            // Just proceed with the current user as participant
 
-                        // Mark signup as closed
-                        signupToConvert.IsOpen = false;
+                            await context.EditResponseAsync($"✅ **Step 2 Complete**: Verified signup for '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
+                            break;
 
-                        // Generate and show standings
-                        {
-                            string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
-                            using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
-                            var builder = new DiscordWebhookBuilder()
-                                .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}'.\nYou can use `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.")
-                                .AddFile("tournament.png", fs);
+                        case 3: // Create tournament from signup using the actual command
+                            await context.EditResponseAsync($"**Step 3**: Creating tournament from signup '{testName}' using the command...");
 
-                            await context.EditResponseAsync(builder);
-                        }
-                        break;
+                            // First, check if the signup exists
+                            var signupToConvert = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
+                            if (signupToConvert == null)
+                            {
+                                await context.EditResponseAsync($"❌ Error: Couldn't find signup '{testName}'. Please run steps 1-2 first.");
+                                return;
+                            }
 
-                    case 4: // Test simulating matches
-                        await context.EditResponseAsync($"**Step 4**: Simulating matches for tournament '{testName}'...");
+                            // Check if a tournament with this name already exists
+                            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(testName, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                // If a tournament already exists, just go to the next step
+                                await context.EditResponseAsync($"A tournament with name '{testName}' already exists. Skipping creation step.");
+                                await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.");
+                                break;
+                            }
 
-                        // Find tournament by name or most recent
-                        var tournamentToUpdate = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
-                        if (tournamentToUpdate == null)
-                        {
-                            // Try to find most recent test tournament
-                            tournamentToUpdate = _ongoingRounds.Tournaments
-                                .Where(t => t.Name.StartsWith("TestFlow_"))
-                                .OrderByDescending(t => t.Groups.FirstOrDefault()?.Matches.FirstOrDefault()?.Result?.CompletedAt ?? DateTime.MinValue)
-                                .FirstOrDefault();
+                            // Create the tournament directly rather than from signup
+                            // Since we're testing, we'll create it manually with the real user and mock players
 
+                            // Start with the real user
+                            var realPlayers = signupToConvert.Participants.ToList();
+
+                            // Create the tournament
+                            var tournament = new Tournament
+                            {
+                                Name = testName,
+                                Format = signupToConvert.Format,
+                                AnnouncementChannel = context.Channel
+                            };
+
+                            // Add the tournament to the active list
+                            _ongoingRounds.Tournaments.Add(tournament);
+
+                            // Create groups with the real user and mock players
+                            CreateTestGroups(tournament, 8, 2, false);
+
+                            // Mark signup as closed
+                            signupToConvert.IsOpen = false;
+
+                            // Generate and show standings
+                            {
+                                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+                                using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                                var builder = new DiscordWebhookBuilder()
+                                    .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}'.\nYou can use `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.")
+                                    .AddFile("tournament.png", fs);
+
+                                await context.EditResponseAsync(builder);
+                            }
+                            break;
+
+                        case 4: // Test simulating matches
+                            await context.EditResponseAsync($"**Step 4**: Simulating matches for tournament '{testName}'...");
+
+                            // Find tournament by name or most recent
+                            var tournamentToUpdate = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
                             if (tournamentToUpdate == null)
                             {
-                                await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-3 first.");
-                                return;
-                            }
+                                // Try to find most recent test tournament
+                                tournamentToUpdate = _ongoingRounds.Tournaments
+                                    .Where(t => t.Name.StartsWith("TestFlow_"))
+                                    .OrderByDescending(t => t.Groups.FirstOrDefault()?.Matches.FirstOrDefault()?.Result?.CompletedAt ?? DateTime.MinValue)
+                                    .FirstOrDefault();
 
-                            testName = tournamentToUpdate.Name;
-                        }
-
-                        // Simulate group matches
-                        await SimulateGroupMatches(context, tournamentToUpdate);
-
-                        // Update visualization
-                        {
-                            string updatedImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToUpdate);
-                            using var updatedFs = new FileStream(updatedImagePath, FileMode.Open, FileAccess.Read);
-                            var updatedBuilder = new DiscordWebhookBuilder()
-                                .WithContent($"✅ **Step 4 Complete**: Group stage matches completed for '{testName}'.\nYou can also try `/tournament_manager update tournamentName:{testName}` to update the tournament.\nRun `/tournament_manager test_user_flow 5` to continue.")
-                                .AddFile("tournament_updated.png", updatedFs);
-
-                            await context.EditResponseAsync(updatedBuilder);
-                        }
-                        break;
-
-                    case 5: // Complete tournament
-                        await context.EditResponseAsync($"**Step 5**: Completing tournament '{testName}'...");
-
-                        // Find tournament by name or most recent
-                        var tournamentToComplete = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
-                        if (tournamentToComplete == null)
-                        {
-                            // Try to find most recent test tournament
-                            tournamentToComplete = _ongoingRounds.Tournaments
-                                .Where(t => t.Name.StartsWith("TestFlow_"))
-                                .OrderByDescending(t => t.Groups.FirstOrDefault()?.Matches.FirstOrDefault()?.Result?.CompletedAt ?? DateTime.MinValue)
-                                .FirstOrDefault();
-
-                            if (tournamentToComplete == null)
-                            {
-                                await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-4 first.");
-                                return;
-                            }
-
-                            testName = tournamentToComplete.Name;
-                        }
-
-                        try
-                        {
-                            // Set up playoffs with safeguards
-                            if (tournamentToComplete.CurrentStage == TournamentStage.Groups)
-                            {
-                                // Make sure we have at least one qualified player from each group
-                                foreach (var group in tournamentToComplete.Groups)
+                                if (tournamentToUpdate == null)
                                 {
-                                    if (!group.Participants.Any(p => p.AdvancedToPlayoffs))
-                                    {
-                                        // Ensure at least one player advances
-                                        var topPlayer = group.Participants
-                                            .OrderByDescending(p => p.Points)
-                                            .ThenByDescending(p => p.GamesWon - p.GamesLost)
-                                            .FirstOrDefault();
-
-                                        if (topPlayer != null)
-                                        {
-                                            topPlayer.AdvancedToPlayoffs = true;
-                                        }
-                                    }
+                                    await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-3 first.");
+                                    return;
                                 }
 
-                                // Now set up playoffs
-                                SetupTestPlayoffs(tournamentToComplete, true, 1.0);
+                                testName = tournamentToUpdate.Name;
                             }
 
-                            // Simulate playoff matches if we have playoffs
-                            if (tournamentToComplete.CurrentStage == TournamentStage.Playoffs &&
-                                tournamentToComplete.PlayoffMatches.Count > 0)
+                            // Simulate group matches
+                            await SimulateGroupMatches(context, tournamentToUpdate);
+
+                            // Update visualization
                             {
-                                await SimulatePlayoffMatches(context, tournamentToComplete);
+                                string updatedImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToUpdate);
+                                using var updatedFs = new FileStream(updatedImagePath, FileMode.Open, FileAccess.Read);
+                                var updatedBuilder = new DiscordWebhookBuilder()
+                                    .WithContent($"✅ **Step 4 Complete**: Group stage matches completed for '{testName}'.\nYou can also try `/tournament_manager update tournamentName:{testName}` to update the tournament.\nRun `/tournament_manager test_user_flow 5` to continue.")
+                                    .AddFile("tournament_updated.png", updatedFs);
+
+                                await context.EditResponseAsync(updatedBuilder);
                             }
-                            else
+                            break;
+
+                        case 5: // Complete tournament
+                            await context.EditResponseAsync($"**Step 5**: Completing tournament '{testName}'...");
+
+                            // Find tournament by name or most recent
+                            var tournamentToComplete = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
+                            if (tournamentToComplete == null)
                             {
-                                // If we don't have playoffs, just mark the tournament as complete
-                                tournamentToComplete.CurrentStage = TournamentStage.Complete;
-                                tournamentToComplete.IsComplete = true;
+                                // Try to find most recent test tournament
+                                tournamentToComplete = _ongoingRounds.Tournaments
+                                    .Where(t => t.Name.StartsWith("TestFlow_"))
+                                    .OrderByDescending(t => t.Groups.FirstOrDefault()?.Matches.FirstOrDefault()?.Result?.CompletedAt ?? DateTime.MinValue)
+                                    .FirstOrDefault();
+
+                                if (tournamentToComplete == null)
+                                {
+                                    await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-4 first.");
+                                    return;
+                                }
+
+                                testName = tournamentToComplete.Name;
                             }
 
-                            // Final visualization
+                            try
                             {
-                                string finalImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToComplete);
-                                using var finalFs = new FileStream(finalImagePath, FileMode.Open, FileAccess.Read);
-                                var finalBuilder = new DiscordWebhookBuilder()
-                                    .WithContent($"🏆 **Testing Complete**: Tournament '{testName}' has finished!\n\nYou've successfully tested:\n- Tournament signup creation\n- User signup\n- Tournament creation from signup\n- Match simulation\n- Tournament completion\n\nAll user flows tested successfully.")
-                                    .AddFile("tournament_final.png", finalFs);
+                                // Set up playoffs with safeguards
+                                if (tournamentToComplete.CurrentStage == TournamentStage.Groups)
+                                {
+                                    // Make sure we have at least one qualified player from each group
+                                    foreach (var group in tournamentToComplete.Groups)
+                                    {
+                                        if (!group.Participants.Any(p => p.AdvancedToPlayoffs))
+                                        {
+                                            // Ensure at least one player advances
+                                            var topPlayer = group.Participants
+                                                .OrderByDescending(p => p.Points)
+                                                .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                                                .FirstOrDefault();
 
-                                await context.EditResponseAsync(finalBuilder);
+                                            if (topPlayer != null)
+                                            {
+                                                topPlayer.AdvancedToPlayoffs = true;
+                                            }
+                                        }
+                                    }
+
+                                    // Now set up playoffs
+                                    SetupTestPlayoffs(tournamentToComplete, true, 1.0);
+                                }
+
+                                // Simulate playoff matches if we have playoffs
+                                if (tournamentToComplete.CurrentStage == TournamentStage.Playoffs &&
+                                    tournamentToComplete.PlayoffMatches.Count > 0)
+                                {
+                                    await SimulatePlayoffMatches(context, tournamentToComplete);
+                                }
+                                else
+                                {
+                                    // If we don't have playoffs, just mark the tournament as complete
+                                    tournamentToComplete.CurrentStage = TournamentStage.Complete;
+                                    tournamentToComplete.IsComplete = true;
+                                }
+
+                                // Final visualization
+                                {
+                                    string finalImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToComplete);
+                                    using var finalFs = new FileStream(finalImagePath, FileMode.Open, FileAccess.Read);
+                                    var finalBuilder = new DiscordWebhookBuilder()
+                                        .WithContent($"🏆 **Testing Complete**: Tournament '{testName}' has finished!\n\nYou've successfully tested:\n- Tournament signup creation\n- User signup\n- Tournament creation from signup\n- Match simulation\n- Tournament completion\n\nAll user flows tested successfully.")
+                                        .AddFile("tournament_final.png", finalFs);
+
+                                    await context.EditResponseAsync(finalBuilder);
+                                }
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            await context.EditResponseAsync($"Error completing tournament: {ex.Message}\n\nStack trace: {ex.StackTrace}");
-                        }
-                        break;
+                            catch (Exception ex)
+                            {
+                                await context.EditResponseAsync($"Error completing tournament: {ex.Message}\n\nStack trace: {ex.StackTrace}");
+                            }
+                            break;
 
-                    default:
-                        await context.EditResponseAsync("Invalid step number. Please use steps 1-5.");
-                        break;
+                        default:
+                            await context.EditResponseAsync("Invalid step number. Please use steps 1-5.");
+                            break;
+                    }
+                }
+                catch (DSharpPlus.Exceptions.NotFoundException ex)
+                {
+                    // Handle expired interaction tokens gracefully
+                    Console.WriteLine($"Interaction response error (token expired): {ex.Message}");
+                    await context.Channel.SendMessageAsync($"⚠️ Command processing took too long and the interaction expired. Please try again.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in test flow: {ex.Message}");
+                    await context.Channel.SendMessageAsync($"⚠️ Error in test flow: {ex.Message}");
                 }
             }
             catch (Exception ex)
