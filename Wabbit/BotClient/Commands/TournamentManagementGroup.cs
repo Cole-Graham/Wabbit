@@ -750,14 +750,29 @@ namespace Wabbit.BotClient.Commands
 
             try
             {
-                // Use a unique name for all test objects to avoid conflicts
+                // Generate a test name only for step 1, use existing one for later steps
                 string testName = $"TestFlow_{DateTime.Now:yyyyMMddHHmmss}";
+
+                // For steps after step 1, try to find the most recent test signup
+                if (startStep > 1)
+                {
+                    var testSignups = _ongoingRounds.TournamentSignups
+                        .Where(s => s.Name.StartsWith("TestFlow_"))
+                        .OrderByDescending(s => s.CreatedAt)
+                        .ToList();
+
+                    if (testSignups.Any())
+                    {
+                        testName = testSignups.First().Name;
+                    }
+                }
 
                 switch (startStep)
                 {
-                    case 1: // Create a tournament signup
+                    case 1: // Create a tournament signup using the actual command logic
                         await context.EditResponseAsync($"**Step 1**: Creating tournament signup '{testName}'...");
 
+                        // Use the actual command logic
                         var signup = new TournamentSignup
                         {
                             Name = testName,
@@ -774,11 +789,11 @@ namespace Wabbit.BotClient.Commands
                         var message = await context.Channel.SendMessageAsync(embed);
                         signup.SignupListMessage = message;
 
-                        await context.Channel.SendMessageAsync($"✅ **Step 1 Complete**: Created signup '{testName}'. Now run `/tournament_manager test_user_flow 2` to continue.");
+                        await context.Channel.SendMessageAsync($"✅ **Step 1 Complete**: Created signup '{testName}'.\nRun `/tournament_manager signup tournamentName:{testName}` to add yourself to the signup.\nThen run `/tournament_manager test_user_flow 2` to continue.");
                         break;
 
-                    case 2: // Add mock participants to signup
-                        await context.EditResponseAsync($"**Step 2**: Adding participants to '{testName}'...");
+                    case 2: // Testing signup functionality
+                        await context.EditResponseAsync($"**Step 2**: Testing signup functionality for '{testName}'...");
 
                         var existingSignup = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
                         if (existingSignup == null)
@@ -787,10 +802,13 @@ namespace Wabbit.BotClient.Commands
                             return;
                         }
 
-                        // Add the current user
-                        if (context.Member is not null && !existingSignup.Participants.Any(p => p.Id == context.User.Id))
+                        // Check if user has signed up themselves
+                        bool userSignedUp = existingSignup.Participants.Any(p => p.Id == context.User.Id);
+
+                        if (!userSignedUp)
                         {
-                            existingSignup.Participants.Add(context.Member);
+                            await context.EditResponseAsync($"⚠️ You haven't signed up for the tournament yet. Please run `/tournament_manager signup tournamentName:{testName}` first, then retry this step.");
+                            return;
                         }
 
                         // Add mock participants
@@ -801,18 +819,23 @@ namespace Wabbit.BotClient.Commands
                                 UserId = 100000000000000000 + (ulong)i,
                                 UserName = $"TestPlayer{i + 1}"
                             };
-                            existingSignup.Participants.Add((DiscordMember)mockPlayer);
+
+                            if (!existingSignup.Participants.Any(p => p.Id == mockPlayer.Id))
+                            {
+                                existingSignup.Participants.Add((DiscordMember)mockPlayer);
+                            }
                         }
 
                         // Update the signup message
                         await UpdateSignupMessage(existingSignup, context.Client);
 
-                        await context.Channel.SendMessageAsync($"✅ **Step 2 Complete**: Added participants to signup '{testName}'. Now run `/tournament_manager test_user_flow 3` to continue.");
+                        await context.Channel.SendMessageAsync($"✅ **Step 2 Complete**: Added participants to signup '{testName}'.\nRun `/tournament_manager test_user_flow 3` to continue, or you can try other signup commands like:\n- `/tournament_manager signup_list` to see all signups\n- `/tournament_manager signup_cancel tournamentName:{testName}` to cancel your signup");
                         break;
 
-                    case 3: // Create tournament from signup
-                        await context.EditResponseAsync($"**Step 3**: Creating tournament from signup '{testName}'...");
+                    case 3: // Create tournament from signup using the actual command
+                        await context.EditResponseAsync($"**Step 3**: Creating tournament from signup '{testName}' using the command...");
 
+                        // First, check if the signup exists
                         var signupToConvert = _ongoingRounds.TournamentSignups.FirstOrDefault(s => s.Name == testName);
                         if (signupToConvert == null)
                         {
@@ -820,34 +843,65 @@ namespace Wabbit.BotClient.Commands
                             return;
                         }
 
-                        // Create the tournament
+                        // Check if a tournament with this name already exists
+                        if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(testName, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            // If a tournament already exists, just go to the next step
+                            await context.EditResponseAsync($"A tournament with name '{testName}' already exists. Skipping creation step.");
+                            await context.Channel.SendMessageAsync($"✅ **Step 3 Complete**: Tournament exists. Run `/tournament_manager test_user_flow 4` to continue.");
+                            break;
+                        }
+
+                        // Get players from the signup
                         var players = signupToConvert.Participants.ToList();
+                        if (players.Count < 2)
+                        {
+                            await context.EditResponseAsync($"❌ Error: Not enough participants in signup '{testName}'. Need at least 2.");
+                            return;
+                        }
+
+                        // Create the tournament using the manager (this is what the create_from_signup command does)
                         var tournament = _tournamentManager.CreateTournament(
                             testName,
                             players,
                             signupToConvert.Format,
                             context.Channel);
 
+                        // Mark signup as closed
+                        signupToConvert.IsOpen = false;
+
                         // Generate and show standings
                         {
                             string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
                             using var fs = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                             var builder = new DiscordWebhookBuilder()
-                                .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}' with {players.Count} participants.\nRun `/tournament_manager test_user_flow 4` to continue.")
+                                .WithContent($"✅ **Step 3 Complete**: Created tournament '{testName}' with {players.Count} participants.\nYou can use `/tournament_manager show_standings tournamentName:{testName}` to view standings.\nRun `/tournament_manager test_user_flow 4` to continue.")
                                 .AddFile("tournament.png", fs);
 
                             await context.EditResponseAsync(builder);
                         }
                         break;
 
-                    case 4: // Simulate matches and update standings
+                    case 4: // Test simulating matches
                         await context.EditResponseAsync($"**Step 4**: Simulating matches for tournament '{testName}'...");
 
+                        // Find tournament by name or most recent
                         var tournamentToUpdate = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
                         if (tournamentToUpdate == null)
                         {
-                            await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-3 first.");
-                            return;
+                            // Try to find most recent test tournament
+                            tournamentToUpdate = _ongoingRounds.Tournaments
+                                .Where(t => t.Name.StartsWith("TestFlow_"))
+                                .OrderByDescending(t => t.Groups.FirstOrDefault()?.Matches.FirstOrDefault()?.Result?.CompletedAt ?? DateTime.MinValue)
+                                .FirstOrDefault();
+
+                            if (tournamentToUpdate == null)
+                            {
+                                await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-3 first.");
+                                return;
+                            }
+
+                            testName = tournamentToUpdate.Name;
                         }
 
                         // Simulate group matches
@@ -858,7 +912,7 @@ namespace Wabbit.BotClient.Commands
                             string updatedImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToUpdate);
                             using var updatedFs = new FileStream(updatedImagePath, FileMode.Open, FileAccess.Read);
                             var updatedBuilder = new DiscordWebhookBuilder()
-                                .WithContent($"✅ **Step 4 Complete**: Group stage matches completed for '{testName}'.\nRun `/tournament_manager test_user_flow 5` to continue.")
+                                .WithContent($"✅ **Step 4 Complete**: Group stage matches completed for '{testName}'.\nYou can also try `/tournament_manager update tournamentName:{testName}` to update the tournament.\nRun `/tournament_manager test_user_flow 5` to continue.")
                                 .AddFile("tournament_updated.png", updatedFs);
 
                             await context.EditResponseAsync(updatedBuilder);
@@ -868,11 +922,23 @@ namespace Wabbit.BotClient.Commands
                     case 5: // Complete tournament
                         await context.EditResponseAsync($"**Step 5**: Completing tournament '{testName}'...");
 
+                        // Find tournament by name or most recent
                         var tournamentToComplete = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == testName);
                         if (tournamentToComplete == null)
                         {
-                            await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-4 first.");
-                            return;
+                            // Try to find most recent test tournament
+                            tournamentToComplete = _ongoingRounds.Tournaments
+                                .Where(t => t.Name.StartsWith("TestFlow_"))
+                                .OrderByDescending(t => t.Groups.FirstOrDefault()?.Matches.FirstOrDefault()?.Result?.CompletedAt ?? DateTime.MinValue)
+                                .FirstOrDefault();
+
+                            if (tournamentToComplete == null)
+                            {
+                                await context.EditResponseAsync($"❌ Error: Couldn't find tournament '{testName}'. Please run steps 1-4 first.");
+                                return;
+                            }
+
+                            testName = tournamentToComplete.Name;
                         }
 
                         // Set up playoffs
@@ -896,7 +962,7 @@ namespace Wabbit.BotClient.Commands
                             string finalImagePath = TournamentVisualization.GenerateStandingsImage(tournamentToComplete);
                             using var finalFs = new FileStream(finalImagePath, FileMode.Open, FileAccess.Read);
                             var finalBuilder = new DiscordWebhookBuilder()
-                                .WithContent($"🏆 **Testing Complete**: Tournament '{testName}' has finished! All user flows tested successfully.")
+                                .WithContent($"🏆 **Testing Complete**: Tournament '{testName}' has finished!\n\nYou've successfully tested:\n- Tournament signup creation\n- User signup\n- Tournament creation from signup\n- Match simulation\n- Tournament completion\n\nAll user flows tested successfully.")
                                 .AddFile("tournament_final.png", finalFs);
 
                             await context.EditResponseAsync(finalBuilder);
