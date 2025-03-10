@@ -154,46 +154,58 @@ namespace Wabbit.BotClient.Commands
         {
             await context.DeferResponseAsync();
 
-            if (!_ongoingRounds.Tournaments.Any())
+            try
             {
-                await context.EditResponseAsync("No active tournaments.");
-                return;
-            }
-
-            var embed = new DiscordEmbedBuilder
-            {
-                Title = "Active Tournaments",
-                Description = "List of all active tournaments",
-                Color = DiscordColor.Blurple
-            };
-
-            foreach (var tournament in _ongoingRounds.Tournaments)
-            {
-                string status = tournament.IsComplete ? "Complete" : $"In Progress - {tournament.CurrentStage}";
-
-                // Count total matches and completed matches
-                int totalMatches = 0;
-                int completedMatches = 0;
-
-                foreach (var group in tournament.Groups)
+                if (!_ongoingRounds.Tournaments.Any())
                 {
-                    totalMatches += group.Matches.Count;
-                    completedMatches += group.Matches.Count(m => m.IsComplete);
+                    await SafeResponse(context, "No active tournaments.");
+                    return;
                 }
 
-                totalMatches += tournament.PlayoffMatches.Count;
-                completedMatches += tournament.PlayoffMatches.Count(m => m.IsComplete);
+                var embed = new DiscordEmbedBuilder
+                {
+                    Title = "Active Tournaments",
+                    Description = "List of all active tournaments",
+                    Color = DiscordColor.Blurple
+                };
 
-                embed.AddField(
-                    tournament.Name,
-                    $"**Status:** {status}\n" +
-                    $"**Format:** {tournament.Format}\n" +
-                    $"**Progress:** {completedMatches}/{totalMatches} matches completed\n" +
-                    $"**Groups:** {tournament.Groups.Count}"
-                );
+                foreach (var tournament in _ongoingRounds.Tournaments)
+                {
+                    string status = tournament.IsComplete ? "Complete" : $"In Progress - {tournament.CurrentStage}";
+
+                    // Count total matches and completed matches
+                    int totalMatches = 0;
+                    int completedMatches = 0;
+
+                    foreach (var group in tournament.Groups)
+                    {
+                        totalMatches += group.Matches.Count;
+                        completedMatches += group.Matches.Count(m => m.IsComplete);
+                    }
+
+                    totalMatches += tournament.PlayoffMatches.Count;
+                    completedMatches += tournament.PlayoffMatches.Count(m => m.IsComplete);
+
+                    embed.AddField(
+                        tournament.Name,
+                        $"**Status:** {status}\n" +
+                        $"**Format:** {tournament.Format}\n" +
+                        $"**Progress:** {completedMatches}/{totalMatches} matches completed\n" +
+                        $"**Groups:** {tournament.Groups.Count}"
+                    );
+                }
+
+                await SafeResponse(context, "", () =>
+                {
+                    // Since SafeResponse doesn't support embedding directly, we need a workaround
+                    context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed)).GetAwaiter().GetResult();
+                });
             }
-
-            await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            catch (Exception ex)
+            {
+                await SafeResponse(context, $"Error listing tournaments: {ex.Message}");
+                Console.WriteLine($"Error in ListTournaments: {ex}");
+            }
         }
 
         [Command("update")]
@@ -2004,6 +2016,97 @@ namespace Wabbit.BotClient.Commands
             public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter)
             {
                 return new ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>>(scenarios);
+            }
+        }
+
+        private async Task SafeResponse(CommandContext context, string message, Action? action = null)
+        {
+            try
+            {
+                // Try to edit the response if interaction was already deferred
+                try
+                {
+                    await context.EditResponseAsync(message);
+                }
+                catch (DSharpPlus.Exceptions.NotFoundException)
+                {
+                    // Interaction expired, try to send a regular message instead
+                    try
+                    {
+                        await context.Channel.SendMessageAsync(message);
+                    }
+                    catch (Exception followUpEx)
+                    {
+                        Console.WriteLine($"Error sending follow-up message: {followUpEx.Message}");
+                    }
+                }
+                catch (Exception ex) when (ex.Message.Contains("interaction") || ex.Message.Contains("timed out"))
+                {
+                    // Another interaction-related error, try regular message
+                    try
+                    {
+                        await context.Channel.SendMessageAsync(message);
+                    }
+                    catch (Exception followUpEx)
+                    {
+                        Console.WriteLine($"Error sending follow-up message: {followUpEx.Message}");
+                    }
+                }
+
+                // Execute optional additional action
+                action?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error responding to command: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    // Last resort - try to send directly to the channel
+                    await context.Channel.SendMessageAsync($"Command completed but couldn't respond properly: {message}");
+                }
+                catch
+                {
+                    // Nothing more we can do
+                }
+            }
+        }
+
+        [Command("delete")]
+        [Description("Delete a tournament")]
+        public async Task DeleteTournament(
+            CommandContext context,
+            [Description("Tournament name")] string tournamentName)
+        {
+            await context.DeferResponseAsync();
+
+            try
+            {
+                var tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
+                    t.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                if (tournament == null)
+                {
+                    await SafeResponse(context, $"Tournament '{tournamentName}' not found. Use the 'list' command to see all active tournaments.");
+                    return;
+                }
+
+                // Remove the tournament from the active list
+                bool removed = _ongoingRounds.Tournaments.Remove(tournament);
+
+                if (removed)
+                {
+                    await SafeResponse(context, $"Tournament '{tournamentName}' has been deleted.");
+                    Console.WriteLine($"Tournament '{tournamentName}' was deleted by {context.User.Username}");
+                }
+                else
+                {
+                    await SafeResponse(context, $"Failed to delete tournament '{tournamentName}'. It may have already been removed.");
+                }
+            }
+            catch (Exception ex)
+            {
+                await SafeResponse(context, $"Error deleting tournament: {ex.Message}");
+                Console.WriteLine($"Error in DeleteTournament: {ex}");
             }
         }
     }
