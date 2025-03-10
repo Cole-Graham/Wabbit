@@ -14,5 +14,7 @@ namespace Wabbit.Models
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
         public DateTime? ScheduledStartTime { get; set; }
         public DiscordUser CreatedBy { get; set; } = null!;
+        public ulong SignupChannelId { get; set; }
+        public ulong MessageId { get; set; }
     }
 }
