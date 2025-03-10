@@ -680,5 +680,27 @@ namespace Wabbit.Misc
                 }
             }
         }
+
+        public void DeleteTournament(string name)
+        {
+            Console.WriteLine($"TournamentManager: Attempting to delete tournament '{name}'");
+            Console.WriteLine($"TournamentManager: Before delete - _activeTournaments.Count = {_activeTournaments.Count}");
+
+            // Remove from the active tournaments list 
+            int count = _activeTournaments.RemoveAll(t =>
+                t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            Console.WriteLine($"TournamentManager: Removed {count} tournaments by exact name");
+
+            // Also remove from _ongoingRounds for good measure
+            if (_ongoingRounds.Tournaments != null)
+            {
+                int roundsCount = _ongoingRounds.Tournaments.RemoveAll(t =>
+                    t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                Console.WriteLine($"TournamentManager: Also removed {roundsCount} tournaments from _ongoingRounds");
+            }
+
+            Console.WriteLine($"TournamentManager: After delete - _activeTournaments.Count = {_activeTournaments.Count}");
+        }
     }
 }

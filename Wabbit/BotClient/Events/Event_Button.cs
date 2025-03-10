@@ -13,6 +13,29 @@ namespace Wabbit.BotClient.Events
 
         public async Task HandleEventAsync(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
         {
+            // Handle signup buttons first
+            if (e.Id.StartsWith("signup_"))
+            {
+                await HandleSignupButton(sender, e);
+                return;
+            }
+
+            // Handle cancel signup confirmation
+            if (e.Id.StartsWith("cancel_signup_"))
+            {
+                await HandleCancelSignupButton(sender, e);
+                return;
+            }
+
+            // Handle keep signup confirmation
+            if (e.Id.StartsWith("keep_signup_"))
+            {
+                await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.UpdateMessage,
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent("Your signup has been kept."));
+                return;
+            }
+
             if (_roundsHolder is null || _roundsHolder.TourneyRounds is null)
             {
                 await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
@@ -337,6 +360,224 @@ namespace Wabbit.BotClient.Events
                         break;
                 }
             }
+        }
+
+        private async Task HandleSignupButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
+        {
+            try
+            {
+                // Immediately acknowledge the interaction to prevent timeouts
+                await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+
+                // Log details for debugging
+                Console.WriteLine($"Signup button clicked: {e.Id} by user {e.User.Username}");
+
+                // Extract the tournament name from the button ID (format: signup_TournamentName)
+                string tournamentName = e.Id.Substring("signup_".Length).Replace("_", " ");
+
+                // Find the signup
+                var signup = _roundsHolder.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                if (signup == null)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"Signup '{tournamentName}' not found. It may have been removed."));
+                    return;
+                }
+
+                if (!signup.IsOpen)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"Signup for '{tournamentName}' is closed."));
+                    return;
+                }
+
+                // Check if the user is already signed up
+                var member = (DiscordMember)e.User;
+                var existingParticipant = signup.Participants.FirstOrDefault(p => p.Id == member.Id);
+
+                if (existingParticipant is not null)
+                {
+                    // User is already signed up - handle cancellation
+                    // Create a confirmation message with buttons
+                    var confirmationMessage = new DiscordFollowupMessageBuilder()
+                        .WithContent($"You are already signed up for tournament '{tournamentName}'. Would you like to cancel your signup?")
+                        .AddComponents(
+                            new DiscordButtonComponent(DiscordButtonStyle.Danger, $"cancel_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Cancel Signup"),
+                            new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"keep_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Keep Signup")
+                        );
+
+                    await e.Interaction.CreateFollowupMessageAsync(confirmationMessage);
+                    return;
+                }
+
+                // Add the user to the signup
+                signup.Participants.Add(member);
+
+                // Update the signup message
+                await UpdateSignupMessage(sender, signup);
+
+                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .WithContent($"You have been added to the tournament '{tournamentName}'."));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling signup button: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"An error occurred: {ex.Message}"));
+                }
+                catch
+                {
+                    // Ignore if we can't send a message
+                }
+            }
+        }
+
+        // Add a method to handle the cancel/keep signup buttons
+        private async Task HandleCancelSignupButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
+        {
+            try
+            {
+                // Immediately acknowledge the interaction
+                await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+
+                // Parse the button ID to get tournament name and user ID
+                // Format: cancel_signup_TournamentName_UserId
+                string[] parts = e.Id.Split('_');
+                if (parts.Length < 4)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Invalid button ID format."));
+                    return;
+                }
+
+                // Get tournament name (may have underscores in it)
+                string tournamentName = string.Join(" ", parts.Skip(2).Take(parts.Length - 3));
+
+                // Get user ID from the last part
+                if (!ulong.TryParse(parts[parts.Length - 1], out ulong userId))
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Invalid user ID in button."));
+                    return;
+                }
+
+                // Make sure the user who clicked is the same as the user in the button
+                if (e.User.Id != userId)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("You can only cancel your own signup."));
+                    return;
+                }
+
+                // Find the signup
+                var signup = _roundsHolder.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                if (signup == null)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"Signup '{tournamentName}' not found. It may have been removed."));
+                    return;
+                }
+
+                // Remove the user from the signup
+                var participant = signup.Participants.FirstOrDefault(p => p.Id == userId);
+                if (participant is not null)
+                {
+                    signup.Participants.Remove(participant);
+
+                    // Update the signup message
+                    await UpdateSignupMessage(sender, signup);
+
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"You have been removed from the tournament '{tournamentName}'."));
+                }
+                else
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"You were not found in the participants list for '{tournamentName}'."));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling cancel signup button: {ex.Message}\n{ex.StackTrace}");
+                try
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"An error occurred: {ex.Message}"));
+                }
+                catch
+                {
+                    // Ignore if we can't send a message
+                }
+            }
+        }
+
+        private async Task UpdateSignupMessage(DiscordClient sender, TournamentSignup signup)
+        {
+            if (signup.SignupChannelId != 0 && signup.MessageId != 0)
+            {
+                try
+                {
+                    var channel = await sender.GetChannelAsync(signup.SignupChannelId);
+                    var message = await channel.GetMessageAsync(signup.MessageId);
+
+                    // Update the embed with the new participant list
+                    DiscordEmbed updatedEmbed = CreateSignupEmbed(signup);
+
+                    // Recreate the message with the updated embed and button
+                    var builder = new DiscordMessageBuilder()
+                        .AddEmbed(updatedEmbed)
+                        .AddComponents(new DiscordButtonComponent(
+                            DiscordButtonStyle.Success,
+                            $"signup_{signup.Name.Replace(" ", "_")}",
+                            "Sign Up"
+                        ));
+
+                    await message.ModifyAsync(builder);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error updating signup message: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
+
+        private DiscordEmbed CreateSignupEmbed(TournamentSignup signup)
+        {
+            var builder = new DiscordEmbedBuilder()
+                .WithTitle($"Tournament Signup: {signup.Name}")
+                .WithDescription("Sign up for this tournament by clicking the button below.")
+                .WithColor(new DiscordColor(75, 181, 67))
+                .AddField("Format", signup.Format.ToString(), true)
+                .AddField("Status", signup.IsOpen ? "Open" : "Closed", true)
+                .AddField("Created By", signup.CreatedBy?.Username ?? "Unknown", true);
+
+            if (signup.ScheduledStartTime.HasValue)
+            {
+                // Convert DateTime to Unix timestamp
+                long unixTimestamp = ((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds();
+                string formattedTime = $"<t:{unixTimestamp}:F>";
+                builder.AddField("Scheduled Start", formattedTime, false);
+            }
+
+            if (signup.Participants.Count > 0)
+            {
+                string participants = string.Join("\n", signup.Participants.Select(p => p.Username));
+                builder.AddField($"Participants ({signup.Participants.Count})", participants, false);
+            }
+            else
+            {
+                builder.AddField("Participants (0)", "No participants yet", false);
+            }
+
+            builder.WithFooter($"Created at {signup.CreatedAt:yyyy-MM-dd HH:mm:ss}");
+
+            return builder.Build();
         }
     }
 }

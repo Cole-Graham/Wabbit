@@ -156,13 +156,33 @@ namespace Wabbit.BotClient.Commands
             await SafeExecute(context, async () =>
             {
                 // Log the tournaments in the collection for debugging
-                Console.WriteLine($"DEBUG: Found {_ongoingRounds.Tournaments.Count} tournaments in _ongoingRounds.Tournaments");
-                foreach (var t in _ongoingRounds.Tournaments)
+                Console.WriteLine($"LIST DEBUG: Attempting to list tournaments");
+                Console.WriteLine($"LIST DEBUG: _ongoingRounds.Tournaments is {(_ongoingRounds.Tournaments == null ? "NULL" : "NOT NULL")}");
+                Console.WriteLine($"LIST DEBUG: Found {_ongoingRounds.Tournaments?.Count ?? 0} tournaments in _ongoingRounds.Tournaments");
+                Console.WriteLine($"LIST DEBUG: _tournamentManager GetAllTournaments() returns {_tournamentManager.GetAllTournaments()?.Count ?? 0} tournaments");
+
+                if (_ongoingRounds.Tournaments != null)
                 {
-                    Console.WriteLine($"DEBUG: Tournament in list: Name={t.Name}, ID={(t.GetHashCode())}, Type={t.GetType().Name}");
+                    foreach (var t in _ongoingRounds.Tournaments)
+                    {
+                        Console.WriteLine($"LIST DEBUG: Tournament in _ongoingRounds.Tournaments: Name={t.Name}, ID={(t.GetHashCode())}, Type={t.GetType().Name}");
+                    }
                 }
 
-                if (!_ongoingRounds.Tournaments.Any())
+                // Also check what the tournament manager knows
+                var managerTournaments = _tournamentManager.GetAllTournaments();
+                if (managerTournaments != null)
+                {
+                    foreach (var t in managerTournaments)
+                    {
+                        Console.WriteLine($"LIST DEBUG: Tournament in _tournamentManager.GetAllTournaments(): Name={t.Name}, ID={(t.GetHashCode())}, Type={t.GetType().Name}");
+                    }
+                }
+
+                // Try to use the manager's list instead of direct access
+                var tournamentsToShow = _tournamentManager.GetAllTournaments();
+
+                if (tournamentsToShow == null || !tournamentsToShow.Any())
                 {
                     await context.EditResponseAsync("No active tournaments.");
                     return;
@@ -175,7 +195,7 @@ namespace Wabbit.BotClient.Commands
                     Color = DiscordColor.Blurple
                 };
 
-                foreach (var tournament in _ongoingRounds.Tournaments)
+                foreach (var tournament in tournamentsToShow)
                 {
                     string status = tournament.IsComplete ? "Complete" : $"In Progress - {tournament.CurrentStage}";
 
@@ -488,118 +508,95 @@ namespace Wabbit.BotClient.Commands
                 bool deleted = false;
 
                 // Debug info
-                Console.WriteLine($"DEBUG: Attempting to delete tournament/signup: '{name}'");
-                Console.WriteLine($"DEBUG: _ongoingRounds.Tournaments.Count = {_ongoingRounds.Tournaments.Count}");
-                foreach (var t in _ongoingRounds.Tournaments)
+                Console.WriteLine($"DELETE DEBUG: Attempting to delete tournament/signup: '{name}'");
+                Console.WriteLine($"DELETE DEBUG: _ongoingRounds.Tournaments.Count = {_ongoingRounds.Tournaments?.Count ?? 0}");
+                Console.WriteLine($"DELETE DEBUG: _tournamentManager.GetAllTournaments().Count = {_tournamentManager.GetAllTournaments()?.Count ?? 0}");
+
+                // Get debug lists
+                var directTournaments = _ongoingRounds.Tournaments?.ToList() ?? new List<Tournament>();
+                var managerTournaments = _tournamentManager.GetAllTournaments();
+
+                foreach (var t in directTournaments)
                 {
-                    Console.WriteLine($"DEBUG: Tournament available: Name={t.Name}, ID={t.GetHashCode()}, Type={t.GetType().Name}");
+                    Console.WriteLine($"DELETE DEBUG: Tournament in _ongoingRounds: Name={t.Name}, ID={t.GetHashCode()}");
                 }
 
-                List<string> availableTournaments = _ongoingRounds.Tournaments.Select(t => t.Name).ToList();
+                foreach (var t in managerTournaments)
+                {
+                    Console.WriteLine($"DELETE DEBUG: Tournament in manager: Name={t.Name}, ID={t.GetHashCode()}");
+                }
+
+                List<string> availableTournaments = managerTournaments.Select(t => t.Name).ToList();
                 List<string> availableSignups = _ongoingRounds.TournamentSignups.Select(s => s.Name).ToList();
 
                 // Try exact match first
-                Console.WriteLine($"DEBUG: Trying to find tournament with _tournamentManager.GetTournament('{name}')");
+                Console.WriteLine($"DELETE DEBUG: Trying to find tournament with _tournamentManager.GetTournament('{name}')");
                 var tournament = _tournamentManager.GetTournament(name);
                 if (tournament != null)
                 {
-                    Console.WriteLine($"DEBUG: Found tournament via GetTournament: {tournament.Name}");
-                }
+                    Console.WriteLine($"DELETE DEBUG: Found tournament via GetTournament: {tournament.Name}");
 
-                // Try direct collection search if manager method fails
-                if (tournament == null)
-                {
-                    Console.WriteLine($"DEBUG: Trying to find tournament with direct collection search");
-                    tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
-                        t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-                    if (tournament != null)
-                    {
-                        Console.WriteLine($"DEBUG: Found tournament via direct collection: {tournament.Name}");
-                    }
-                }
-
-                // Try partial match if direct search fails
-                if (tournament == null)
-                {
-                    Console.WriteLine($"DEBUG: Trying to find tournament with partial name match");
-                    tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
-                        t.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
-
-                    if (tournament != null)
-                    {
-                        Console.WriteLine($"DEBUG: Found tournament via partial match: {tournament.Name}");
-                    }
-                }
-
-                if (tournament != null)
-                {
-                    // Remove from list - important: remove the exact instance, not by name
-                    int countBefore = _ongoingRounds.Tournaments.Count;
-                    Console.WriteLine($"DEBUG: Removing tournament '{tournament.Name}' (ID={tournament.GetHashCode()})");
-
-                    // Use RemoveAll with reference equality
-                    _ongoingRounds.Tournaments.RemoveAll(t => ReferenceEquals(t, tournament));
-
-                    int countAfter = _ongoingRounds.Tournaments.Count;
-                    Console.WriteLine($"DEBUG: Tournament count before: {countBefore}, after: {countAfter}");
-
-                    if (countBefore == countAfter)
-                    {
-                        // If reference equality didn't work, try removing by name
-                        Console.WriteLine($"DEBUG: Failed to remove by reference, trying by name");
-                        int removeByName = _ongoingRounds.Tournaments.RemoveAll(t =>
-                            t.Name.Equals(tournament.Name, StringComparison.OrdinalIgnoreCase));
-                        Console.WriteLine($"DEBUG: Removed {removeByName} tournaments by name");
-                    }
+                    // Remove the tournament using the tournament manager
+                    Console.WriteLine($"DELETE DEBUG: Removing tournament '{tournament.Name}'");
+                    _tournamentManager.DeleteTournament(tournament.Name);
 
                     await context.EditResponseAsync($"Tournament '{tournament.Name}' has been deleted.");
                     deleted = true;
                 }
                 else
                 {
-                    Console.WriteLine($"DEBUG: No tournament found with name '{name}'");
+                    Console.WriteLine($"DELETE DEBUG: No tournament found with name '{name}'");
+
+                    // Check for signups if no tournament was found or deleted
+                    if (!deleted)
+                    {
+                        // Try to find a signup with the given name
+                        var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                            s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                        // Try partial match if exact match fails
+                        if (signup == null)
+                        {
+                            signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                                s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        if (signup != null)
+                        {
+                            // Remove from list
+                            _ongoingRounds.TournamentSignups.Remove(signup);
+                            await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been deleted.");
+                            deleted = true;
+                        }
+                    }
                 }
 
-                // Check for signups if no tournament was found or deleted
                 if (!deleted)
                 {
-                    // Try to find a signup with the given name
-                    var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                        s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                    // Try one last attempt using case-insensitive and partial matching
+                    bool foundAny = false;
 
-                    // Try partial match if exact match fails
-                    if (signup == null)
+                    foreach (var t in managerTournaments)
                     {
-                        signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                            s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+                        if (t.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Console.WriteLine($"DELETE DEBUG: Found potential match via contains: {t.Name}");
+                            _tournamentManager.DeleteTournament(t.Name);
+                            foundAny = true;
+                        }
                     }
 
-                    if (signup != null)
+                    if (foundAny)
                     {
-                        // Remove from list
-                        _ongoingRounds.TournamentSignups.Remove(signup);
-                        await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been deleted.");
-                        deleted = true;
-                    }
-                }
-
-                if (!deleted)
-                {
-                    // If everything failed, try a brute force approach for tournaments
-                    Console.WriteLine($"DEBUG: Trying brute force approach to clear test tournaments");
-                    int removedCount = _ongoingRounds.Tournaments.RemoveAll(t =>
-                        t.Name.StartsWith("TestFlow_", StringComparison.OrdinalIgnoreCase) ||
-                        t.Name.StartsWith("Test", StringComparison.OrdinalIgnoreCase));
-
-                    if (removedCount > 0)
-                    {
-                        await context.EditResponseAsync($"Removed {removedCount} test tournaments by pattern matching.");
+                        await context.EditResponseAsync($"Deleted tournaments that contained '{name}' in their name.");
                         return;
                     }
 
-                    // If still not found, show debug info
-                    string debug = $"No tournament or signup found with name '{name}'\n\nAvailable tournaments ({availableTournaments.Count}): {string.Join(", ", availableTournaments)}\n\nAvailable signups ({availableSignups.Count}): {string.Join(", ", availableSignups)}";
+                    // If everything failed, show debug info
+                    string debug = $"No tournament or signup found with name '{name}'\n\n" +
+                        $"Available tournaments ({availableTournaments.Count}): {string.Join(", ", availableTournaments)}\n\n" +
+                        $"Available signups ({availableSignups.Count}): {string.Join(", ", availableSignups)}\n\n" +
+                        $"Please try using the exact name from the list above.";
                     await context.EditResponseAsync(debug);
                 }
             }, "Failed to delete tournament/signup");
@@ -765,8 +762,16 @@ namespace Wabbit.BotClient.Commands
         {
             try
             {
+                // Give the API a short delay to be ready - this helps with "Unknown interaction" errors
+                await Task.Delay(200);
+
                 // Call DeferResponseAsync early to avoid timeouts
                 await context.DeferResponseAsync();
+
+                // Wait a bit to give Discord more time to process the defer
+                await Task.Delay(500);
+
+                // Now execute the action
                 await action();
             }
             catch (DSharpPlus.Exceptions.NotFoundException ex)
