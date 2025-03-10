@@ -209,57 +209,65 @@ namespace Wabbit.BotClient.Commands
         public async Task CreateSignup(
             CommandContext context,
             [Description("Tournament name")] string name,
-            [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format,
+            [Description("Tournament format")] string format,
             [Description("Scheduled start time (Unix timestamp, 0 for none)")] long startTimeUnix = 0)
         {
-            await context.DeferResponseAsync();
-
-            // Convert Unix timestamp to DateTime if provided
-            DateTime? startTime = startTimeUnix > 0
-                ? DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime
-                : null;
-
-            // Check if this is the signup channel
-            ulong? signupChannelId = GetSignupChannelId(context);
-
-            if (signupChannelId is null)
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync("Signup channel is not configured. Please ask an admin to set it up.");
-                return;
-            }
+                // Check if a signup with this name already exists
+                if (_ongoingRounds.TournamentSignups.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    await context.EditResponseAsync($"A signup with the name '{name}' already exists.");
+                    return;
+                }
 
-            // Only allow signup creation in the designated channel
-            if (context.Channel.Id != signupChannelId)
-            {
-                await context.EditResponseAsync($"Tournament signups can only be created in the designated signup channel.");
-                return;
-            }
+                // Get the signup channel ID
+                ulong? signupChannelId = GetSignupChannelId(context);
+                if (!signupChannelId.HasValue)
+                {
+                    await context.EditResponseAsync("No signup channel configured. Using current channel.");
+                    signupChannelId = context.Channel.Id;
+                }
 
-            // Check if a signup with this name already exists
-            if (_ongoingRounds.TournamentSignups.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-            {
-                await context.EditResponseAsync($"A tournament signup with the name '{name}' already exists.");
-                return;
-            }
+                // Create the signup
+                TournamentSignup signup = new()
+                {
+                    Name = name,
+                    Format = Enum.Parse<TournamentFormat>(format),
+                    CreatedAt = DateTime.Now,
+                    CreatedBy = context.User,
+                    SignupChannelId = signupChannelId.Value,
+                    ScheduledStartTime = startTimeUnix > 0 ? DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime : null,
+                    IsOpen = true
+                };
 
-            // Create the signup
-            var signup = new TournamentSignup
-            {
-                Name = name,
-                Format = Enum.Parse<TournamentFormat>(format),
-                ScheduledStartTime = startTime,
-                CreatedBy = context.User
-            };
+                _ongoingRounds.TournamentSignups.Add(signup);
 
-            _ongoingRounds.TournamentSignups.Add(signup);
+                try
+                {
+                    // Create and send the signup message
+                    var signupChannel = await context.Client.GetChannelAsync(signupChannelId.Value);
+                    DiscordEmbed embed = CreateSignupEmbed(signup);
 
-            // Create and post the initial signup message
-            var embed = CreateSignupEmbed(signup);
+                    var builder = new DiscordMessageBuilder()
+                        .AddEmbed(embed)
+                        .AddComponents(new DiscordButtonComponent(
+                            DiscordButtonStyle.Success,
+                            $"signup_{name.Replace(" ", "_")}",
+                            "Sign Up"
+                        ));
 
-            var message = await context.Channel.SendMessageAsync(embed: embed);
-            signup.SignupListMessage = message;
+                    var message = await signupChannel.SendMessageAsync(builder);
+                    signup.MessageId = message.Id;
 
-            await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Players can now sign up.");
+                    await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Players can now sign up.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error sending signup message: {ex.Message}\n{ex.StackTrace}");
+                    await context.EditResponseAsync($"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}");
+                }
+            }, "Failed to create tournament signup");
         }
 
         [Command("signup")]
@@ -593,27 +601,6 @@ namespace Wabbit.BotClient.Commands
                     await context.EditResponseAsync(debug);
                 }
             }, "Failed to delete tournament/signup");
-        }
-
-        [Command("purge_test_tournaments")]
-        [Description("Purge all test tournaments from the system")]
-        public async Task PurgeTestTournaments(CommandContext context)
-        {
-            await SafeExecute(context, async () =>
-            {
-                int countBefore = _ongoingRounds.Tournaments.Count;
-                Console.WriteLine($"DEBUG: Tournament count before purge: {countBefore}");
-
-                // Remove all test tournaments
-                int removedCount = _ongoingRounds.Tournaments.RemoveAll(t =>
-                    t.Name.StartsWith("TestFlow_", StringComparison.OrdinalIgnoreCase) ||
-                    t.Name.StartsWith("Test", StringComparison.OrdinalIgnoreCase));
-
-                Console.WriteLine($"DEBUG: Removed {removedCount} test tournaments");
-                Console.WriteLine($"DEBUG: Tournament count after purge: {_ongoingRounds.Tournaments.Count}");
-
-                await context.EditResponseAsync($"Purged {removedCount} test tournaments from the system.");
-            }, "Failed to purge test tournaments");
         }
 
         [Command("signup_reopen")]
