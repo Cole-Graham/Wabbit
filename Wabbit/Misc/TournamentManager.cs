@@ -1,16 +1,161 @@
 using DSharpPlus.Entities;
 using Wabbit.Models;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using MatchType = Wabbit.Models.MatchType;
 
 namespace Wabbit.Misc
 {
     public class TournamentManager
     {
-        private readonly List<Tournament> _activeTournaments = [];
         private readonly OngoingRounds _ongoingRounds;
+        private readonly string _dataDirectory;
+        private readonly string _tournamentsFilePath;
+        private readonly string _signupsFilePath;
+
+        // Constructor
+        public TournamentManager(OngoingRounds ongoingRounds)
+        {
+            _ongoingRounds = ongoingRounds;
+
+            // Setup data directory
+            _dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Data");
+            Directory.CreateDirectory(_dataDirectory);
+
+            _tournamentsFilePath = Path.Combine(_dataDirectory, "tournaments.json");
+            _signupsFilePath = Path.Combine(_dataDirectory, "signups.json");
+
+            // Initialize collections if needed
+            if (_ongoingRounds.Tournaments == null)
+            {
+                _ongoingRounds.Tournaments = new List<Tournament>();
+            }
+
+            if (_ongoingRounds.TournamentSignups == null)
+            {
+                _ongoingRounds.TournamentSignups = new List<TournamentSignup>();
+            }
+
+            // Load data from files
+            LoadTournamentsFromFile();
+            LoadSignupsFromFile();
+        }
+
+        // Load tournaments from file
+        private void LoadTournamentsFromFile()
+        {
+            try
+            {
+                if (File.Exists(_tournamentsFilePath))
+                {
+                    string json = File.ReadAllText(_tournamentsFilePath);
+                    var options = new JsonSerializerOptions
+                    {
+                        ReferenceHandler = ReferenceHandler.Preserve
+                    };
+                    var tournaments = JsonSerializer.Deserialize<List<Tournament>>(json, options);
+
+                    if (tournaments != null)
+                    {
+                        Console.WriteLine($"Loaded {tournaments.Count} tournaments from file");
+                        _ongoingRounds.Tournaments = tournaments;
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Tournaments file does not exist, creating a new one");
+                    SaveTournamentsToFile();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading tournaments from file: {ex.Message}");
+                // If we can't load, create a new empty collection
+                _ongoingRounds.Tournaments = new List<Tournament>();
+                SaveTournamentsToFile();
+            }
+        }
+
+        // Load signups from file
+        private void LoadSignupsFromFile()
+        {
+            try
+            {
+                if (File.Exists(_signupsFilePath))
+                {
+                    string json = File.ReadAllText(_signupsFilePath);
+                    var options = new JsonSerializerOptions
+                    {
+                        ReferenceHandler = ReferenceHandler.Preserve
+                    };
+                    var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(json, options);
+
+                    if (signups != null)
+                    {
+                        Console.WriteLine($"Loaded {signups.Count} signups from file");
+                        _ongoingRounds.TournamentSignups = signups;
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Signups file does not exist, creating a new one");
+                    SaveSignupsToFile();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading signups from file: {ex.Message}");
+                // If we can't load, create a new empty collection
+                _ongoingRounds.TournamentSignups = new List<TournamentSignup>();
+                SaveSignupsToFile();
+            }
+        }
+
+        // Save tournaments to file
+        private void SaveTournamentsToFile()
+        {
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    ReferenceHandler = ReferenceHandler.Preserve
+                };
+
+                string json = JsonSerializer.Serialize(_ongoingRounds.Tournaments, options);
+                File.WriteAllText(_tournamentsFilePath, json);
+                Console.WriteLine($"Saved {_ongoingRounds.Tournaments.Count} tournaments to file");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving tournaments to file: {ex.Message}");
+            }
+        }
+
+        // Save signups to file
+        private void SaveSignupsToFile()
+        {
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    ReferenceHandler = ReferenceHandler.Preserve
+                };
+
+                string json = JsonSerializer.Serialize(_ongoingRounds.TournamentSignups, options);
+                File.WriteAllText(_signupsFilePath, json);
+                Console.WriteLine($"Saved {_ongoingRounds.TournamentSignups.Count} signups to file");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving signups to file: {ex.Message}");
+            }
+        }
 
         // Helper methods for handling object/DiscordMember properties
         private string GetPlayerDisplayName(object? player)
@@ -53,13 +198,9 @@ namespace Wabbit.Misc
             return player as DSharpPlus.Entities.DiscordMember;
         }
 
-        public TournamentManager(OngoingRounds ongoingRounds)
-        {
-            _ongoingRounds = ongoingRounds;
-        }
-
         public Tournament CreateTournament(string name, List<DiscordMember> players, TournamentFormat format, DiscordChannel announcementChannel)
         {
+            // Create the tournament
             var tournament = new Tournament
             {
                 Name = name,
@@ -67,29 +208,17 @@ namespace Wabbit.Misc
                 AnnouncementChannel = announcementChannel
             };
 
-            // Create groups based on the number of players
-            switch (players.Count)
-            {
-                case <= 8:
-                    // Create 2 groups of 4 or less
-                    CreateGroups(tournament, players, 2);
-                    break;
-                case 9:
-                    // Create 3 groups of 3
-                    CreateGroups(tournament, players, 3);
-                    break;
-                case <= 10:
-                    // Create 2 groups of 5
-                    CreateGroups(tournament, players, 2);
-                    break;
-                default:
-                    // For 11+ players, adjust as needed
-                    int groupCount = (players.Count / 4) + (players.Count % 4 > 0 ? 1 : 0);
-                    CreateGroups(tournament, players, groupCount);
-                    break;
-            }
+            // Setup groups and players
+            CreateGroups(tournament, players, DetermineGroupCount(players.Count, format));
 
-            _activeTournaments.Add(tournament);
+            // Add to ongoingRounds collection
+            _ongoingRounds.Tournaments.Add(tournament);
+
+            // Save to file
+            SaveTournamentsToFile();
+
+            Console.WriteLine($"Created tournament '{name}' with {players.Count} players");
+
             return tournament;
         }
 
@@ -139,12 +268,29 @@ namespace Wabbit.Misc
 
         public Tournament? GetTournament(string name)
         {
-            return _activeTournaments.FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            return _ongoingRounds.Tournaments.FirstOrDefault(t =>
+                t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         }
 
         public List<Tournament> GetAllTournaments()
         {
-            return _activeTournaments;
+            return _ongoingRounds.Tournaments;
+        }
+
+        public void DeleteTournament(string name)
+        {
+            Console.WriteLine($"Deleting tournament '{name}'");
+            int countBefore = _ongoingRounds.Tournaments.Count;
+
+            // Remove from collection
+            _ongoingRounds.Tournaments.RemoveAll(t =>
+                t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            int countAfter = _ongoingRounds.Tournaments.Count;
+            Console.WriteLine($"Removed {countBefore - countAfter} tournaments");
+
+            // Save changes to file
+            SaveTournamentsToFile();
         }
 
         public void UpdateMatchResult(Tournament tournament, Tournament.Match match, DiscordMember winner, int winnerScore, int loserScore)
@@ -330,6 +476,9 @@ namespace Wabbit.Misc
                     tournament.IsComplete = true;
                 }
             }
+
+            // Save changes to file after updating match result
+            SaveTournamentsToFile();
         }
 
         private void CheckGroupCompletion(Tournament.Group group)
@@ -681,26 +830,89 @@ namespace Wabbit.Misc
             }
         }
 
-        public void DeleteTournament(string name)
+        private int DetermineGroupCount(int playerCount, TournamentFormat format)
         {
-            Console.WriteLine($"TournamentManager: Attempting to delete tournament '{name}'");
-            Console.WriteLine($"TournamentManager: Before delete - _activeTournaments.Count = {_activeTournaments.Count}");
-
-            // Remove from the active tournaments list 
-            int count = _activeTournaments.RemoveAll(t =>
-                t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-            Console.WriteLine($"TournamentManager: Removed {count} tournaments by exact name");
-
-            // Also remove from _ongoingRounds for good measure
-            if (_ongoingRounds.Tournaments != null)
+            // Determine appropriate group count based on player count and format
+            if (format != TournamentFormat.GroupStageWithPlayoffs)
             {
-                int roundsCount = _ongoingRounds.Tournaments.RemoveAll(t =>
-                    t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-                Console.WriteLine($"TournamentManager: Also removed {roundsCount} tournaments from _ongoingRounds");
+                return 1; // Single group for non-group formats
             }
 
-            Console.WriteLine($"TournamentManager: After delete - _activeTournaments.Count = {_activeTournaments.Count}");
+            switch (playerCount)
+            {
+                case <= 8:
+                    // Create 2 groups of 4 or less
+                    return 2;
+                case 9:
+                    // Create 3 groups of 3
+                    return 3;
+                case <= 10:
+                    // Create 2 groups of 5
+                    return 2;
+                default:
+                    // For 11+ players, adjust as needed
+                    return (playerCount / 4) + (playerCount % 4 > 0 ? 1 : 0);
+            }
+        }
+
+        // Add a tournament signup management method
+        public TournamentSignup CreateSignup(string name, TournamentFormat format, DiscordUser creator, ulong signupChannelId, DateTime? scheduledStartTime = null)
+        {
+            var signup = new TournamentSignup
+            {
+                Name = name,
+                Format = format,
+                CreatedAt = DateTime.Now,
+                CreatedBy = creator,
+                SignupChannelId = signupChannelId,
+                ScheduledStartTime = scheduledStartTime,
+                IsOpen = true
+            };
+
+            _ongoingRounds.TournamentSignups.Add(signup);
+            SaveSignupsToFile();
+
+            Console.WriteLine($"Created tournament signup '{name}'");
+            return signup;
+        }
+
+        // Methods for managing signups
+        public TournamentSignup? GetSignup(string name)
+        {
+            return _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public List<TournamentSignup> GetAllSignups()
+        {
+            return _ongoingRounds.TournamentSignups;
+        }
+
+        public void DeleteSignup(string name)
+        {
+            Console.WriteLine($"Deleting signup '{name}'");
+            int countBefore = _ongoingRounds.TournamentSignups.Count;
+
+            _ongoingRounds.TournamentSignups.RemoveAll(s =>
+                s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            int countAfter = _ongoingRounds.TournamentSignups.Count;
+            Console.WriteLine($"Removed {countBefore - countAfter} signups");
+
+            SaveSignupsToFile();
+        }
+
+        public void UpdateSignup(TournamentSignup signup)
+        {
+            // Just save the current state of signups
+            SaveSignupsToFile();
+        }
+
+        // Save both data files whenever there's a significant change
+        public void SaveAllData()
+        {
+            SaveTournamentsToFile();
+            SaveSignupsToFile();
         }
     }
 }

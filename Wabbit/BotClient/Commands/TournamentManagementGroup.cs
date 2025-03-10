@@ -61,55 +61,84 @@ namespace Wabbit.BotClient.Commands
         }
 
         [Command("create_from_signup")]
-        [Description("Create a tournament from an active signup")]
-        public async Task CreateFromSignup(
+        [Description("Create a tournament from an existing signup")]
+        public async Task CreateTournamentFromSignup(
             CommandContext context,
-            [Description("Signup name")] string signupName,
-            [Description("Tournament name (optional)")] string tournamentName = "")
+            [Description("Signup name")] string signupName)
         {
-            await context.DeferResponseAsync();
-
-            // Use signupName as tournamentName if not provided
-            string actualTournamentName = string.IsNullOrEmpty(tournamentName) ? signupName : tournamentName;
-
-            // Find the signup
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(signupName, StringComparison.OrdinalIgnoreCase));
-
-            if (signup is null)
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync($"Signup '{signupName}' not found.");
-                return;
-            }
+                // Find the signup
+                var signup = _tournamentManager.GetSignup(signupName);
 
-            if (signup.Participants.Count < 2)
-            {
-                await context.EditResponseAsync($"Cannot create tournament: Signup '{signupName}' has fewer than 2 participants.");
-                return;
-            }
+                if (signup == null)
+                {
+                    // Try partial match
+                    var allSignups = _tournamentManager.GetAllSignups();
+                    signup = allSignups.FirstOrDefault(s =>
+                        s.Name.Contains(signupName, StringComparison.OrdinalIgnoreCase));
 
-            // Check if a tournament with this name already exists
-            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(actualTournamentName, StringComparison.OrdinalIgnoreCase)))
-            {
-                await context.EditResponseAsync($"A tournament with the name '{actualTournamentName}' already exists.");
-                return;
-            }
+                    if (signup == null)
+                    {
+                        await context.EditResponseAsync($"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
+                        return;
+                    }
+                }
 
-            // Get the list of DiscordMember participants
-            List<DiscordMember> players = signup.Participants;
+                // Check if a tournament with this name already exists
+                if (_tournamentManager.GetTournament(signup.Name) != null)
+                {
+                    await context.EditResponseAsync($"A tournament with the name '{signup.Name}' already exists. Please delete it first or use a different name for the signup.");
+                    return;
+                }
 
-            // Create tournament
-            var tournament = _tournamentManager.CreateTournament(
-                actualTournamentName,
-                players,
-                Enum.Parse<TournamentFormat>(signup.Format.ToString()),
-                context.Channel);
+                // Get the players who have signed up
+                var players = signup.Participants;
 
-            await context.EditResponseAsync($"Tournament '{actualTournamentName}' created successfully with {players.Count} participants from signup '{signupName}'.");
+                // Check if we have enough players
+                if (players.Count < 4)
+                {
+                    await context.EditResponseAsync($"Not enough players have signed up for '{signup.Name}'. Need at least 4 players, but only have {players.Count}.");
+                    return;
+                }
 
-            // Close the signup
-            signup.IsOpen = false;
-            await UpdateSignupMessage(signup, context.Client);
+                // Create the tournament
+                string creator = context.User.Username;
+                var tournamentFormat = signup.Format;
+
+                // Determine group count based on player count and format
+                int numGroups = players.Count < 9 ? 2 : players.Count < 17 ? 4 : 8;
+
+                try
+                {
+                    var tournament = _tournamentManager.CreateTournament(signup.Name, players, tournamentFormat, context.Channel);
+
+                    // Close the signup now that tournament is created
+                    if (signup.IsOpen)
+                    {
+                        signup.IsOpen = false;
+                        _tournamentManager.UpdateSignup(signup);
+                        await UpdateSignupMessage(signup, context.Client);
+                    }
+
+                    // Create a basic embed to show the tournament
+                    var embed = new DiscordEmbedBuilder()
+                        .WithTitle($"Tournament Created: {tournament.Name}")
+                        .WithDescription($"Format: {tournament.Format}")
+                        .WithColor(DiscordColor.Green)
+                        .AddField("Players", $"{players.Count} players")
+                        .AddField("Groups", $"{tournament.Groups.Count} groups");
+
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+
+                    await context.Channel.SendMessageAsync($"Tournament '{tournament.Name}' has been created from signup '{signup.Name}' with {players.Count} players. Format: {tournament.Format}, Groups: {tournament.Groups.Count}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to create tournament from signup: {ex.Message}");
+                    await context.EditResponseAsync($"Failed to create tournament from signup: {ex.Message}");
+                }
+            }, "Failed to create tournament from signup");
         }
 
         [Command("show_standings")]
@@ -280,19 +309,19 @@ namespace Wabbit.BotClient.Commands
                     signupChannelId = context.Channel.Id;
                 }
 
-                // Create the signup
-                TournamentSignup signup = new()
-                {
-                    Name = name,
-                    Format = Enum.Parse<TournamentFormat>(format),
-                    CreatedAt = DateTime.Now,
-                    CreatedBy = context.User,
-                    SignupChannelId = signupChannelId.Value,
-                    ScheduledStartTime = startTimeUnix > 0 ? DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime : null,
-                    IsOpen = true
-                };
+                // Convert Unix timestamp to DateTime if provided
+                DateTime? scheduledStartTime = startTimeUnix > 0
+                    ? DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime
+                    : null;
 
-                _ongoingRounds.TournamentSignups.Add(signup);
+                // Create the signup using TournamentManager
+                var signup = _tournamentManager.CreateSignup(
+                    name,
+                    Enum.Parse<TournamentFormat>(format),
+                    context.User,
+                    signupChannelId.Value,
+                    scheduledStartTime
+                );
 
                 try
                 {
@@ -302,14 +331,24 @@ namespace Wabbit.BotClient.Commands
 
                     var builder = new DiscordMessageBuilder()
                         .AddEmbed(embed)
-                        .AddComponents(new DiscordButtonComponent(
-                            DiscordButtonStyle.Success,
-                            $"signup_{name.Replace(" ", "_")}",
-                            "Sign Up"
-                        ));
+                        .AddComponents(
+                            new DiscordButtonComponent(
+                                DiscordButtonStyle.Success,
+                                $"signup_{name.Replace(" ", "_")}",
+                                "Sign Up"
+                            ),
+                            new DiscordButtonComponent(
+                                DiscordButtonStyle.Danger,
+                                $"withdraw_{name.Replace(" ", "_")}",
+                                "Withdraw"
+                            )
+                        );
 
                     var message = await signupChannel.SendMessageAsync(builder);
                     signup.MessageId = message.Id;
+
+                    // Save updated MessageId
+                    _tournamentManager.UpdateSignup(signup);
 
                     await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Players can now sign up.");
                 }
@@ -327,55 +366,39 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Tournament name")] string tournamentName)
         {
-            await context.DeferResponseAsync();
-
-            // Check if this is the signup channel
-            ulong? signupChannelId = GetSignupChannelId(context);
-
-            if (signupChannelId is null)
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync("Signup channel is not configured. Please ask an admin to set it up.");
-                return;
-            }
+                // Find the signup
+                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
 
-            // Only allow signups in the designated channel
-            if (context.Channel.Id != signupChannelId)
-            {
-                await context.EditResponseAsync($"You can only sign up in the designated signup channel.");
-                return;
-            }
+                if (signup == null)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
+                    return;
+                }
 
-            // Find the signup
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase) && s.IsOpen);
+                if (!signup.IsOpen)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' is closed.");
+                    return;
+                }
 
-            if (signup is null)
-            {
-                await context.EditResponseAsync($"Open tournament signup '{tournamentName}' not found.");
-                return;
-            }
+                // Check if the user is already signed up
+                if (signup.Participants.Any(p => p.Id == context.User.Id))
+                {
+                    await context.EditResponseAsync($"You are already signed up for tournament '{tournamentName}'.");
+                    return;
+                }
 
-            // Check if the user is already signed up
-            if (signup.Participants.Any(p => p.Id == context.User.Id))
-            {
-                await context.EditResponseAsync($"You are already signed up for tournament '{tournamentName}'.");
-                return;
-            }
+                // Add the user to the signup
+                signup.Participants.Add((DiscordMember)context.User);
 
-            // Add the user to the participants
-            if (context.Guild is null)
-            {
-                await context.EditResponseAsync("This command cannot be used outside of a server.");
-                return;
-            }
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
 
-            var member = await context.Guild.GetMemberAsync(context.User.Id);
-            signup.Participants.Add(member);
-
-            // Update the signup message
-            await UpdateSignupMessage(signup, context.Client);
-
-            await context.EditResponseAsync($"You have been successfully signed up for tournament '{tournamentName}'.");
+                await context.EditResponseAsync($"You have been added to the tournament '{tournamentName}'.");
+            }, "Failed to sign up for tournament");
         }
 
         [Command("signup_cancel")]
@@ -384,33 +407,40 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Tournament name")] string tournamentName)
         {
-            await context.DeferResponseAsync();
-
-            // Find the signup
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase) && s.IsOpen);
-
-            if (signup is null)
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync($"Open tournament signup '{tournamentName}' not found.");
-                return;
-            }
+                // Find the signup
+                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
 
-            // Check if the user is signed up
-            var participant = signup.Participants.FirstOrDefault(p => p.Id == context.User.Id);
-            if (participant is null)
-            {
-                await context.EditResponseAsync($"You are not signed up for tournament '{tournamentName}'.");
-                return;
-            }
+                if (signup == null)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
+                    return;
+                }
 
-            // Remove the user from the participants
-            signup.Participants.Remove(participant);
+                if (!signup.IsOpen)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' is closed and cannot be modified.");
+                    return;
+                }
 
-            // Update the signup message
-            await UpdateSignupMessage(signup, context.Client);
+                // Check if the user is signed up
+                var participant = signup.Participants.FirstOrDefault(p => p.Id == context.User.Id);
+                if (participant is null)
+                {
+                    await context.EditResponseAsync($"You are not signed up for tournament '{tournamentName}'.");
+                    return;
+                }
 
-            await context.EditResponseAsync($"Your signup for tournament '{tournamentName}' has been cancelled.");
+                // Remove the user from the signup
+                signup.Participants.Remove(participant);
+
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
+
+                await context.EditResponseAsync($"You have been removed from the tournament '{tournamentName}'.");
+            }, "Failed to cancel signup");
         }
 
         [Command("signup_close")]
@@ -419,33 +449,99 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Tournament name")] string tournamentName)
         {
-            await context.DeferResponseAsync();
-
-            // Find the signup
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase) && s.IsOpen);
-
-            if (signup is null)
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync($"Open tournament signup '{tournamentName}' not found.");
-                return;
-            }
+                // Find the signup
+                var signup = _tournamentManager.GetSignup(tournamentName);
 
-            // Check if the user is the creator or has sufficient permissions
-            if (signup.CreatedBy.Id != context.User.Id &&
-                (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageMessages)))
+                if (signup == null)
+                {
+                    // Try partial match
+                    var allSignups = _tournamentManager.GetAllSignups();
+                    signup = allSignups.FirstOrDefault(s =>
+                        s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                    if (signup == null)
+                    {
+                        await context.EditResponseAsync($"Signup '{tournamentName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
+                        return;
+                    }
+                }
+
+                if (!signup.IsOpen)
+                {
+                    await context.EditResponseAsync($"Signup '{signup.Name}' is already closed.");
+                    return;
+                }
+
+                // Close the signup
+                signup.IsOpen = false;
+                _tournamentManager.UpdateSignup(signup);
+
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
+
+                await context.EditResponseAsync($"Signup '{signup.Name}' has been closed. Use '/tournament_manager create_from_signup' to create the tournament.");
+            }, "Failed to close signup");
+        }
+
+        [Command("signup_reopen")]
+        [Description("Reopen a closed tournament signup")]
+        public async Task ReopenSignup(
+            CommandContext context,
+            [Description("Tournament name")] string tournamentName,
+            [Description("Duration in minutes to keep open (0 = indefinite)")] int durationMinutes = 0)
+        {
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync("You don't have permission to close this signup.");
-                return;
-            }
+                // Find the signup
+                var signup = _tournamentManager.GetSignup(tournamentName);
 
-            // Close the signup
-            signup.IsOpen = false;
+                if (signup == null)
+                {
+                    // Try partial match
+                    var allSignups = _tournamentManager.GetAllSignups();
+                    signup = allSignups.FirstOrDefault(s =>
+                        s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
 
-            // Update the signup message
-            await UpdateSignupMessage(signup, context.Client);
+                    if (signup == null)
+                    {
+                        await context.EditResponseAsync($"Signup '{tournamentName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
+                        return;
+                    }
+                }
 
-            await context.EditResponseAsync($"Signups for tournament '{tournamentName}' have been closed.");
+                // Reopen the signup
+                signup.IsOpen = true;
+                _tournamentManager.UpdateSignup(signup);
+
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
+
+                string durationMessage = durationMinutes > 0
+                    ? $" It will remain open for {durationMinutes} minutes."
+                    : " It will remain open indefinitely.";
+
+                await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been reopened.{durationMessage}");
+
+                // Schedule auto-close if duration is specified
+                if (durationMinutes > 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromMinutes(durationMinutes));
+
+                        // Make sure the signup is still open before closing it
+                        if (signup.IsOpen)
+                        {
+                            signup.IsOpen = false;
+                            _tournamentManager.UpdateSignup(signup);
+                            await UpdateSignupMessage(signup, context.Client);
+                            await context.Channel.SendMessageAsync($"Tournament signup '{signup.Name}' has been automatically closed after {durationMinutes} minutes.");
+                        }
+                    });
+                }
+            }, "Failed to reopen signup");
         }
 
         [Command("signup_add")]
@@ -455,39 +551,46 @@ namespace Wabbit.BotClient.Commands
             [Description("Tournament name")] string tournamentName,
             [Description("Player to add")] DiscordMember player)
         {
-            await context.DeferResponseAsync();
-
-            // Check admin permissions
-            if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageMessages))
+            await SafeExecute(context, async () =>
             {
-                await context.EditResponseAsync("You don't have permission to add players to signups.");
-                return;
-            }
+                // Check admin permissions
+                if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageMessages))
+                {
+                    await context.EditResponseAsync("You don't have permission to add players to signups.");
+                    return;
+                }
 
-            // Find the signup
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase) && s.IsOpen);
+                // Find the signup
+                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
 
-            if (signup is null)
-            {
-                await context.EditResponseAsync($"Open tournament signup '{tournamentName}' not found.");
-                return;
-            }
+                if (signup == null)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
+                    return;
+                }
 
-            // Check if the player is already signed up
-            if (signup.Participants.Any(p => p.Id == player.Id))
-            {
-                await context.EditResponseAsync($"{player.DisplayName} is already signed up for tournament '{tournamentName}'.");
-                return;
-            }
+                if (!signup.IsOpen)
+                {
+                    await context.EditResponseAsync($"Signup '{tournamentName}' is closed and cannot be modified.");
+                    return;
+                }
 
-            // Add the player
-            signup.Participants.Add(player);
+                // Check if the player is already signed up
+                if (signup.Participants.Any(p => p.Id == player.Id))
+                {
+                    await context.EditResponseAsync($"{player.DisplayName} is already signed up for tournament '{tournamentName}'.");
+                    return;
+                }
 
-            // Update the signup message
-            await UpdateSignupMessage(signup, context.Client);
+                // Add the player
+                signup.Participants.Add(player);
 
-            await context.EditResponseAsync($"{player.DisplayName} has been added to the tournament '{tournamentName}'.");
+                // Update the signup message
+                await UpdateSignupMessage(signup, context.Client);
+
+                await context.EditResponseAsync($"{player.DisplayName} has been added to the tournament '{tournamentName}'.");
+            }, "Failed to add player to signup");
         }
 
         [Command("signup_remove")]
@@ -537,156 +640,40 @@ namespace Wabbit.BotClient.Commands
             {
                 bool deleted = false;
 
-                // Debug info
-                Console.WriteLine($"DELETE DEBUG: Attempting to delete tournament/signup: '{name}'");
-                Console.WriteLine($"DELETE DEBUG: _ongoingRounds.Tournaments.Count = {_ongoingRounds.Tournaments?.Count ?? 0}");
-                Console.WriteLine($"DELETE DEBUG: _tournamentManager.GetAllTournaments().Count = {_tournamentManager.GetAllTournaments()?.Count ?? 0}");
-
-                // Get debug lists
-                var directTournaments = _ongoingRounds.Tournaments?.ToList() ?? new List<Tournament>();
-                var managerTournaments = _tournamentManager.GetAllTournaments();
-
-                foreach (var t in directTournaments)
-                {
-                    Console.WriteLine($"DELETE DEBUG: Tournament in _ongoingRounds: Name={t.Name}, ID={t.GetHashCode()}");
-                }
-
-                foreach (var t in managerTournaments)
-                {
-                    Console.WriteLine($"DELETE DEBUG: Tournament in manager: Name={t.Name}, ID={t.GetHashCode()}");
-                }
-
-                List<string> availableTournaments = managerTournaments.Select(t => t.Name).ToList();
-                List<string> availableSignups = _ongoingRounds.TournamentSignups.Select(s => s.Name).ToList();
-
-                // Try exact match first
-                Console.WriteLine($"DELETE DEBUG: Trying to find tournament with _tournamentManager.GetTournament('{name}')");
+                // Try to delete as tournament first
                 var tournament = _tournamentManager.GetTournament(name);
                 if (tournament != null)
                 {
-                    Console.WriteLine($"DELETE DEBUG: Found tournament via GetTournament: {tournament.Name}");
-
-                    // Remove the tournament using the tournament manager
-                    Console.WriteLine($"DELETE DEBUG: Removing tournament '{tournament.Name}'");
-                    _tournamentManager.DeleteTournament(tournament.Name);
-
-                    await context.EditResponseAsync($"Tournament '{tournament.Name}' has been deleted.");
+                    _tournamentManager.DeleteTournament(name);
+                    await context.EditResponseAsync($"Tournament '{name}' has been deleted.");
                     deleted = true;
                 }
-                else
+
+                // If not found as tournament, try as signup
+                if (!deleted)
                 {
-                    Console.WriteLine($"DELETE DEBUG: No tournament found with name '{name}'");
-
-                    // Check for signups if no tournament was found or deleted
-                    if (!deleted)
+                    var signup = _tournamentManager.GetSignup(name);
+                    if (signup != null)
                     {
-                        // Try to find a signup with the given name
-                        var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                            s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-                        // Try partial match if exact match fails
-                        if (signup == null)
-                        {
-                            signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                                s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
-                        }
-
-                        if (signup != null)
-                        {
-                            // Remove from list
-                            _ongoingRounds.TournamentSignups.Remove(signup);
-                            await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been deleted.");
-                            deleted = true;
-                        }
+                        _tournamentManager.DeleteSignup(name);
+                        await context.EditResponseAsync($"Tournament signup '{name}' has been deleted.");
+                        deleted = true;
                     }
                 }
 
                 if (!deleted)
                 {
-                    // Try one last attempt using case-insensitive and partial matching
-                    bool foundAny = false;
+                    // If neither found, try partial name matches
+                    var allSignups = _tournamentManager.GetAllSignups().Select(s => s.Name).ToList();
+                    var allTournaments = _tournamentManager.GetAllTournaments().Select(t => t.Name).ToList();
 
-                    foreach (var t in managerTournaments)
-                    {
-                        if (t.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
-                        {
-                            Console.WriteLine($"DELETE DEBUG: Found potential match via contains: {t.Name}");
-                            _tournamentManager.DeleteTournament(t.Name);
-                            foundAny = true;
-                        }
-                    }
-
-                    if (foundAny)
-                    {
-                        await context.EditResponseAsync($"Deleted tournaments that contained '{name}' in their name.");
-                        return;
-                    }
-
-                    // If everything failed, show debug info
                     string debug = $"No tournament or signup found with name '{name}'\n\n" +
-                        $"Available tournaments ({availableTournaments.Count}): {string.Join(", ", availableTournaments)}\n\n" +
-                        $"Available signups ({availableSignups.Count}): {string.Join(", ", availableSignups)}\n\n" +
+                        $"Available tournaments ({allTournaments.Count}): {string.Join(", ", allTournaments)}\n\n" +
+                        $"Available signups ({allSignups.Count}): {string.Join(", ", allSignups)}\n\n" +
                         $"Please try using the exact name from the list above.";
                     await context.EditResponseAsync(debug);
                 }
             }, "Failed to delete tournament/signup");
-        }
-
-        [Command("signup_reopen")]
-        [Description("Reopen a closed tournament signup")]
-        public async Task ReopenSignup(
-            CommandContext context,
-            [Description("Tournament name")] string tournamentName,
-            [Description("Duration in minutes to keep open (0 = indefinite)")] int durationMinutes = 0)
-        {
-            await SafeExecute(context, async () =>
-            {
-                // Find the signup (search case-insensitive)
-                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
-
-                if (signup == null)
-                {
-                    // Try to find by partial name match if exact match fails
-                    signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                        s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
-
-                    if (signup == null)
-                    {
-                        await context.EditResponseAsync($"Tournament signup '{tournamentName}' not found. Available signups: {string.Join(", ", _ongoingRounds.TournamentSignups.Select(s => s.Name))}");
-                        return;
-                    }
-                }
-
-                // Reopen the signup
-                signup.IsOpen = true;
-
-                // Update the signup message
-                await UpdateSignupMessage(signup, context.Client);
-
-                string durationMessage = durationMinutes > 0
-                    ? $" It will remain open for {durationMinutes} minutes."
-                    : " It will remain open indefinitely.";
-
-                await context.EditResponseAsync($"Tournament signup '{signup.Name}' has been reopened.{durationMessage}");
-
-                // Schedule auto-close if duration is specified
-                if (durationMinutes > 0)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        await Task.Delay(TimeSpan.FromMinutes(durationMinutes));
-
-                        // Make sure the signup is still open before closing it
-                        if (signup.IsOpen)
-                        {
-                            signup.IsOpen = false;
-                            await UpdateSignupMessage(signup, context.Client);
-                            await context.Channel.SendMessageAsync($"Tournament signup '{signup.Name}' has been automatically closed after {durationMinutes} minutes.");
-                        }
-                    });
-                }
-            }, "Failed to reopen signup");
         }
 
         private ulong? GetSignupChannelId(CommandContext context)
@@ -730,39 +717,79 @@ namespace Wabbit.BotClient.Commands
             return builder.Build();
         }
 
-        private async Task UpdateSignupMessage(TournamentSignup signup, DSharpPlus.DiscordClient client)
+        private async Task UpdateSignupMessage(TournamentSignup signup, DiscordClient client)
         {
-            if (signup.SignupChannelId == 0 || signup.MessageId == 0) return;
-
             try
             {
+                if (signup.MessageId == 0 || signup.SignupChannelId == 0)
+                {
+                    Console.WriteLine($"Cannot update signup message for '{signup.Name}' - missing message ID or channel ID");
+                    return;
+                }
+
+                // Get the channel
                 var channel = await client.GetChannelAsync(signup.SignupChannelId);
+                if (channel is null)
+                {
+                    Console.WriteLine($"Cannot update signup message for '{signup.Name}' - channel {signup.SignupChannelId} not found");
+                    return;
+                }
+
+                // Get the message
                 var message = await channel.GetMessageAsync(signup.MessageId);
+                if (message == null)
+                {
+                    Console.WriteLine($"Cannot update signup message for '{signup.Name}' - message {signup.MessageId} not found in channel {signup.SignupChannelId}");
+                    return;
+                }
 
-                DiscordEmbed embed = CreateSignupEmbed(signup);
+                // Create embed
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"Tournament Signup: {signup.Name}")
+                    .WithDescription($"Format: {signup.Format}")
+                    .WithColor(signup.IsOpen ? DiscordColor.Green : DiscordColor.Red)
+                    .AddField("Status", signup.IsOpen ? "OPEN" : "CLOSED", true)
+                    .AddField("Creator", signup.CreatedBy?.Username ?? "Unknown", true);
 
-                // If the signup is still open, include the button
+                if (signup.ScheduledStartTime.HasValue)
+                {
+                    embed.AddField("Scheduled Start", $"<t:{((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds()}:F>", true);
+                }
+
+                // Add participants field
+                string participantsText = signup.Participants.Count > 0
+                    ? string.Join("\n", signup.Participants.Select((user, index) => $"{index + 1}. {user.Username}"))
+                    : "No players signed up yet";
+                embed.AddField($"Participants ({signup.Participants.Count})", participantsText);
+
+                // Create components based on signup status
+                var components = new List<DiscordComponent>();
                 if (signup.IsOpen)
                 {
-                    var builder = new DiscordMessageBuilder()
-                        .AddEmbed(embed)
-                        .AddComponents(new DiscordButtonComponent(
-                            DiscordButtonStyle.Success,
-                            $"signup_{signup.Name.Replace(" ", "_")}",
-                            "Sign Up"
-                        ));
+                    // Add signup/withdraw buttons
+                    components.Add(new DiscordButtonComponent(
+                        DiscordButtonStyle.Success,
+                        $"signup_{signup.Name.Replace(" ", "_")}",
+                        "Sign Up"
+                    ));
+                    components.Add(new DiscordButtonComponent(
+                        DiscordButtonStyle.Danger,
+                        $"withdraw_{signup.Name.Replace(" ", "_")}",
+                        "Withdraw"
+                    ));
+                }
 
-                    await message.ModifyAsync(builder);
-                }
-                else
-                {
-                    var builder = new DiscordMessageBuilder().AddEmbed(embed);
-                    await message.ModifyAsync(builder);
-                }
+                // Update the message
+                await message.ModifyAsync(new DiscordMessageBuilder()
+                    .AddEmbed(embed)
+                    .AddComponents(components)
+                );
+
+                Console.WriteLine($"Updated signup message for '{signup.Name}'");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error updating signup message: {ex.Message}\n{ex.StackTrace}");
+                Console.WriteLine($"Error updating signup message for '{signup.Name}': {ex.Message}");
             }
         }
 
