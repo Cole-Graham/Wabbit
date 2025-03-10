@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using DSharpPlus;
 using System.Reflection;
 using System.Dynamic;
+using System.Collections.Concurrent;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -1211,6 +1212,8 @@ namespace Wabbit.BotClient.Commands
 
         private void CreateTestGroups(Tournament tournament, int playerCount, int groupCount, bool playMatches, double completionRate = 0.0)
         {
+            Console.WriteLine($"[DEBUG] Starting CreateTestGroups - Creating {groupCount} groups with {playerCount} players");
+
             // Create groups
             for (int i = 0; i < groupCount; i++)
             {
@@ -1219,35 +1222,49 @@ namespace Wabbit.BotClient.Commands
                     Name = $"Group {(char)('A' + i)}"
                 };
                 tournament.Groups.Add(group);
+                Console.WriteLine($"[DEBUG] Created group: {group.Name}");
             }
 
-            Console.WriteLine($"Created {tournament.Groups.Count} groups");
+            Console.WriteLine($"[DEBUG] Created {tournament.Groups.Count} groups");
 
             // Create participants and distribute them among groups
             var random = new Random();
             int groupIndex = 0;
 
-            // Use a custom class for players that will work with reflection
+            // Dictionary to keep track of all created players for reference
+            var allPlayers = new Dictionary<int, TestPlayer>();
+
+            // Create and assign players
             for (int i = 0; i < playerCount; i++)
             {
                 var group = tournament.Groups[groupIndex];
                 var playerName = $"Player {i + 1}";
 
-                // Create a TestPlayer object that works with the system
+                // Create a TestPlayer object
                 var mockPlayer = new TestPlayer(playerName, (ulong)(1000000 + i));
+                allPlayers[i] = mockPlayer;
 
-                Console.WriteLine($"Created {mockPlayer.DisplayName} in {group.Name}");
+                Console.WriteLine($"[DEBUG] Adding {mockPlayer} (Type: {mockPlayer.GetType().FullName}) to {group.Name}");
 
-                // Add to participants - use reflection
+                // Create a participant instance
                 var participant = new Tournament.GroupParticipant();
 
-                // Get the field info and set it
-                var playerField = typeof(Tournament.GroupParticipant).GetField("Player",
-                   System.Reflection.BindingFlags.Public |
-                   System.Reflection.BindingFlags.NonPublic |
-                   System.Reflection.BindingFlags.Instance);
+                // Use reflection to set the Player property to our TestPlayer
+                var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
+                if (playerProperty != null)
+                {
+                    playerProperty.SetValue(participant, mockPlayer, null);
+                }
+                else
+                {
+                    Console.WriteLine("[DEBUG] ERROR: Could not find Player property on GroupParticipant");
+                }
 
-                playerField?.SetValue(participant, mockPlayer);
+                // Verify the player is set correctly
+                var playerValue = playerProperty?.GetValue(participant);
+
+                Console.WriteLine($"[DEBUG] Participant created - Player reference: {(playerValue == null ? "NULL" : playerValue.ToString())}");
+                Console.WriteLine($"[DEBUG] Player object type: {playerValue?.GetType().FullName ?? "unknown"}");
 
                 group.Participants.Add(participant);
 
@@ -1255,17 +1272,30 @@ namespace Wabbit.BotClient.Commands
                 groupIndex = (groupIndex + 1) % tournament.Groups.Count;
             }
 
+            // Verify all participants have players assigned
+            foreach (var group in tournament.Groups)
+            {
+                Console.WriteLine($"[DEBUG] Verifying players in {group.Name}:");
+                foreach (var participant in group.Participants)
+                {
+                    var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
+                    var playerValue = playerProperty?.GetValue(participant);
+
+                    Console.WriteLine($"[DEBUG] Participant player: {(playerValue == null ? "NULL" : playerValue.ToString())} Type: {playerValue?.GetType().FullName ?? "unknown"}");
+                }
+            }
+
             // Generate matches for each group
             foreach (var group in tournament.Groups)
             {
-                Console.WriteLine($"Generating matches for {group.Name}");
+                Console.WriteLine($"[DEBUG] Generating matches for {group.Name}");
                 GenerateGroupMatches(tournament, group);
             }
 
             // Play matches if requested
             if (playMatches)
             {
-                Console.WriteLine($"Playing matches for all groups");
+                Console.WriteLine($"[DEBUG] Playing matches for all groups");
                 foreach (var group in tournament.Groups)
                 {
                     PlayGroupMatches(group, random, completionRate);
@@ -1277,19 +1307,33 @@ namespace Wabbit.BotClient.Commands
         private class TestPlayer
         {
             public ulong Id { get; }
-            public string Username { get; }
             public string DisplayName { get; }
+            private readonly string _instanceId = Guid.NewGuid().ToString().Substring(0, 8);
 
             public TestPlayer(string name, ulong id)
             {
-                Username = name;
                 DisplayName = name;
                 Id = id;
+                Console.WriteLine($"[DEBUG] Created TestPlayer {DisplayName} (ID: {Id}) [{_instanceId}]");
             }
 
             public override string ToString()
             {
                 return DisplayName;
+            }
+
+            public override bool Equals(object? obj)
+            {
+                if (obj is TestPlayer other)
+                {
+                    return Id == other.Id && DisplayName == other.DisplayName;
+                }
+                return false;
+            }
+
+            public override int GetHashCode()
+            {
+                return HashCode.Combine(Id, DisplayName);
             }
         }
 
@@ -1629,6 +1673,8 @@ namespace Wabbit.BotClient.Commands
 
         private void GenerateGroupMatches(Tournament tournament, Tournament.Group group)
         {
+            Console.WriteLine($"[DEBUG] Starting GenerateGroupMatches for {group.Name}");
+
             // Create matches within the group (round robin)
             for (int i = 0; i < group.Participants.Count; i++)
             {
@@ -1640,15 +1686,28 @@ namespace Wabbit.BotClient.Commands
                         Type = Wabbit.Models.MatchType.GroupStage
                     };
 
-                    match.Participants.Add(new Tournament.MatchParticipant
-                    {
-                        Player = group.Participants[i].Player
-                    });
+                    // Get player references via reflection
+                    var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
+                    var player1 = playerProperty?.GetValue(group.Participants[i]);
+                    var player2 = playerProperty?.GetValue(group.Participants[j]);
 
-                    match.Participants.Add(new Tournament.MatchParticipant
+                    // Create first participant
+                    var participant1 = new Tournament.MatchParticipant();
+                    if (playerProperty != null)
                     {
-                        Player = group.Participants[j].Player
-                    });
+                        playerProperty.SetValue(participant1, player1);
+                    }
+                    match.Participants.Add(participant1);
+
+                    // Create second participant
+                    var participant2 = new Tournament.MatchParticipant();
+                    if (playerProperty != null)
+                    {
+                        playerProperty.SetValue(participant2, player2);
+                    }
+                    match.Participants.Add(participant2);
+
+                    Console.WriteLine($"[DEBUG] Created match: {match.Name} between {player1} and {player2}");
 
                     group.Matches.Add(match);
                 }
@@ -1659,6 +1718,8 @@ namespace Wabbit.BotClient.Commands
         {
             try
             {
+                Console.WriteLine($"[DEBUG] Starting PlayGroupMatches for {group.Name}");
+
                 // Determine how many matches to play based on completion rate
                 int matchesToPlay = (int)(group.Matches.Count * completionRate);
                 int matchesPlayed = 0;
@@ -1670,28 +1731,35 @@ namespace Wabbit.BotClient.Commands
                     .Take(matchesToPlay)
                     .ToList();
 
-                Console.WriteLine($"Playing {matchesToPlayList.Count} matches in {group.Name}");
+                Console.WriteLine($"[DEBUG] Playing {matchesToPlayList.Count} matches in {group.Name}");
 
                 foreach (var match in matchesToPlayList)
                 {
                     try
                     {
+                        // Use reflection to get player values
+                        var playerProperty = typeof(Tournament.MatchParticipant).GetProperty("Player");
+                        var player1 = playerProperty?.GetValue(match.Participants[0]);
+                        var player2 = playerProperty?.GetValue(match.Participants[1]);
+
                         // Skip if either participant doesn't have a player
-                        if (match.Participants.Count < 2 ||
-                            match.Participants[0].Player is null ||
-                            match.Participants[1].Player is null)
+                        if (match.Participants.Count < 2 || player1 == null || player2 == null)
                         {
-                            Console.WriteLine($"Skipping match in {group.Name} due to missing player");
+                            Console.WriteLine($"[DEBUG] Skipping match in {group.Name} due to missing player");
                             continue;
                         }
+
+                        // Detailed player info for debugging
+                        Console.WriteLine($"[DEBUG] Match players: {player1} vs {player2}");
+                        Console.WriteLine($"[DEBUG] Player types: {player1.GetType().FullName} vs {player2.GetType().FullName}");
 
                         // Determine winner
                         int winnerIdx = random.Next(0, 2);
                         int loserIdx = 1 - winnerIdx;
 
-                        // Get player references
-                        var winner = match.Participants[winnerIdx].Player;
-                        var loser = match.Participants[loserIdx].Player;
+                        // Get player references via reflection
+                        var winner = playerProperty?.GetValue(match.Participants[winnerIdx]);
+                        var loser = playerProperty?.GetValue(match.Participants[loserIdx]);
 
                         // Set scores
                         int winnerScore = random.Next(3, 6); // Winner always gets 3-5 points
@@ -1702,77 +1770,85 @@ namespace Wabbit.BotClient.Commands
                         match.Participants[winnerIdx].Score = winnerScore;
                         match.Participants[loserIdx].Score = loserScore;
 
-                        // Create match result
-                        match.Result = new Tournament.MatchResult
+                        // Create match result using reflection to set the Winner property
+                        var result = new Tournament.MatchResult
                         {
-                            Winner = winner,
                             CompletedAt = DateTime.Now.AddHours(-random.Next(1, 24))
                         };
 
-                        Console.WriteLine($"Match result in {group.Name}: {winner} defeated {loser} ({winnerScore}-{loserScore})");
-
-                        // Find the participants in the group by comparing ToString values
-                        int winnerIdx2 = -1;
-                        int loserIdx2 = -1;
-
-                        // Look through participants
-                        for (int i = 0; i < group.Participants.Count; i++)
+                        var winnerProperty = typeof(Tournament.MatchResult).GetProperty("Winner");
+                        if (winnerProperty != null && winner != null)
                         {
-                            if (group.Participants[i].Player is not null)
+                            winnerProperty.SetValue(result, winner);
+                        }
+
+                        match.Result = result;
+
+                        Console.WriteLine($"[DEBUG] Match result in {group.Name}: {winner} defeated {loser} ({winnerScore}-{loserScore})");
+
+                        Console.WriteLine($"[DEBUG] Looking for winner: {winner} and loser: {loser} in group participants");
+
+                        // Check all group participants and update their stats
+                        foreach (var participant in group.Participants)
+                        {
+                            // Get player via reflection
+                            var participantPlayerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
+                            var playerValue = participantPlayerProperty?.GetValue(participant);
+
+                            // Skip null players
+                            if (playerValue == null)
                             {
-                                // Match by string representation with null checks
-                                string participantStr = group.Participants[i].Player?.ToString() ?? "";
-                                string winnerStr = winner?.ToString() ?? "";
-                                string loserStr = loser?.ToString() ?? "";
-
-                                if (participantStr == winnerStr)
-                                {
-                                    winnerIdx2 = i;
-                                }
-                                else if (participantStr == loserStr)
-                                {
-                                    loserIdx2 = i;
-                                }
+                                Console.WriteLine($"[DEBUG] Participant has null player");
+                                continue;
                             }
-                        }
 
-                        // If we found the participants, update their stats
-                        if (winnerIdx2 >= 0)
-                        {
-                            group.Participants[winnerIdx2].Wins++;
-                            group.Participants[winnerIdx2].GamesWon += winnerScore;
-                            group.Participants[winnerIdx2].GamesLost += loserScore;
+                            // For debugging, log each comparison
+                            Console.WriteLine($"[DEBUG] Comparing participant {playerValue} with winner {winner}");
 
-                            Console.WriteLine($"Updated stats for winner: {group.Participants[winnerIdx2].Player} W:{group.Participants[winnerIdx2].Wins}");
-                        }
+                            // Check if this participant is the winner or loser based on ToString
+                            bool isWinner = playerValue.ToString() == winner?.ToString();
+                            bool isLoser = playerValue.ToString() == loser?.ToString();
 
-                        if (loserIdx2 >= 0)
-                        {
-                            group.Participants[loserIdx2].Losses++;
-                            group.Participants[loserIdx2].GamesWon += loserScore;
-                            group.Participants[loserIdx2].GamesLost += winnerScore;
+                            Console.WriteLine($"[DEBUG] String comparison results - Is winner: {isWinner}, Is loser: {isLoser}");
 
-                            Console.WriteLine($"Updated stats for loser: {group.Participants[loserIdx2].Player} L:{group.Participants[loserIdx2].Losses}");
+                            // Update stats based on match results
+                            if (isWinner)
+                            {
+                                participant.Wins++;
+                                participant.GamesWon += winnerScore;
+                                participant.GamesLost += loserScore;
+                                Console.WriteLine($"[DEBUG] Updated stats for winner: {playerValue} W:{participant.Wins}");
+                            }
+                            else if (isLoser)
+                            {
+                                participant.Losses++;
+                                participant.GamesWon += loserScore;
+                                participant.GamesLost += winnerScore;
+                                Console.WriteLine($"[DEBUG] Updated stats for loser: {playerValue} L:{participant.Losses}");
+                            }
                         }
 
                         matchesPlayed++;
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error in match processing: {ex.Message}");
+                        Console.WriteLine($"[DEBUG] Error processing match: {ex}");
                     }
                 }
 
-                // Mark group as complete if we played at least one match
                 if (matchesPlayed > 0)
                 {
                     group.IsComplete = true;
-                    Console.WriteLine($"Group {group.Name} is complete with {matchesPlayed} matches played");
+                    Console.WriteLine($"[DEBUG] Group {group.Name} is complete with {matchesPlayed} matches played");
 
                     // Log the standings
+                    Console.WriteLine($"[DEBUG] Final standings for {group.Name}:");
                     foreach (var p in group.Participants.OrderByDescending(p => p.Points))
                     {
-                        Console.WriteLine($"{p.Player}: {p.Wins}W-{p.Draws}D-{p.Losses}L, {p.Points}pts");
+                        var playerProperty = typeof(Tournament.GroupParticipant).GetProperty("Player");
+                        var playerValue = playerProperty?.GetValue(p);
+
+                        Console.WriteLine($"[DEBUG] {playerValue}: {p.Wins}W-{p.Draws}D-{p.Losses}L, {p.Points}pts");
                     }
 
                     // Determine which players advance to playoffs
@@ -1781,7 +1857,7 @@ namespace Wabbit.BotClient.Commands
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in PlayGroupMatches: {ex.Message}");
+                Console.WriteLine($"[DEBUG] Error in PlayGroupMatches: {ex}");
             }
         }
 
