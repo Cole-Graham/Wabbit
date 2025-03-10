@@ -1142,6 +1142,9 @@ namespace Wabbit.BotClient.Commands
 
         private void CreateTestGroups(Tournament tournament, int playerCount, int groupCount, bool playMatches, double completionRate = 0.0)
         {
+            // Use reflection to set the player field directly
+            var playerFieldInfo = typeof(Tournament.GroupParticipant).GetField("Player", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
             // Create groups
             for (int i = 0; i < groupCount; i++)
             {
@@ -1161,21 +1164,18 @@ namespace Wabbit.BotClient.Commands
             for (int i = 0; i < playerCount; i++)
             {
                 var group = tournament.Groups[groupIndex];
-
-                // Create a mock player with a consistent name format
                 string playerName = $"Player {i + 1}";
-                var player = new MockDiscordMember
-                {
-                    UserId = (ulong)(1000000 + i),
-                    UserName = playerName
-                };
+
+                // Create a participant and set fields directly
+                var participant = new Tournament.GroupParticipant();
+
+                // Use reflection to bypass type restrictions
+                var mockPlayer = new StubPlayer(playerName, (ulong)(1000000 + i));
+                // Set the player field directly
+                playerFieldInfo?.SetValue(participant, mockPlayer);
 
                 Console.WriteLine($"Created {playerName} in {group.Name}");
-
-                group.Participants.Add(new Tournament.GroupParticipant
-                {
-                    Player = (DSharpPlus.Entities.DiscordMember)player
-                });
+                group.Participants.Add(participant);
 
                 // Move to next group
                 groupIndex = (groupIndex + 1) % tournament.Groups.Count;
@@ -1197,6 +1197,34 @@ namespace Wabbit.BotClient.Commands
                     PlayGroupMatches(group, random, completionRate);
                 }
             }
+        }
+
+        // Simple stub class that can be used in place of DiscordMember but doesn't inherit
+        public class StubPlayer
+        {
+            public ulong Id { get; }
+            public string Username { get; }
+            public string DisplayName { get; }
+
+            public StubPlayer(string name, ulong id)
+            {
+                Username = name;
+                DisplayName = name;
+                Id = id;
+            }
+
+            public override string ToString() => DisplayName;
+
+            public override bool Equals(object? obj)
+            {
+                if (obj is StubPlayer other)
+                {
+                    return Id == other.Id;
+                }
+                return false;
+            }
+
+            public override int GetHashCode() => Id.GetHashCode();
         }
 
         private void SetupTestPlayoffs(Tournament tournament, bool playMatches, double completionRate = 0.0)
@@ -1735,47 +1763,6 @@ namespace Wabbit.BotClient.Commands
             };
 
             return new ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>>(choices);
-        }
-    }
-
-    // Simple class that mimics a DiscordMember for testing
-    public class MockDiscordMember
-    {
-        public ulong UserId { get; set; }
-        public string UserName { get; set; } = string.Empty;
-
-        public ulong Id => UserId;
-        public string Username => UserName;
-        public string DisplayName => UserName;
-
-        // Explicit conversion to DiscordMember
-        public static explicit operator DSharpPlus.Entities.DiscordMember(MockDiscordMember mock)
-        {
-#pragma warning disable CS8603 // Possible null reference return
-            return null;
-#pragma warning restore CS8603
-        }
-
-        // Override ToString to help with debugging and visualization
-        public override string ToString() => UserName;
-
-        // Override equals and hash code to make player matching work
-        public override bool Equals(object? obj)
-        {
-            if (obj is MockDiscordMember other)
-            {
-                return Id == other.Id || UserName == other.UserName;
-            }
-            else if (obj is DSharpPlus.Entities.DiscordMember member)
-            {
-                return Id == member.Id || UserName == member.DisplayName;
-            }
-            return false;
-        }
-
-        public override int GetHashCode()
-        {
-            return HashCode.Combine(Id, UserName);
         }
     }
 }
