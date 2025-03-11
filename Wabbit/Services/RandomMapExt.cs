@@ -3,6 +3,8 @@ using Wabbit.Data;
 using Wabbit.Services.Interfaces;
 using System.IO;
 using Wabbit.Models;
+using System.Linq;
+using System.Collections.Generic;
 
 namespace Wabbit.Services
 {
@@ -64,6 +66,24 @@ namespace Wabbit.Services
             }
 
             return embed;
+        }
+
+        public List<string> GetRandomMaps(bool oneVOne, int count)
+        {
+            string mapSize = oneVOne ? "1v1" : "2v2";
+            var maps = Maps.MapCollection?
+                .Where(m => m.Size == mapSize && m.IsInTournamentPool)
+                .Select(m => m.Name)
+                .ToList();
+
+            if (maps == null || maps.Count == 0)
+            {
+                Console.WriteLine($"No {mapSize} maps found in the tournament pool");
+                return new List<string>();
+            }
+
+            // Return random maps up to the requested count
+            return maps.OrderBy(_ => _random.Next()).Take(Math.Min(count, maps.Count)).ToList();
         }
     }
 }

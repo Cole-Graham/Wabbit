@@ -7,9 +7,16 @@ using Wabbit.Models;
 
 namespace Wabbit.BotClient.Events
 {
-    public class Event_Button(OngoingRounds roundsHolder) : IEventHandler<ComponentInteractionCreatedEventArgs>
+    public class Event_Button : IEventHandler<ComponentInteractionCreatedEventArgs>
     {
-        private readonly OngoingRounds _roundsHolder = roundsHolder;
+        private readonly OngoingRounds _roundsHolder;
+        private readonly TournamentManager _tournamentManager;
+
+        public Event_Button(OngoingRounds roundsHolder, TournamentManager tournamentManager)
+        {
+            _roundsHolder = roundsHolder;
+            _tournamentManager = tournamentManager;
+        }
 
         public Task HandleEventAsync(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
         {
@@ -261,6 +268,12 @@ namespace Wabbit.BotClient.Events
                                         }
                                     }
                                 }
+
+                                // Track the played map
+                                string currentMapName = round.Maps[round.Cycle - 1];
+
+                                // Save tournament state to record the played map
+                                _tournamentManager.SaveTournamentState();
                                 break;
 
                             case "map_ban_dropdown":
@@ -313,6 +326,9 @@ namespace Wabbit.BotClient.Events
                                         }
                                     }
                                 }
+
+                                // Save tournament state
+                                _tournamentManager.SaveTournamentState();
                                 break;
                         }
                     }
@@ -602,6 +618,9 @@ namespace Wabbit.BotClient.Events
             {
                 try
                 {
+                    // Load participants if needed
+                    await _tournamentManager.LoadParticipantsAsync(signup, sender);
+
                     var channel = await sender.GetChannelAsync(signup.SignupChannelId);
                     var message = await channel.GetMessageAsync(signup.MessageId);
 

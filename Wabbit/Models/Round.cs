@@ -18,6 +18,10 @@ namespace Wabbit.Models
         {
             public DiscordMember? Player { get; set; }
             public string? Deck { get; set; }
+
+            // Dictionary to store deck codes by map name
+            // Key: Map name, Value: Deck code used for that map
+            public Dictionary<string, string> DeckHistory { get; set; } = new Dictionary<string, string>();
         }
 
         public class Team

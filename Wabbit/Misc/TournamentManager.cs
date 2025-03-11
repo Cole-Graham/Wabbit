@@ -7,6 +7,8 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MatchType = Wabbit.Models.MatchType;
+using Wabbit.Services;
+using Wabbit.Data;
 
 namespace Wabbit.Misc
 {
@@ -16,6 +18,7 @@ namespace Wabbit.Misc
         private readonly string _dataDirectory;
         private readonly string _tournamentsFilePath;
         private readonly string _signupsFilePath;
+        private readonly string _tournamentStateFilePath;
 
         // Constructor
         public TournamentManager(OngoingRounds ongoingRounds)
@@ -28,6 +31,7 @@ namespace Wabbit.Misc
 
             _tournamentsFilePath = Path.Combine(_dataDirectory, "tournaments.json");
             _signupsFilePath = Path.Combine(_dataDirectory, "signups.json");
+            _tournamentStateFilePath = Path.Combine(_dataDirectory, "tournament_state.json");
 
             // Initialize collections if needed
             if (_ongoingRounds.Tournaments == null)
@@ -133,6 +137,26 @@ namespace Wabbit.Misc
                                 if (element.TryGetProperty("MessageId", out var messageId))
                                 {
                                     signup.MessageId = messageId.GetUInt64();
+                                }
+
+                                if (element.TryGetProperty("Participants", out var participantsElement) &&
+                                    participantsElement.ValueKind == JsonValueKind.Object &&
+                                    participantsElement.TryGetProperty("$values", out var participantsArray))
+                                {
+                                    // Create a list to store participant info until we can convert them to DiscordMembers
+                                    var participantInfos = new List<(ulong Id, string Username)>();
+
+                                    foreach (var participant in participantsArray.EnumerateArray())
+                                    {
+                                        if (participant.TryGetProperty("Id", out var idElement) &&
+                                            participant.TryGetProperty("Username", out var usernameElement))
+                                        {
+                                            participantInfos.Add((idElement.GetUInt64(), usernameElement.GetString() ?? "Unknown"));
+                                        }
+                                    }
+
+                                    // Store the participant info for later conversion
+                                    signup.ParticipantInfo = participantInfos;
                                 }
 
                                 // Participants will need to be reloaded when accessed
@@ -297,6 +321,9 @@ namespace Wabbit.Misc
             // Save to file
             SaveTournamentsToFile();
 
+            // Save tournament state
+            SaveTournamentState();
+
             Console.WriteLine($"Created tournament '{name}' with {players.Count} players");
 
             return tournament;
@@ -422,8 +449,65 @@ namespace Wabbit.Misc
             match.Result = new Tournament.MatchResult
             {
                 Winner = winner,
-                CompletedAt = DateTime.Now
+                CompletedAt = DateTime.Now,
+                DeckCodes = new Dictionary<string, Dictionary<string, string>>()
             };
+
+            // Store deck codes from the linked round if available
+            if (match.LinkedRound != null && match.LinkedRound.Teams != null)
+            {
+                // Get maps from the round
+                var maps = match.LinkedRound.Maps;
+
+                // For each team and participant
+                foreach (var team in match.LinkedRound.Teams)
+                {
+                    if (team?.Participants != null)
+                    {
+                        foreach (var participant in team.Participants)
+                        {
+                            if (participant?.Player is not null)
+                            {
+                                var playerId = GetPlayerId(participant.Player);
+                                if (playerId.HasValue)
+                                {
+                                    string playerIdStr = playerId.Value.ToString();
+
+                                    // Initialize the player's deck code dictionary if needed
+                                    if (!match.Result.DeckCodes.ContainsKey(playerIdStr))
+                                    {
+                                        match.Result.DeckCodes[playerIdStr] = new Dictionary<string, string>();
+                                    }
+
+                                    // If we have a current deck code, associate it with the current map
+                                    if (!string.IsNullOrEmpty(participant.Deck) && maps != null && maps.Count > 0)
+                                    {
+                                        // Get the current map based on the cycle
+                                        int mapIndex = Math.Min(match.LinkedRound.Cycle, maps.Count - 1);
+                                        if (mapIndex >= 0 && mapIndex < maps.Count)
+                                        {
+                                            string currentMap = maps[mapIndex];
+                                            match.Result.DeckCodes[playerIdStr][currentMap] = participant.Deck;
+                                        }
+                                    }
+
+                                    // If we have deck history, add those as well
+                                    if (participant.DeckHistory != null && participant.DeckHistory.Count > 0)
+                                    {
+                                        foreach (var deckEntry in participant.DeckHistory)
+                                        {
+                                            if (deckEntry.Key != null && !string.IsNullOrEmpty(deckEntry.Value))
+                                            {
+                                                match.Result.DeckCodes[playerIdStr][deckEntry.Key] = deckEntry.Value;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Update group standings if it's a group stage match
             if (match.Type == MatchType.GroupStage && tournament.Groups != null)
@@ -557,8 +641,11 @@ namespace Wabbit.Misc
                 }
             }
 
-            // Save changes to file after updating match result
+            // Save tournaments to file
             SaveTournamentsToFile();
+
+            // Save tournament state to preserve deck codes and match results
+            SaveTournamentState();
         }
 
         private void CheckGroupCompletion(Tournament.Group group)
@@ -993,6 +1080,277 @@ namespace Wabbit.Misc
         {
             SaveTournamentsToFile();
             SaveSignupsToFile();
+        }
+
+        // Add this method after GetSignup
+        public async Task LoadParticipantsAsync(TournamentSignup signup, DSharpPlus.DiscordClient client)
+        {
+            if (signup.ParticipantInfo.Count > 0 && signup.Participants.Count == 0)
+            {
+                Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
+
+                foreach (var (id, username) in signup.ParticipantInfo)
+                {
+                    try
+                    {
+                        // Try to get the guild from the signup channel
+                        var channel = await client.GetChannelAsync(signup.SignupChannelId);
+                        if (channel?.Guild is not null)
+                        {
+                            try
+                            {
+                                var member = await channel.Guild.GetMemberAsync(id);
+                                if (member is not null && !signup.Participants.Any(p => p.Id == id))
+                                {
+                                    signup.Participants.Add(member);
+                                    Console.WriteLine($"Added participant {username} (ID: {id}) to signup '{signup.Name}'");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Could not load member {username} (ID: {id}): {ex.Message}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error loading participant {username} (ID: {id}): {ex.Message}");
+                    }
+                }
+
+                // Save the updated participants
+                UpdateSignup(signup);
+            }
+        }
+
+        // Add this method after LoadSignupsFromFile
+        public async Task LoadAllParticipantsAsync(DSharpPlus.DiscordClient client)
+        {
+            if (_ongoingRounds.TournamentSignups == null || !_ongoingRounds.TournamentSignups.Any())
+            {
+                return;
+            }
+
+            Console.WriteLine($"Loading participants for {_ongoingRounds.TournamentSignups.Count} signups...");
+
+            foreach (var signup in _ongoingRounds.TournamentSignups)
+            {
+                await LoadParticipantsAsync(signup, client);
+            }
+
+            Console.WriteLine("Finished loading all participants.");
+        }
+
+        public void SaveTournamentState()
+        {
+            try
+            {
+                // Convert rounds to state objects
+                var activeRounds = ConvertRoundsToState(_ongoingRounds.TourneyRounds);
+
+                var state = new TournamentState
+                {
+                    Tournaments = _ongoingRounds.Tournaments,
+                    ActiveRounds = activeRounds
+                };
+
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    ReferenceHandler = ReferenceHandler.Preserve,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                };
+
+                string json = JsonSerializer.Serialize(state, options);
+                File.WriteAllText(_tournamentStateFilePath, json);
+
+                Console.WriteLine($"Saved tournament state with {state.Tournaments.Count} tournaments and {state.ActiveRounds.Count} active rounds");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving tournament state: {ex.Message}");
+            }
+        }
+
+        public void LoadTournamentState()
+        {
+            try
+            {
+                if (!File.Exists(_tournamentStateFilePath))
+                {
+                    Console.WriteLine("Tournament state file does not exist, creating a new one");
+                    SaveTournamentState();
+                    return;
+                }
+
+                string json = File.ReadAllText(_tournamentStateFilePath);
+
+                var options = new JsonSerializerOptions
+                {
+                    ReferenceHandler = ReferenceHandler.Preserve
+                };
+
+                var state = JsonSerializer.Deserialize<TournamentState>(json, options);
+
+                if (state != null)
+                {
+                    _ongoingRounds.Tournaments = state.Tournaments;
+                    _ongoingRounds.TourneyRounds = ConvertStateToRounds(state.ActiveRounds);
+
+                    Console.WriteLine($"Loaded tournament state with {state.Tournaments.Count} tournaments and {state.ActiveRounds.Count} active rounds");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error loading tournament state: {ex.Message}");
+                // If we can't load, create a new empty state
+                SaveTournamentState();
+            }
+        }
+
+        public List<ActiveRound> ConvertRoundsToState(List<Round> rounds)
+        {
+            var result = new List<ActiveRound>();
+
+            foreach (var round in rounds)
+            {
+                var activeRound = new ActiveRound
+                {
+                    Id = round.Name ?? Guid.NewGuid().ToString(),
+                    Length = round.Length,
+                    OneVOne = round.OneVOne,
+                    Cycle = round.Cycle,
+                    InGame = round.InGame,
+                    Maps = round.Maps,
+                    PlayedMaps = new List<string>(), // Will be populated from game results
+                    TournamentMapPool = GetTournamentMapPool(round.OneVOne),
+                    CurrentMapIndex = round.Cycle,
+                    Status = round.InGame ? "InProgress" : "Created",
+                    CreatedAt = DateTime.Now,
+                    LastUpdatedAt = DateTime.Now,
+                    ChannelId = round.Teams?.FirstOrDefault()?.Thread?.Id ?? 0
+                };
+
+                // Convert teams
+                if (round.Teams != null)
+                {
+                    foreach (var team in round.Teams)
+                    {
+                        var teamState = new TeamState
+                        {
+                            Name = team.Name ?? "",
+                            ThreadId = team.Thread?.Id ?? 0,
+                            Wins = team.Wins,
+                            MapBans = team.MapBans
+                        };
+
+                        // Convert participants
+                        if (team.Participants != null)
+                        {
+                            foreach (var participant in team.Participants)
+                            {
+                                if (participant.Player is not null)
+                                {
+                                    var participantState = new ParticipantState
+                                    {
+                                        PlayerId = participant.Player.Id,
+                                        PlayerName = participant.Player.Username,
+                                        Deck = participant.Deck ?? ""
+                                    };
+
+                                    teamState.Participants.Add(participantState);
+                                }
+                            }
+                        }
+
+                        activeRound.Teams.Add(teamState);
+                    }
+                }
+
+                // Track played maps based on the current cycle
+                if (round.Cycle > 0 && round.Maps.Count > 0)
+                {
+                    for (int i = 0; i < round.Cycle; i++)
+                    {
+                        if (i < round.Maps.Count)
+                        {
+                            activeRound.PlayedMaps.Add(round.Maps[i]);
+
+                            // Add game result
+                            var gameResult = new GameResult
+                            {
+                                Map = round.Maps[i],
+                                CompletedAt = DateTime.Now
+                            };
+
+                            // Try to determine winner
+                            if (round.Teams != null && round.Teams.Count >= 2)
+                            {
+                                var team1 = round.Teams[0];
+                                var team2 = round.Teams[1];
+
+                                if (team1.Wins > team2.Wins)
+                                {
+                                    gameResult.WinnerId = team1.Participants?.FirstOrDefault()?.Player?.Id ?? 0;
+                                }
+                                else if (team2.Wins > team1.Wins)
+                                {
+                                    gameResult.WinnerId = team2.Participants?.FirstOrDefault()?.Player?.Id ?? 0;
+                                }
+                            }
+
+                            activeRound.GameResults.Add(gameResult);
+                        }
+                    }
+                }
+
+                result.Add(activeRound);
+            }
+
+            return result;
+        }
+
+        private List<Round> ConvertStateToRounds(List<ActiveRound> activeRounds)
+        {
+            var result = new List<Round>();
+
+            // This is a placeholder - actual implementation would need to recreate
+            // the Round objects with all their Discord entity references
+            // This would require looking up Discord entities by ID
+
+            Console.WriteLine("Warning: Round state restoration is not fully implemented");
+
+            return result;
+        }
+
+        // Add this method to get active rounds for a tournament
+        public List<ActiveRound> GetActiveRoundsForTournament(string tournamentId)
+        {
+            try
+            {
+                // Convert rounds to state objects
+                var activeRounds = ConvertRoundsToState(_ongoingRounds.TourneyRounds);
+
+                // Filter by tournament ID
+                return activeRounds.Where(r => r.TournamentId == tournamentId).ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting active rounds: {ex.Message}");
+                return new List<ActiveRound>();
+            }
+        }
+
+        // Add this method to get tournament map pool
+        public List<string> GetTournamentMapPool(bool oneVOne)
+        {
+            string mapSize = oneVOne ? "1v1" : "2v2";
+            var mapPool = Maps.MapCollection?
+                .Where(m => m.Size == mapSize && m.IsInTournamentPool)
+                .Select(m => m.Name)
+                .ToList() ?? new List<string>();
+
+            return mapPool;
         }
     }
 }

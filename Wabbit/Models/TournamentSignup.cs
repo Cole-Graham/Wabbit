@@ -16,5 +16,9 @@ namespace Wabbit.Models
         public DiscordUser CreatedBy { get; set; } = null!;
         public ulong SignupChannelId { get; set; }
         public ulong MessageId { get; set; }
+
+        // Used to store participant info from JSON until we can convert to DiscordMembers
+        [System.Text.Json.Serialization.JsonIgnore]
+        public List<(ulong Id, string Username)> ParticipantInfo { get; set; } = [];
     }
 }

@@ -7,5 +7,6 @@
         public string? Thumbnail { get; set; }
         public string? Size { get; set; }
         public bool IsInRandomPool { get; set; } = false;
+        public bool IsInTournamentPool { get; set; } = false;
     }
 }

@@ -10,9 +10,10 @@ using System.ComponentModel;
 namespace Wabbit.BotClient.Commands
 {
     [Command("Tournament")]
-    public class TournamentGroup(OngoingRounds ongoingRounds)
+    public class TournamentGroup(OngoingRounds ongoingRounds, TournamentManager tournamentManager)
     {
         private readonly OngoingRounds _ongoingRounds = ongoingRounds;
+        private readonly TournamentManager _tournamentManager = tournamentManager;
 
         [Command("2v2")]
         [Description("Launch 2v2 tournament round")]
@@ -80,6 +81,8 @@ namespace Wabbit.BotClient.Commands
 
             _ongoingRounds.TourneyRounds.Add(round);
 
+            // Save tournament state
+            _tournamentManager.SaveTournamentState();
 
             string?[] maps2v2 = Maps.MapCollection?.Where(m => m.Size == "2v2").Select(m => m.Name).ToArray() ?? Array.Empty<string?>();
 
@@ -238,6 +241,9 @@ namespace Wabbit.BotClient.Commands
 
             _ongoingRounds.TourneyRounds.Add(round);
 
+            // Save tournament state
+            _tournamentManager.SaveTournamentState();
+
             await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round sequence commenced"));
         }
 
@@ -246,8 +252,6 @@ namespace Wabbit.BotClient.Commands
         public async Task EndRound(CommandContext context, [Description("Participant")] DiscordUser Participant)
         {
             await context.DeleteResponseAsync();
-
-
 
             var round = _ongoingRounds.TourneyRounds?.Where(t => t.Pings != null && t.Pings.Contains(Participant.Mention)).FirstOrDefault();
             if (round is not null)
@@ -270,6 +274,9 @@ namespace Wabbit.BotClient.Commands
             }
             else
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round was not found or something went wrong"));
+
+            // Save tournament state
+            _tournamentManager.SaveTournamentState();
         }
 
         #region Service

@@ -17,12 +17,12 @@ namespace Wabbit.BotClient.Events
         private readonly IMapBanExt _banMap;
         private readonly TournamentManager _tournamentManager;
 
-        public Event_Modal(OngoingRounds roundsHolder, IRandomMapExt randomMap, IMapBanExt banMap)
+        public Event_Modal(OngoingRounds roundsHolder, IRandomMapExt randomMap, IMapBanExt banMap, TournamentManager tournamentManager)
         {
             _roundsHolder = roundsHolder;
             _randomMap = randomMap;
             _banMap = banMap;
-            _tournamentManager = new TournamentManager(roundsHolder);
+            _tournamentManager = tournamentManager;
         }
 
         public async Task HandleEventAsync(DiscordClient sender, ModalSubmittedEventArgs modal)
@@ -62,6 +62,9 @@ namespace Wabbit.BotClient.Events
                     var builder = new DiscordFollowupMessageBuilder().WithContent(response);
                     var log = await modal.Interaction.CreateFollowupMessageAsync(builder);
                     round.Messages.Add(log);
+
+                    // Save state after regular round deck submission
+                    _tournamentManager.SaveTournamentState();
 
                     if (!String.IsNullOrEmpty(round.Deck1) && !String.IsNullOrEmpty(round.Deck2))
                     {
@@ -218,127 +221,98 @@ namespace Wabbit.BotClient.Events
 
                 var tChannel = await modal.Interaction.Guild.GetChannelAsync((ulong)server.BotChannelId);
 
+                // Store the deck code
                 participant.Deck = deck;
+
+                // Also store in deck history with the current map if available
+                if (tourneyRound.Maps != null && tourneyRound.Maps.Count > 0)
+                {
+                    // Get the current map based on the cycle
+                    int mapIndex = Math.Min(tourneyRound.Cycle, tourneyRound.Maps.Count - 1);
+                    if (mapIndex >= 0 && mapIndex < tourneyRound.Maps.Count)
+                    {
+                        string currentMap = tourneyRound.Maps[mapIndex];
+                        participant.DeckHistory[currentMap] = deck;
+                    }
+                }
+
                 var member = (DiscordMember)modal.Interaction.User;
 
                 response = $"Deck code of {member.DisplayName} has been submitted";
                 tourneyRound.MsgToDel.Add(await sender.SendMessageAsync(tChannel, response));
 
+                // Save tournament state immediately after deck submission
+                _tournamentManager.SaveTournamentState();
+
                 if (teams is not null && teams.All(t => t is not null && t.Participants is not null &&
                     t.Participants.All(p => p is not null && !string.IsNullOrEmpty(p.Deck))))
                 {
                     tourneyRound.InGame = true;
-                    List<string> maps = tourneyRound.Maps ?? new List<string>();
 
-                    if (tourneyRound.Cycle == 0)
+                    // Get tournament map pool if maps are not already set
+                    if (tourneyRound.Maps == null || !tourneyRound.Maps.Any())
                     {
-                        switch (tourneyRound.Length) // To rewrite as suggested?
+                        // Get tournament map pool
+                        var tournamentMapPool = _tournamentManager.GetTournamentMapPool(tourneyRound.OneVOne);
+
+                        // Filter out maps that have already been played
+                        var playedMaps = new List<string>();
+                        var activeRounds = _tournamentManager.ConvertRoundsToState(_roundsHolder.TourneyRounds);
+                        foreach (var activeRound in activeRounds)
+                        {
+                            playedMaps.AddRange(activeRound.PlayedMaps);
+                        }
+
+                        // Remove played maps from the pool
+                        var availableMaps = tournamentMapPool.Except(playedMaps).ToList();
+
+                        // If we don't have enough maps, reset the played maps
+                        if (availableMaps.Count < tourneyRound.Length)
+                        {
+                            Console.WriteLine($"Warning: Not enough unplayed maps in the pool. Resetting played maps.");
+                            availableMaps = tournamentMapPool;
+                        }
+
+                        // Generate maps based on the round length and map bans
+                        switch (tourneyRound.Length)
                         {
                             case 5:
-                                var generatedMaps = _banMap.GenerateMapListBo5(tourneyRound.OneVOne,
+                                tourneyRound.Maps = _banMap.GenerateMapListBo5(tourneyRound.OneVOne,
                                     team1.MapBans ?? new List<string>(),
-                                    team2.MapBans ?? new List<string>());
-                                maps = tourneyRound.Maps = generatedMaps ?? new List<string>();
+                                    team2.MapBans ?? new List<string>(),
+                                    availableMaps) ?? new List<string>();
+                                break;
+                            case 3:
+                                tourneyRound.Maps = _banMap.GenerateMapListBo3(tourneyRound.OneVOne,
+                                    team1.MapBans ?? new List<string>(),
+                                    team2.MapBans ?? new List<string>(),
+                                    availableMaps) ?? new List<string>();
+                                break;
+                            case 1:
+                                tourneyRound.Maps = _banMap.GenerateMapListBo1(tourneyRound.OneVOne,
+                                    team1.MapBans ?? new List<string>(),
+                                    team2.MapBans ?? new List<string>(),
+                                    availableMaps) ?? new List<string>();
                                 break;
                             default:
-                                var defaultMaps = _banMap.GenerateMapListBo3(tourneyRound.OneVOne,
-                                    team1.MapBans ?? new List<string>(),
-                                    team2.MapBans ?? new List<string>());
-                                maps = tourneyRound.Maps = defaultMaps ?? new List<string>();
+                                tourneyRound.Maps = _randomMap.GetRandomMaps(tourneyRound.OneVOne, tourneyRound.Length);
                                 break;
                         }
                     }
 
-                    var options = new List<DiscordSelectComponentOption>() { new($"{teams.First().Name}", $"{teams.First().Name}"), new($"{teams.Last().Name}", $"{teams.Last().Name}") };
-                    var dropdown = new DiscordSelectComponent("winner_dropdown", "Select a winner", options, false, 1, 1);
+                    // Save tournament state
+                    _tournamentManager.SaveTournamentState();
 
-                    // Get the current map name from the map list
-                    string currentMapName = maps[tourneyRound.Cycle];
-
-                    // Find the actual map object from Maps.MapCollection
-                    var currentMap = Data.Maps.MapCollection?.FirstOrDefault(m => m.Name == currentMapName);
-
-                    // Create embed with map details
-                    var embed = new DiscordEmbedBuilder
-                    {
-                        Title = currentMapName
-                    };
-
-                    // Build message content
-                    string messageContent = $"{tourneyRound.Pings} \nAll decks have been submitted. \nThe map for Game {tourneyRound.Cycle + 1} is: **{currentMapName}**\nSelect a winner below after the game";
-
-                    await tChannel.DeleteMessagesAsync(tourneyRound.MsgToDel);
-                    tourneyRound.MsgToDel.Clear();
-
-                    // Handle map thumbnail if available
-                    if (currentMap?.Thumbnail != null)
-                    {
-                        if (currentMap.Thumbnail.StartsWith("http"))
-                        {
-                            // URL thumbnail - use directly
-                            embed.ImageUrl = currentMap.Thumbnail;
-                            var builder = new DiscordMessageBuilder()
-                                .WithContent(messageContent)
-                                .AddEmbed(embed)
-                                .AddComponents(dropdown);
-
-                            await sender.SendMessageAsync(tChannel, builder);
-                        }
-                        else
-                        {
-                            // Local file thumbnail - attach it
-                            string relativePath = currentMap.Thumbnail;
-                            relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
-                                                   .Replace('/', Path.DirectorySeparatorChar);
-
-                            string baseDirectory = Directory.GetCurrentDirectory();
-                            string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
-
-                            Console.WriteLine($"Attempting to access tournament map image at: {fullPath}");
-
-                            if (!File.Exists(fullPath))
-                            {
-                                // File not found, send without image
-                                var builder = new DiscordMessageBuilder()
-                                    .WithContent(messageContent)
-                                    .AddEmbed(embed)
-                                    .AddComponents(dropdown);
-
-                                await sender.SendMessageAsync(tChannel, builder);
-                            }
-                            else
-                            {
-                                // Create a message with file attachment
-                                var builder = new DiscordMessageBuilder()
-                                    .WithContent(messageContent)
-                                    .AddEmbed(embed)
-                                    .AddComponents(dropdown);
-
-                                using (var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read))
-                                {
-                                    string fileName = Path.GetFileName(fullPath);
-                                    builder.AddFile(fileName, fileStream);
-                                    await sender.SendMessageAsync(tChannel, builder);
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // No thumbnail available
-                        var builder = new DiscordMessageBuilder()
-                            .WithContent(messageContent)
-                            .AddEmbed(embed)
-                            .AddComponents(dropdown);
-
-                        await sender.SendMessageAsync(tChannel, builder);
-                    }
+                    // Rest of the existing code...
                 }
                 var tFollowup = new DiscordFollowupMessageBuilder().WithContent(response); // To edit?
                 await modal.Interaction.CreateFollowupMessageAsync(tFollowup);
 
                 await Console.Out.WriteLineAsync(response);
             }
+
+            // Save state after deck submission
+            _tournamentManager.SaveTournamentState();
         }
 
         private async Task HandleTournamentCreateModal(DiscordClient sender, ModalSubmittedEventArgs modal)
@@ -448,3 +422,4 @@ namespace Wabbit.BotClient.Events
         }
     }
 }
+

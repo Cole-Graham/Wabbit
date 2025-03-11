@@ -68,6 +68,11 @@ namespace Wabbit.Models
             public object? Winner { get; set; }
             public List<string> MapResults { get; set; } = [];
             public DateTime CompletedAt { get; set; } = DateTime.Now;
+
+            // Dictionary<PlayerID, Dictionary<MapName, DeckCode>>
+            // Stores deck codes by player ID and map name for verification
+            public Dictionary<string, Dictionary<string, string>> DeckCodes { get; set; } =
+                new Dictionary<string, Dictionary<string, string>>();
         }
     }
 

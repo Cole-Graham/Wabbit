@@ -7,19 +7,45 @@ namespace Wabbit.Services
     {
         private readonly Random _random = random.Instance;
 
-        public List<string>? GenerateMapListBo3(bool OvO, List<string> team1Bans, List<string> team2Bans)
+        public List<string>? GenerateMapListBo1(bool OvO, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null)
         {
-            if (Maps.MapCollection is null || Maps.MapCollection.Count == 0)
+            // Get the map pool
+            List<string>? mapList = GetMapPool(OvO, customMapPool);
+            if (mapList == null || mapList.Count == 0)
             {
                 Console.WriteLine("Map collection is empty");
                 return null;
             }
 
-            List<string>? mapList;
-            if (OvO)
-                mapList = Maps.MapCollection.Where(m => m.Size == "1v1").Select(m => m.Name).ToList();
-            else
-                mapList = Maps.MapCollection.Where(m => m.Size == "2v2").Select(m => m.Name).ToList();
+            // For Bo1, we just need to remove all banned maps and pick one
+            var allBans = team1Bans.Concat(team2Bans).Distinct().ToList();
+            foreach (var map in allBans)
+            {
+                mapList.Remove(map);
+            }
+
+            // If we have no maps left, return null
+            if (mapList.Count == 0)
+            {
+                Console.WriteLine("No maps left after bans");
+                return null;
+            }
+
+            // Pick one random map
+            var shuffled = mapList.OrderBy(_ => _random.Next()).Take(1).ToList();
+            return shuffled;
+        }
+
+        public List<string>? GenerateMapListBo3(bool OvO, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null)
+        {
+            // Get the map pool
+            List<string>? mapList = GetMapPool(OvO, customMapPool);
+            if (mapList == null || mapList.Count == 0)
+            {
+                Console.WriteLine("Map collection is empty");
+                return null;
+            }
+
             string[] mtrArray; // Maps to remove
 
             var same = team1Bans.Intersect(team2Bans);
@@ -74,13 +100,15 @@ namespace Wabbit.Services
                         mapList.Remove(map);
                     break;
             }
-            var shuffled = mapList.OrderBy(_ => _random.Next()).ToList();
+            var shuffled = mapList.OrderBy(_ => _random.Next()).Take(3).ToList();
             return shuffled;
         }
 
-        public List<string>? GenerateMapListBo5(bool OvO, List<string> team1bans, List<string> team2bans)
+        public List<string>? GenerateMapListBo5(bool OvO, List<string> team1bans, List<string> team2bans, List<string>? customMapPool = null)
         {
-            if (Maps.MapCollection is null || Maps.MapCollection.Count == 0)
+            // Get the map pool
+            List<string>? mapList = GetMapPool(OvO, customMapPool);
+            if (mapList == null || mapList.Count == 0)
             {
                 Console.WriteLine("Map collection is empty");
                 return null;
@@ -88,12 +116,6 @@ namespace Wabbit.Services
 
             List<string> randomMaps = [];
             int rMIndex;
-
-            List<string>? mapList;
-            if (OvO)
-                mapList = Maps.MapCollection.Where(m => m.Size == "1v1").Select(m => m.Name).ToList();
-            else
-                mapList = Maps.MapCollection.Where(m => m.Size == "2v2").Select(m => m.Name).ToList();
 
             List<string> mtrList = [];
 
@@ -131,8 +153,32 @@ namespace Wabbit.Services
                     break;
             }
 
-            var shuffled = mapList.OrderBy(_ => _random.Next()).ToList();
+            var shuffled = mapList.OrderBy(_ => _random.Next()).Take(5).ToList();
             return shuffled;
+        }
+
+        private List<string>? GetMapPool(bool OvO, List<string>? customMapPool = null)
+        {
+            // If a custom map pool is provided, use it
+            if (customMapPool != null && customMapPool.Count > 0)
+            {
+                return new List<string>(customMapPool);
+            }
+
+            // Otherwise, use the default map pool from Maps.MapCollection
+            if (Maps.MapCollection is null || Maps.MapCollection.Count == 0)
+            {
+                Console.WriteLine("Map collection is empty");
+                return null;
+            }
+
+            List<string>? mapList;
+            if (OvO)
+                mapList = Maps.MapCollection.Where(m => m.Size == "1v1" && m.IsInTournamentPool).Select(m => m.Name).ToList();
+            else
+                mapList = Maps.MapCollection.Where(m => m.Size == "2v2" && m.IsInTournamentPool).Select(m => m.Name).ToList();
+
+            return mapList;
         }
     }
 }

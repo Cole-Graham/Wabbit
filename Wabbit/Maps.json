@@ -2,57 +2,65 @@
   {
     "Name": "Airport",
     "Id": "Airport_1v1_Actual",
-    "Thumbnail": "Data/images/maps/WA_Airport_1v1.jpg",
+    "Thumbnail": "data/images/WA_Airport_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   },
   {
     "Name": "Death Row",
     "Id": "WA_2x3DeathRow1v1_CQ",
-    "Thumbnail": "Data/images/maps/WA_Death_Row_1v1.jpg",
+    "Thumbnail": "data/images/WA_DeathRow_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   },
   {
     "Name": "Geisa",
     "Id": "WA_4x3geisa1vs1_CQ",
-    "Thumbnail": "Data/images/maps/WA_Geisa_1v1.jpg",
+    "Thumbnail": "data/images/WA_Geisa_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   },
   {
     "Name": "Hesse",
     "Id": "Hesse_1v1_CONQ_ACTUAL",
-    "Thumbnail": "Data/images/maps/WA_Hesse_1v1.jpg",
+    "Thumbnail": "data/images/WA_Hesse_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   },
   {
     "Name": "Plunjing Valley",
     "Id": "WA_3x3_Valley_Conquest",
-    "Thumbnail": "Data/images/maps/WA_Plunjing-Valley_1v1.jpg",
+    "Thumbnail": "data/images/WA_Plunjing-Valley_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   },
   {
     "Name": "Punchbowl",
     "Id": "WA_3x3_Bowl_Conquest",
-    "Thumbnail": "Data/images/maps/WA_Punchbowl_1v1.jpg",
+    "Thumbnail": "data/images/WA_Punchbowl_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": false
+    "IsInRandomPool": false,
+    "IsInTournamentPool": false
   },
   {
     "Name": "Urban Frontlines",
     "Id": "WA_3x3UrbanFrontlines1v1_CQ",
-    "Thumbnail": "Data/images/maps/WA_Urban-Frontlines_1v1.jpg",
+    "Thumbnail": "data/images/WA_Urban-Frontlines_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   },
   {
     "Name": "Vertigo",
     "Id": "WA_2x3Vertigo1v1_CQ",
-    "Thumbnail": "Data/images/maps/WA_Vertigo_1v1.jpg",
+    "Thumbnail": "data/images/WA_Vertigo_1v1.jpg",
     "Size": "1v1",
-    "IsInRandomPool": true
+    "IsInRandomPool": true,
+    "IsInTournamentPool": true
   }
 ]

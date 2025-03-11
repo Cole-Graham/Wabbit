@@ -7,5 +7,6 @@ namespace Wabbit.Services.Interfaces
     {
         DiscordEmbedBuilder GenerateRandomMap();
         Map? GetRandomMap();
+        List<string> GetRandomMaps(bool oneVOne, int count);
     }
 }
