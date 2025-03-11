@@ -377,15 +377,7 @@ namespace Wabbit.Misc
                         Username = p.Username
                     }).ToList();
 
-                    Console.WriteLine($"Saving signup '{signup.Name}' with {participantsList.Count} participants");
-                    Console.WriteLine($"  - SignupChannelId: {signup.SignupChannelId}");
-                    Console.WriteLine($"  - MessageId: {signup.MessageId}");
-
-                    // For debugging, log each participant
-                    foreach (var p in participantsList)
-                    {
-                        Console.WriteLine($"  - Participant: {p.Username} (ID: {p.Id})");
-                    }
+                    // Keep minimal logging, no need to log each participant
 
                     // Create a simplified object for serialization
                     var signupData = new
@@ -1233,9 +1225,8 @@ namespace Wabbit.Misc
 
         public void UpdateSignup(TournamentSignup signup)
         {
+            // Keep minimal logging
             Console.WriteLine($"Updating signup '{signup.Name}' with {signup.Participants.Count} participants");
-            Console.WriteLine($"  - SignupChannelId: {signup.SignupChannelId}");
-            Console.WriteLine($"  - MessageId: {signup.MessageId}");
 
             // Update the signup in the collection
             var existingIndex = _ongoingRounds.TournamentSignups.FindIndex(s =>
@@ -1262,9 +1253,6 @@ namespace Wabbit.Misc
                     existingSignup.CreatorUsername = signup.CreatorUsername;
                 }
 
-                // Make sure we're preserving participants
-                Console.WriteLine($"Before merge: existing signup has {existingSignup.Participants.Count} participants, new signup has {signup.Participants.Count} participants");
-
                 // Create a merged participant list
                 var allParticipants = new List<DiscordMember>(existingSignup.Participants);
 
@@ -1274,25 +1262,14 @@ namespace Wabbit.Misc
                     if (!allParticipants.Any(p => p.Id == participant.Id))
                     {
                         allParticipants.Add(participant);
-                        Console.WriteLine($"Added new participant: {participant.Username} (ID: {participant.Id})");
                     }
                 }
 
                 // Update the participant list
                 existingSignup.Participants = allParticipants;
-                Console.WriteLine($"After merge: signup has {existingSignup.Participants.Count} participants");
 
                 // Update the ParticipantInfo with the current state of Participants
                 existingSignup.ParticipantInfo = existingSignup.Participants.Select(p => (p.Id, p.Username)).ToList();
-
-                // Log all participants for verification
-                Console.WriteLine($"Final participant list for signup '{signup.Name}':");
-                foreach (var participant in existingSignup.Participants)
-                {
-                    Console.WriteLine($"  - {participant.Username} (ID: {participant.Id})");
-                }
-
-                Console.WriteLine($"Updated existing signup '{signup.Name}' in collection at index {existingIndex}");
             }
             else
             {
@@ -1307,17 +1284,6 @@ namespace Wabbit.Misc
 
             // Save the current state of signups
             SaveSignupsToFile();
-
-            // Verify the signup was saved properly
-            var saved = GetSignup(signup.Name);
-            if (saved != null)
-            {
-                Console.WriteLine($"Verified saved signup '{saved.Name}' with MessageId: {saved.MessageId}, {saved.Participants.Count} participants");
-            }
-            else
-            {
-                Console.WriteLine($"WARNING: Could not verify saved signup '{signup.Name}'");
-            }
         }
 
         // Save both data files whenever there's a significant change
@@ -1328,25 +1294,23 @@ namespace Wabbit.Misc
         }
 
         // Add this method after GetSignup
-        public async Task LoadParticipantsAsync(TournamentSignup signup, DSharpPlus.DiscordClient client)
+        public async Task LoadParticipantsAsync(TournamentSignup signup, DSharpPlus.DiscordClient client, bool verbose = true)
         {
             // Clear existing participants to avoid duplicates
             signup.Participants.Clear();
 
             if (signup.ParticipantInfo != null && signup.ParticipantInfo.Count > 0)
             {
-                Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
+                if (verbose) Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
 
                 foreach (var (id, username) in signup.ParticipantInfo)
                 {
-                    Console.WriteLine($"Loading participant {username} (ID: {id}) for signup '{signup.Name}'");
-
                     try
                     {
                         // Try to get the guild from the signup channel
                         if (signup.SignupChannelId == 0)
                         {
-                            Console.WriteLine($"Signup '{signup.Name}' has no channel ID, cannot load participants");
+                            if (verbose) Console.WriteLine($"Signup '{signup.Name}' has no channel ID, cannot load participants");
                             continue;
                         }
 
@@ -1359,38 +1323,27 @@ namespace Wabbit.Misc
                                 if (member is not null)
                                 {
                                     signup.Participants.Add(member);
-                                    Console.WriteLine($"Added participant {username} (ID: {id}) to signup '{signup.Name}'");
-                                }
-                                else
-                                {
-                                    Console.WriteLine($"Member {username} (ID: {id}) not found in guild for signup '{signup.Name}'");
+                                    if (verbose) Console.WriteLine($"Added participant {username} (ID: {id}) to signup '{signup.Name}'");
                                 }
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Could not load member {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
+                                if (verbose) Console.WriteLine($"Could not load member {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
                             }
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Could not find channel or guild for signup '{signup.Name}' (Channel ID: {signup.SignupChannelId})");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error loading participant {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
+                        if (verbose) Console.WriteLine($"Error loading participant {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
                     }
                 }
 
-                Console.WriteLine($"Finished loading participants for '{signup.Name}'. Loaded {signup.Participants.Count} of {signup.ParticipantInfo.Count} participants.");
+                if (verbose) Console.WriteLine($"Finished loading participants for '{signup.Name}'. Loaded {signup.Participants.Count} of {signup.ParticipantInfo.Count} participants.");
             }
             else
             {
-                Console.WriteLine($"No participant info found for signup '{signup.Name}'");
+                if (verbose) Console.WriteLine($"No participant info found for signup '{signup.Name}'");
             }
-
-            // Always update the signup to save any changes
-            UpdateSignup(signup);
         }
 
         // Add this method after LoadSignupsFromFile
@@ -1648,8 +1601,8 @@ namespace Wabbit.Misc
                 // Check if participants need to be loaded
                 if (signup.Participants.Count == 0 && signup.ParticipantInfo.Count > 0)
                 {
-                    Console.WriteLine($"Loading participants for signup '{name}'...");
-                    await LoadParticipantsAsync(signup, client);
+                    // Load participants silently
+                    await LoadParticipantsAsync(signup, client, false);
                 }
             }
 

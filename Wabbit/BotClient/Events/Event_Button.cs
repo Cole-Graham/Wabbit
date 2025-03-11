@@ -4,6 +4,8 @@ using DSharpPlus.EventArgs;
 using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Wabbit.BotClient.Events
 {
@@ -11,11 +13,15 @@ namespace Wabbit.BotClient.Events
     {
         private readonly OngoingRounds _roundsHolder;
         private readonly TournamentManager _tournamentManager;
+        private readonly ILogger<Event_Button> _logger;
+        private readonly IServiceScopeFactory _scopeFactory;
 
-        public Event_Button(OngoingRounds roundsHolder, TournamentManager tournamentManager)
+        public Event_Button(OngoingRounds roundsHolder, TournamentManager tournamentManager, ILogger<Event_Button> logger, IServiceScopeFactory scopeFactory)
         {
             _roundsHolder = roundsHolder;
             _tournamentManager = tournamentManager;
+            _logger = logger;
+            _scopeFactory = scopeFactory;
         }
 
         public Task HandleEventAsync(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
@@ -420,11 +426,9 @@ namespace Wabbit.BotClient.Events
                 }
                 catch (Exception deferEx)
                 {
-                    Console.WriteLine($"Failed to defer signup button response: {deferEx.Message}. Will try to continue...");
+                    // Failed to defer signup button response, will try to continue
+                    _logger.LogWarning($"Failed to defer signup button response: {deferEx.Message}");
                 }
-
-                // Log details for debugging
-                Console.WriteLine($"Signup button clicked: {e.Id} by user {e.User.Username}");
 
                 // Extract the tournament name from the button ID (format: signup_TournamentName)
                 string tournamentName = e.Id.Substring("signup_".Length);
@@ -437,11 +441,12 @@ namespace Wabbit.BotClient.Events
                     try
                     {
                         await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                            .WithContent($"Signup '{tournamentName}' not found. It may have been removed."));
+                            .WithContent($"Signup '{tournamentName}' not found. It may have been removed.")
+                            .AsEphemeral(true));
                     }
                     catch (Exception followupEx)
                     {
-                        Console.WriteLine($"Failed to send followup message: {followupEx.Message}");
+                        _logger.LogWarning($"Failed to send followup message: {followupEx.Message}");
                         // Try direct channel message as fallback
                         await e.Channel.SendMessageAsync($"Signup '{tournamentName}' not found. It may have been removed.");
                     }
@@ -453,11 +458,12 @@ namespace Wabbit.BotClient.Events
                     try
                     {
                         await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                            .WithContent($"Signup for '{tournamentName}' is closed."));
+                            .WithContent($"Signup for '{tournamentName}' is closed.")
+                            .AsEphemeral(true));
                     }
                     catch (Exception followupEx)
                     {
-                        Console.WriteLine($"Failed to send followup message: {followupEx.Message}");
+                        _logger.LogWarning($"Failed to send followup message: {followupEx.Message}");
                         await e.Channel.SendMessageAsync($"Signup for '{tournamentName}' is closed.");
                     }
                     return;
@@ -478,13 +484,14 @@ namespace Wabbit.BotClient.Events
                             .AddComponents(
                                 new DiscordButtonComponent(DiscordButtonStyle.Danger, $"cancel_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Cancel Signup"),
                                 new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"keep_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Keep Signup")
-                            );
+                            )
+                            .AsEphemeral(true);
 
                         await e.Interaction.CreateFollowupMessageAsync(confirmationMessage);
                     }
                     catch (Exception followupEx)
                     {
-                        Console.WriteLine($"Failed to send confirmation message: {followupEx.Message}");
+                        _logger.LogWarning($"Failed to send confirmation message: {followupEx.Message}");
                         await e.Channel.SendMessageAsync($"You are already signed up for tournament '{tournamentName}'.");
                     }
                     return;
@@ -499,8 +506,8 @@ namespace Wabbit.BotClient.Events
                 // Replace the participants list in the signup
                 signup.Participants = newParticipantsList;
 
-                Console.WriteLine($"Added participant {member.Username} (ID: {member.Id}) to signup '{signup.Name}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
+                // Log signup using logger instead of console
+                _logger.LogInformation($"Added participant {member.Username} to signup '{signup.Name}' (now has {signup.Participants.Count} participants)");
 
                 // Save the updated signup
                 _tournamentManager.UpdateSignup(signup);
@@ -511,24 +518,27 @@ namespace Wabbit.BotClient.Events
                 try
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You have been added to the tournament '{tournamentName}'."));
+                        .WithContent($"You have been added to the tournament '{tournamentName}'.")
+                        .AsEphemeral(true));
                 }
                 catch (Exception followupEx)
                 {
-                    Console.WriteLine($"Failed to send confirmation message: {followupEx.Message}");
+                    _logger.LogWarning($"Failed to send confirmation message: {followupEx.Message}");
                     await e.Channel.SendMessageAsync($"You have been added to the tournament '{tournamentName}'.");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error handling signup button: {ex.Message}\n{ex.StackTrace}");
+                _logger.LogError($"Error handling signup button: {ex.Message}\n{ex.StackTrace}");
                 try
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"An error occurred: {ex.Message}"));
+                        .WithContent($"An error occurred: {ex.Message}")
+                        .AsEphemeral(true));
                 }
-                catch
+                catch (Exception msgEx)
                 {
+                    _logger.LogWarning($"Failed to send error message: {msgEx.Message}");
                     try
                     {
                         // Direct message as a final fallback
@@ -536,7 +546,7 @@ namespace Wabbit.BotClient.Events
                     }
                     catch
                     {
-                        Console.WriteLine("Failed to send any error messages");
+                        _logger.LogError("Failed to send any error messages");
                     }
                 }
             }
@@ -556,7 +566,8 @@ namespace Wabbit.BotClient.Events
                 if (parts.Length < 4)
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Invalid button ID format."));
+                        .WithContent("Invalid button ID format.")
+                        .AsEphemeral(true));
                     return;
                 }
 
@@ -567,7 +578,8 @@ namespace Wabbit.BotClient.Events
                 if (!ulong.TryParse(parts[parts.Length - 1], out ulong userId))
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Invalid user ID in button."));
+                        .WithContent("Invalid user ID in button.")
+                        .AsEphemeral(true));
                     return;
                 }
 
@@ -575,7 +587,8 @@ namespace Wabbit.BotClient.Events
                 if (e.User.Id != userId)
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("You can only cancel your own signup."));
+                        .WithContent("You can only cancel your own signup.")
+                        .AsEphemeral(true));
                     return;
                 }
 
@@ -585,7 +598,8 @@ namespace Wabbit.BotClient.Events
                 if (signup == null)
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"Signup '{tournamentName}' not found. It may have been removed."));
+                        .WithContent($"Signup '{tournamentName}' not found. It may have been removed.")
+                        .AsEphemeral(true));
                     return;
                 }
 
@@ -607,9 +621,6 @@ namespace Wabbit.BotClient.Events
                     // Replace the participants list in the signup
                     signup.Participants = newParticipantsList;
 
-                    Console.WriteLine($"Removed participant {participant.Username} (ID: {participant.Id}) from signup '{signup.Name}'");
-                    Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
-
                     // Save the updated signup
                     _tournamentManager.UpdateSignup(signup);
 
@@ -617,25 +628,28 @@ namespace Wabbit.BotClient.Events
                     await UpdateSignupMessage(sender, signup);
 
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You have been removed from the tournament '{tournamentName}'."));
+                        .WithContent($"You have been removed from the tournament '{tournamentName}'.")
+                        .AsEphemeral(true));
                 }
                 else
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You were not found in the participants list for '{tournamentName}'."));
+                        .WithContent($"You were not found in the participants list for '{tournamentName}'.")
+                        .AsEphemeral(true));
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error handling cancel signup button: {ex.Message}\n{ex.StackTrace}");
+                _logger.LogError($"Error handling cancel signup button: {ex.Message}\n{ex.StackTrace}");
                 try
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"An error occurred: {ex.Message}"));
+                        .WithContent($"An error occurred: {ex.Message}")
+                        .AsEphemeral(true));
                 }
-                catch
+                catch (Exception msgEx)
                 {
-                    // Ignore if we can't send a message
+                    _logger.LogError($"Failed to send error message: {msgEx.Message}");
                 }
             }
         }
@@ -795,9 +809,6 @@ namespace Wabbit.BotClient.Events
             // Replace the participants list in the signup
             signup.Participants = newParticipantsList;
 
-            Console.WriteLine($"User {user?.Username} (ID: {user?.Id}) has withdrawn from signup '{signup.Name}'");
-            Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
-
             // Save the updated signup
             _tournamentManager.UpdateSignup(signup);
 
@@ -805,21 +816,12 @@ namespace Wabbit.BotClient.Events
             await UpdateSignupMessage(sender, signup);
 
             // Send confirmation message
-            await e.Interaction.CreateFollowupMessageAsync(
-                new DiscordFollowupMessageBuilder()
-                    .WithContent($"You have been removed from the '{signup.Name}' tournament.")
-                    .AsEphemeral(true)
-            );
+            await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                .WithContent($"You have been removed from the '{signup.Name}' tournament.")
+                .AsEphemeral(true));
 
-            // Also send a message to the channel
-            try
-            {
-                await e.Channel.SendMessageAsync($"{user?.Mention} has withdrawn from the '{signup.Name}' tournament.");
-            }
-            catch
-            {
-                // Ignore if we can't send a message
-            }
+            // Log the withdrawal
+            _logger.LogInformation($"User {e.Interaction.User.Username} withdrawn from tournament '{signup.Name}'");
         }
     }
 }
