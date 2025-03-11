@@ -82,7 +82,7 @@ namespace Wabbit.BotClient.Commands
             _ongoingRounds.TourneyRounds.Add(round);
 
             // Save tournament state
-            _tournamentManager.SaveTournamentState();
+            await _tournamentManager.SaveTournamentState(context.Client);
 
             string?[] maps2v2 = Maps.MapCollection?.Where(m => m.Size == "2v2").Select(m => m.Name).ToArray() ?? Array.Empty<string?>();
 
@@ -242,7 +242,7 @@ namespace Wabbit.BotClient.Commands
             _ongoingRounds.TourneyRounds.Add(round);
 
             // Save tournament state
-            _tournamentManager.SaveTournamentState();
+            await _tournamentManager.SaveTournamentState(context.Client);
 
             await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round sequence commenced"));
         }
@@ -276,7 +276,7 @@ namespace Wabbit.BotClient.Commands
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round was not found or something went wrong"));
 
             // Save tournament state
-            _tournamentManager.SaveTournamentState();
+            await _tournamentManager.SaveTournamentState(context.Client);
         }
 
         #region Service

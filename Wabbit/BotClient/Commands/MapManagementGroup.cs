@@ -22,7 +22,7 @@ namespace Wabbit.BotClient.Commands
             [Description("Map ID")] string id,
             [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size,
             [Description("Include into random map pool?")] bool inRandom,
-            [Description("Map image URL or local path (data/images/filename.png)")] string thumbnail = "")
+            [Description("Map image URL or local path (Data/images/maps/filename.png)")] string thumbnail = "")
         {
             await context.DeferResponseAsync();
 

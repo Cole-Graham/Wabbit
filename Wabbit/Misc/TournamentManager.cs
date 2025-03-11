@@ -1,11 +1,13 @@
-using DSharpPlus.Entities;
-using Wabbit.Models;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using Wabbit.Models;
+using DSharpPlus;
+using DSharpPlus.Entities;
 using MatchType = Wabbit.Models.MatchType;
 using Wabbit.Services;
 using Wabbit.Data;
@@ -471,8 +473,8 @@ namespace Wabbit.Misc
             // Save to file
             SaveTournamentsToFile();
 
-            // Save tournament state
-            SaveTournamentState();
+            // Save tournament data (fire and forget)
+            _ = SaveTournamentState();
 
             Console.WriteLine($"Created tournament '{name}' with {players.Count} players");
 
@@ -794,8 +796,8 @@ namespace Wabbit.Misc
             // Save tournaments to file
             SaveTournamentsToFile();
 
-            // Save tournament state to preserve deck codes and match results
-            SaveTournamentState();
+            // Save tournament data (fire and forget)
+            _ = SaveTournamentState();
         }
 
         private void CheckGroupCompletion(Tournament.Group group)
@@ -1364,7 +1366,7 @@ namespace Wabbit.Misc
             Console.WriteLine("Finished loading all participants.");
         }
 
-        public void SaveTournamentState()
+        public async Task SaveTournamentState(DiscordClient client = null)
         {
             try
             {
@@ -1387,6 +1389,27 @@ namespace Wabbit.Misc
                 File.WriteAllText(_tournamentStateFilePath, json);
 
                 Console.WriteLine($"Saved tournament state with {state.Tournaments.Count} tournaments and {state.ActiveRounds.Count} active rounds");
+
+                // If client is provided, update the standings for all active tournaments
+                if (client != null && state.Tournaments.Count > 0)
+                {
+                    foreach (var tournament in state.Tournaments)
+                    {
+                        // Only update if the tournament has an announcement channel
+                        if (tournament.AnnouncementChannel != null)
+                        {
+                            try
+                            {
+                                // Generate standings image and post to the configured channel
+                                await TournamentVisualization.GenerateStandingsImage(tournament, client);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Error updating standings for tournament {tournament.Name}: {ex.Message}");
+                            }
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -1401,7 +1424,7 @@ namespace Wabbit.Misc
                 if (!File.Exists(_tournamentStateFilePath))
                 {
                     Console.WriteLine("Tournament state file does not exist, creating a new one");
-                    SaveTournamentState();
+                    _ = SaveTournamentState();
                     return;
                 }
 

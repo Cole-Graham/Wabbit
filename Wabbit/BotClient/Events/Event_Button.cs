@@ -279,7 +279,7 @@ namespace Wabbit.BotClient.Events
                                 string currentMapName = round.Maps[round.Cycle - 1];
 
                                 // Save tournament state to record the played map
-                                _tournamentManager.SaveTournamentState();
+                                await _tournamentManager.SaveTournamentState(sender);
                                 break;
 
                             case "map_ban_dropdown":
@@ -334,7 +334,7 @@ namespace Wabbit.BotClient.Events
                                 }
 
                                 // Save tournament state
-                                _tournamentManager.SaveTournamentState();
+                                await _tournamentManager.SaveTournamentState(sender);
                                 break;
                         }
                     }

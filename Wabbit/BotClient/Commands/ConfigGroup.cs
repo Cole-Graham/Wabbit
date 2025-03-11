@@ -138,6 +138,42 @@ namespace Wabbit.BotClient.Commands
             await context.EditResponseAsync($"{channel.Mention} has been set as the tournament signup channel.");
         }
 
+        [Command("set_standings_channel")]
+        [Description("Set the tournament standings channel")]
+        public async Task SetStandingsChannel(
+            CommandContext context,
+            [Description("Text channel to set as tournament standings channel")] DiscordChannel channel)
+        {
+            await context.DeferResponseAsync();
+
+            // Check permissions
+            if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageGuild))
+            {
+                await context.EditResponseAsync("You don't have permission to configure the bot.");
+                return;
+            }
+
+            // Get the server config, or create if none exists
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
+
+            // Update the standings channel
+            serverConfig.StandingsChannelId = channel.Id;
+
+            // Save the config
+            await ConfigManager.SaveConfig();
+
+            // Post a confirmation in the standings channel
+            var embed = new DiscordEmbedBuilder()
+                .WithTitle("📊 Tournament Standings Channel")
+                .WithDescription("This channel has been designated for tournament standings visualizations.")
+                .WithColor(DiscordColor.Green)
+                .WithFooter("Standings will be posted and updated here automatically");
+
+            await channel.SendMessageAsync(embed);
+
+            await context.EditResponseAsync($"{channel.Mention} has been set as the tournament standings channel.");
+        }
+
         private BotConfig.ServerConfig GetOrCreateServerConfig(ulong guildId)
         {
             var serverConfig = ConfigManager.Config.Servers.FirstOrDefault(s => s.ServerId == guildId);

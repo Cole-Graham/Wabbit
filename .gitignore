@@ -6,7 +6,7 @@
 # Config files
 ConfigFile.json
 signups.json
-tournamentState.json
+tournament_state.json
 tournaments.json
 .env
 

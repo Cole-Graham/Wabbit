@@ -64,7 +64,7 @@ namespace Wabbit.BotClient.Events
                     round.Messages.Add(log);
 
                     // Save state after regular round deck submission
-                    _tournamentManager.SaveTournamentState();
+                    await _tournamentManager.SaveTournamentState(sender);
 
                     if (!String.IsNullOrEmpty(round.Deck1) && !String.IsNullOrEmpty(round.Deck2))
                     {
@@ -242,7 +242,7 @@ namespace Wabbit.BotClient.Events
                 tourneyRound.MsgToDel.Add(await sender.SendMessageAsync(tChannel, response));
 
                 // Save tournament state immediately after deck submission
-                _tournamentManager.SaveTournamentState();
+                await _tournamentManager.SaveTournamentState(sender);
 
                 if (teams is not null && teams.All(t => t is not null && t.Participants is not null &&
                     t.Participants.All(p => p is not null && !string.IsNullOrEmpty(p.Deck))))
@@ -301,7 +301,7 @@ namespace Wabbit.BotClient.Events
                     }
 
                     // Save tournament state
-                    _tournamentManager.SaveTournamentState();
+                    await _tournamentManager.SaveTournamentState(sender);
 
                     // Rest of the existing code...
                 }
@@ -312,7 +312,7 @@ namespace Wabbit.BotClient.Events
             }
 
             // Save state after deck submission
-            _tournamentManager.SaveTournamentState();
+            await _tournamentManager.SaveTournamentState(sender);
         }
 
         private async Task HandleTournamentCreateModal(DiscordClient sender, ModalSubmittedEventArgs modal)
@@ -380,7 +380,7 @@ namespace Wabbit.BotClient.Events
                 _roundsHolder.Tournaments.Add(tournament);
 
                 // Generate and send standings image
-                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
 
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"🏆 Tournament Created: {tournament.Name}")

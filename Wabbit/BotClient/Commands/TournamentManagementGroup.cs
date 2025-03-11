@@ -230,8 +230,8 @@ namespace Wabbit.BotClient.Commands
 
             try
             {
-                // Generate the standings image
-                string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+                // Generate the standings image and post it to the standings channel if configured
+                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, context.Client);
 
                 // Send the image with the tournament standings
                 var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
@@ -890,6 +890,47 @@ namespace Wabbit.BotClient.Commands
                     await SafeResponse(context, debug, null, true);
                 }
             }, "Failed to delete tournament/signup");
+        }
+
+        [Command("set_standings_channel")]
+        [Description("Set the channel where tournament standings will be displayed")]
+        public async Task SetStandingsChannel(
+            CommandContext context,
+            [Description("Channel to use for standings")] DiscordChannel channel)
+        {
+            await SafeExecute(context, async () =>
+            {
+                if (context.Guild == null)
+                {
+                    await SafeResponse(context, "This command must be used in a server.", null, true, autoDeleteSeconds);
+                    return;
+                }
+
+                // Get the server config
+                var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == context.Guild.Id);
+                if (server == null)
+                {
+                    await SafeResponse(context, "Server configuration not found.", null, true, autoDeleteSeconds);
+                    return;
+                }
+
+                // Update the standings channel
+                server.StandingsChannelId = channel.Id;
+                ConfigManager.SaveConfig();
+
+                await SafeResponse(context,
+                    $"Tournament standings channel has been set to {channel.Mention}. Standings visualizations will be posted here.",
+                    null, true, autoDeleteSeconds);
+
+                // Post a confirmation in the standings channel
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle("📊 Tournament Standings Channel")
+                    .WithDescription("This channel has been designated for tournament standings visualizations.")
+                    .WithColor(DiscordColor.Green)
+                    .WithFooter("Standings will be posted and updated here automatically");
+
+                await channel.SendMessageAsync(embed);
+            }, "Failed to set standings channel");
         }
 
         [Command("resume")]

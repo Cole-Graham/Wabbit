@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Wabbit.Models;
+using Wabbit.BotClient.Config;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using MatchType = Wabbit.Models.MatchType;
 
@@ -32,9 +34,10 @@ namespace Wabbit.Misc
         private const int PlayoffsSpacing = 50;
 
         /// <summary>
-        /// Generates a standings image for a tournament
+        /// Generates a standings image for a tournament and sends it to the configured standings channel if available
         /// </summary>
-        public static string GenerateStandingsImage(Tournament tournament)
+        /// <returns>Path to the generated image file</returns>
+        public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient client = null)
         {
             // Calculate sizes
             int width = 900; // Increase width to accommodate standings
@@ -71,8 +74,50 @@ namespace Wabbit.Misc
             string fileName = $"Images/tournament_{DateTime.Now:yyyyMMddHHmmss}.png";
             using var image = SKImage.FromBitmap(bitmap);
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+
+            // Create directory if it doesn't exist
+            Directory.CreateDirectory("Images");
+
             using var stream = File.OpenWrite(fileName);
             data.SaveTo(stream);
+
+            // If a client is provided and we have a configured standings channel, post the image there
+            if (client != null && tournament.AnnouncementChannel?.Guild != null)
+            {
+                try
+                {
+                    // Find the standings channel in the server config
+                    var serverId = tournament.AnnouncementChannel.Guild.Id;
+                    var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == serverId);
+
+                    if (server != null && server.StandingsChannelId.HasValue)
+                    {
+                        // Get the standings channel
+                        var standingsChannel = await client.GetChannelAsync(server.StandingsChannelId.Value);
+                        if (standingsChannel != null)
+                        {
+                            // Create the embed
+                            var embed = new DiscordEmbedBuilder()
+                                .WithTitle($"🏆 Tournament Standings: {tournament.Name}")
+                                .WithDescription($"Current standings as of {DateTime.Now}")
+                                .WithColor(DiscordColor.Gold)
+                                .WithFooter("Tournament Standings");
+
+                            // Send the image to the channel
+                            using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+                            {
+                                await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
+                                    .AddEmbed(embed)
+                                    .AddFile(Path.GetFileName(fileName), fileStream));
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error posting standings to channel: {ex.Message}");
+                }
+            }
 
             return fileName;
         }
