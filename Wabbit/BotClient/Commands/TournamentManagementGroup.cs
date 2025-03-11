@@ -654,10 +654,25 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Add the player to the signup
+                // Create a new list initialized with the existing participants
                 var newParticipantsList = new List<DiscordMember>(signup.Participants);
+
+                // Log the initial state of the list
+                Console.WriteLine($"Initial participants list after initialization contains {newParticipantsList.Count} players:");
+                foreach (var p in newParticipantsList)
+                {
+                    Console.WriteLine($"  - {p.Username} (ID: {p.Id})");
+                }
 
                 // Add the new player
                 newParticipantsList.Add(player);
+
+                // Log the final state after adding new player
+                Console.WriteLine($"Final participants list contains {newParticipantsList.Count} players:");
+                foreach (var p in newParticipantsList)
+                {
+                    Console.WriteLine($"  - {p.Username} (ID: {p.Id})");
+                }
 
                 // Replace the participants list in the signup
                 signup.Participants = newParticipantsList;
