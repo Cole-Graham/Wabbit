@@ -768,7 +768,7 @@ namespace Wabbit.BotClient.Commands
                 .WithColor(new DiscordColor(75, 181, 67))
                 .AddField("Format", signup.Format.ToString(), true)
                 .AddField("Status", signup.IsOpen ? "Open" : "Closed", true)
-                .AddField("Created By", signup.CreatedBy?.Username ?? "Unknown", true)
+                .AddField("Created By", signup.CreatedBy?.Username ?? signup.CreatorUsername ?? "Unknown", true)
                 .WithTimestamp(signup.CreatedAt);
 
             if (signup.ScheduledStartTime.HasValue)

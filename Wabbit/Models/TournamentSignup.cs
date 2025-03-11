@@ -14,6 +14,14 @@ namespace Wabbit.Models
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
         public DateTime? ScheduledStartTime { get; set; }
         public DiscordUser CreatedBy { get; set; } = null!;
+
+        // Store plain properties for serialization
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public ulong CreatorId { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public string CreatorUsername { get; set; } = string.Empty;
+
         public ulong SignupChannelId { get; set; }
         public ulong MessageId { get; set; }
 

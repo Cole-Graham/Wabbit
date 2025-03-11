@@ -93,15 +93,9 @@ namespace Wabbit.Misc
                 {
                     string json = File.ReadAllText(_signupsFilePath);
 
-                    // Try to load signups, handling possibility of different formats
                     try
                     {
-                        var options = new JsonSerializerOptions
-                        {
-                            ReferenceHandler = ReferenceHandler.Preserve
-                        };
-
-                        // Try to deserialize as anonymous type first (new format)
+                        // Parse the JSON document
                         using JsonDocument doc = JsonDocument.Parse(json);
 
                         if (doc.RootElement.ValueKind == JsonValueKind.Array)
@@ -110,83 +104,92 @@ namespace Wabbit.Misc
 
                             foreach (JsonElement element in doc.RootElement.EnumerateArray())
                             {
-                                var signup = new TournamentSignup
+                                try
                                 {
-                                    Name = element.GetProperty("Name").GetString() ?? "",
-                                    IsOpen = element.TryGetProperty("IsOpen", out var isOpen) && isOpen.GetBoolean(),
-                                    Format = element.TryGetProperty("Format", out var format) ?
-                                        Enum.Parse<TournamentFormat>(format.GetString() ?? "GroupStageWithPlayoffs") :
-                                        TournamentFormat.GroupStageWithPlayoffs
-                                };
-
-                                if (element.TryGetProperty("CreatedAt", out var createdAt))
-                                {
-                                    signup.CreatedAt = createdAt.GetDateTime();
-                                }
-
-                                if (element.TryGetProperty("ScheduledStartTime", out var startTime) && startTime.ValueKind != JsonValueKind.Null)
-                                {
-                                    signup.ScheduledStartTime = startTime.GetDateTime();
-                                }
-
-                                if (element.TryGetProperty("SignupChannelId", out var channelId))
-                                {
-                                    signup.SignupChannelId = channelId.GetUInt64();
-                                }
-
-                                if (element.TryGetProperty("MessageId", out var messageId))
-                                {
-                                    signup.MessageId = messageId.GetUInt64();
-                                }
-
-                                if (element.TryGetProperty("Participants", out var participantsElement) &&
-                                    participantsElement.ValueKind == JsonValueKind.Object &&
-                                    participantsElement.TryGetProperty("$values", out var participantsArray))
-                                {
-                                    // Create a list to store participant info until we can convert them to DiscordMembers
-                                    var participantInfos = new List<(ulong Id, string Username)>();
-
-                                    foreach (var participant in participantsArray.EnumerateArray())
+                                    var signup = new TournamentSignup
                                     {
-                                        if (participant.TryGetProperty("Id", out var idElement) &&
-                                            participant.TryGetProperty("Username", out var usernameElement))
-                                        {
-                                            participantInfos.Add((idElement.GetUInt64(), usernameElement.GetString() ?? "Unknown"));
-                                        }
+                                        Name = element.GetProperty("Name").GetString() ?? "",
+                                        IsOpen = element.TryGetProperty("IsOpen", out var isOpen) && isOpen.GetBoolean(),
+                                        Format = element.TryGetProperty("Format", out var format) ?
+                                            Enum.Parse<TournamentFormat>(format.GetString() ?? "GroupStageWithPlayoffs") :
+                                            TournamentFormat.GroupStageWithPlayoffs
+                                    };
+
+                                    if (element.TryGetProperty("CreatedAt", out var createdAt))
+                                    {
+                                        signup.CreatedAt = createdAt.GetDateTime();
                                     }
 
-                                    // Store the participant info for later conversion
-                                    signup.ParticipantInfo = participantInfos;
+                                    if (element.TryGetProperty("ScheduledStartTime", out var startTime) && startTime.ValueKind != JsonValueKind.Null)
+                                    {
+                                        signup.ScheduledStartTime = startTime.GetDateTime();
+                                    }
+
+                                    if (element.TryGetProperty("SignupChannelId", out var channelId))
+                                    {
+                                        signup.SignupChannelId = channelId.GetUInt64();
+                                    }
+
+                                    if (element.TryGetProperty("MessageId", out var messageId))
+                                    {
+                                        signup.MessageId = messageId.GetUInt64();
+                                    }
+
+                                    if (element.TryGetProperty("CreatedById", out var createdById) &&
+                                        element.TryGetProperty("CreatedByUsername", out var createdByUsername))
+                                    {
+                                        // Just store the IDs for later reference
+                                        ulong id = createdById.GetUInt64();
+                                        string username = createdByUsername.GetString() ?? "Unknown";
+
+                                        // Store in the ParticipantInfo for reference
+                                        signup.CreatorId = id;
+                                        signup.CreatorUsername = username;
+                                    }
+
+                                    // Handle participants - use normal arrays now
+                                    if (element.TryGetProperty("Participants", out var participantsElement) &&
+                                        participantsElement.ValueKind == JsonValueKind.Array)
+                                    {
+                                        // Create a list to store participant info until we can convert them to DiscordMembers
+                                        var participantInfos = new List<(ulong Id, string Username)>();
+
+                                        foreach (var participant in participantsElement.EnumerateArray())
+                                        {
+                                            if (participant.TryGetProperty("Id", out var idElement) &&
+                                                participant.TryGetProperty("Username", out var usernameElement))
+                                            {
+                                                participantInfos.Add((idElement.GetUInt64(), usernameElement.GetString() ?? "Unknown"));
+                                            }
+                                        }
+
+                                        // Store the participant info for later conversion
+                                        signup.ParticipantInfo = participantInfos;
+                                        Console.WriteLine($"Loaded {participantInfos.Count} participant infos for signup '{signup.Name}'");
+                                    }
+
+                                    signups.Add(signup);
                                 }
-
-                                // Participants will need to be reloaded when accessed
-
-                                signups.Add(signup);
+                                catch (Exception signupEx)
+                                {
+                                    Console.WriteLine($"Error parsing signup: {signupEx.Message}");
+                                }
                             }
 
-                            Console.WriteLine($"Loaded {signups.Count} signups from file (simplified format)");
+                            Console.WriteLine($"Loaded {signups.Count} signups from file");
                             _ongoingRounds.TournamentSignups = signups;
-                        }
-                        else
-                        {
-                            // Try original format as fallback
-                            var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(json, options);
-                            if (signups != null)
-                            {
-                                Console.WriteLine($"Loaded {signups.Count} signups from file (original format)");
-                                _ongoingRounds.TournamentSignups = signups;
-                            }
                         }
                     }
                     catch (Exception parseEx)
                     {
                         Console.WriteLine($"Error parsing signups file: {parseEx.Message}");
-                        throw; // Rethrow to outer handler
+                        throw;
                     }
                 }
                 else
                 {
-                    Console.WriteLine("Signups file does not exist, creating a new one");
+                    Console.WriteLine("No signups file found, creating new empty list");
+                    _ongoingRounds.TournamentSignups = new List<TournamentSignup>();
                     SaveSignupsToFile();
                 }
             }
@@ -228,14 +231,15 @@ namespace Wabbit.Misc
                 var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    ReferenceHandler = ReferenceHandler.Preserve,
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 };
 
-                // Create a copy with simplified data to avoid serialization issues
-                var signupsToSave = _ongoingRounds.TournamentSignups.Select(signup =>
+                // Create a list to store simplified signup objects
+                var signupsToSave = new List<object>();
+
+                foreach (var signup in _ongoingRounds.TournamentSignups)
                 {
-                    // Create a list of all participants for this signup
+                    // Create a list of simplified participant data
                     var participantsList = signup.Participants.Select(p => new
                     {
                         Id = p.Id,
@@ -250,7 +254,8 @@ namespace Wabbit.Misc
                         Console.WriteLine($"  - Participant: {p.Username} (ID: {p.Id})");
                     }
 
-                    return new
+                    // Create a simplified object for serialization
+                    var signupData = new
                     {
                         signup.Name,
                         signup.IsOpen,
@@ -259,12 +264,18 @@ namespace Wabbit.Misc
                         signup.ScheduledStartTime,
                         signup.SignupChannelId,
                         signup.MessageId,
-                        CreatedById = signup.CreatedBy?.Id ?? 0,
-                        CreatedByUsername = signup.CreatedBy?.Username ?? "Unknown",
+                        CreatedById = signup.CreatedBy?.Id ?? signup.CreatorId,
+                        CreatedByUsername = signup.CreatedBy?.Username ?? signup.CreatorUsername,
                         Participants = participantsList
                     };
-                }).ToList();
 
+                    signupsToSave.Add(signupData);
+
+                    // Update the participant info for when we load
+                    signup.ParticipantInfo = participantsList.Select(p => (p.Id, p.Username)).ToList();
+                }
+
+                // Serialize the list directly
                 string json = JsonSerializer.Serialize(signupsToSave, options);
                 File.WriteAllText(_signupsFilePath, json);
                 Console.WriteLine($"Saved {_ongoingRounds.TournamentSignups.Count} signups to file");
@@ -1045,6 +1056,8 @@ namespace Wabbit.Misc
                 Format = format,
                 CreatedAt = DateTime.Now,
                 CreatedBy = creator,
+                CreatorId = creator?.Id ?? 0,
+                CreatorUsername = creator?.Username ?? "Unknown",
                 SignupChannelId = signupChannelId,
                 ScheduledStartTime = scheduledStartTime,
                 IsOpen = true
@@ -1085,7 +1098,18 @@ namespace Wabbit.Misc
 
         public void UpdateSignup(TournamentSignup signup)
         {
-            // Just save the current state of signups
+            Console.WriteLine($"Updating signup '{signup.Name}' with {signup.Participants.Count} participants");
+
+            // Update the ParticipantInfo with the current state of Participants
+            signup.ParticipantInfo = signup.Participants.Select(p => (p.Id, p.Username)).ToList();
+
+            // Log the updated participant info
+            foreach (var (id, username) in signup.ParticipantInfo)
+            {
+                Console.WriteLine($"  - Updated participant info: {username} (ID: {id})");
+            }
+
+            // Save the current state of signups
             SaveSignupsToFile();
         }
 
@@ -1102,15 +1126,23 @@ namespace Wabbit.Misc
             // Clear existing participants to avoid duplicates
             signup.Participants.Clear();
 
-            if (signup.ParticipantInfo.Count > 0)
+            if (signup.ParticipantInfo != null && signup.ParticipantInfo.Count > 0)
             {
                 Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
 
                 foreach (var (id, username) in signup.ParticipantInfo)
                 {
+                    Console.WriteLine($"Loading participant {username} (ID: {id}) for signup '{signup.Name}'");
+
                     try
                     {
                         // Try to get the guild from the signup channel
+                        if (signup.SignupChannelId == 0)
+                        {
+                            Console.WriteLine($"Signup '{signup.Name}' has no channel ID, cannot load participants");
+                            continue;
+                        }
+
                         var channel = await client.GetChannelAsync(signup.SignupChannelId);
                         if (channel?.Guild is not null)
                         {
@@ -1124,12 +1156,12 @@ namespace Wabbit.Misc
                                 }
                                 else
                                 {
-                                    Console.WriteLine($"Member {username} (ID: {id}) not found in guild");
+                                    Console.WriteLine($"Member {username} (ID: {id}) not found in guild for signup '{signup.Name}'");
                                 }
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Could not load member {username} (ID: {id}): {ex.Message}");
+                                Console.WriteLine($"Could not load member {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
                             }
                         }
                         else
@@ -1139,19 +1171,19 @@ namespace Wabbit.Misc
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error loading participant {username} (ID: {id}): {ex.Message}");
+                        Console.WriteLine($"Error loading participant {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
                     }
                 }
 
                 Console.WriteLine($"Finished loading participants for '{signup.Name}'. Loaded {signup.Participants.Count} of {signup.ParticipantInfo.Count} participants.");
-
-                // Save the updated participants
-                UpdateSignup(signup);
             }
             else
             {
                 Console.WriteLine($"No participant info found for signup '{signup.Name}'");
             }
+
+            // Always update the signup to save any changes
+            UpdateSignup(signup);
         }
 
         // Add this method after LoadSignupsFromFile
@@ -1188,7 +1220,6 @@ namespace Wabbit.Misc
                 var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    ReferenceHandler = ReferenceHandler.Preserve,
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 };
 
@@ -1218,24 +1249,40 @@ namespace Wabbit.Misc
 
                 var options = new JsonSerializerOptions
                 {
-                    ReferenceHandler = ReferenceHandler.Preserve
+                    WriteIndented = true,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 };
 
-                var state = JsonSerializer.Deserialize<TournamentState>(json, options);
-
-                if (state != null)
+                try
                 {
-                    _ongoingRounds.Tournaments = state.Tournaments;
-                    _ongoingRounds.TourneyRounds = ConvertStateToRounds(state.ActiveRounds);
+                    var state = JsonSerializer.Deserialize<TournamentState>(json, options);
 
-                    Console.WriteLine($"Loaded tournament state with {state.Tournaments.Count} tournaments and {state.ActiveRounds.Count} active rounds");
+                    if (state != null)
+                    {
+                        _ongoingRounds.Tournaments = state.Tournaments ?? new List<Tournament>();
+                        _ongoingRounds.TourneyRounds = ConvertStateToRounds(state.ActiveRounds ?? new List<ActiveRound>());
+
+                        Console.WriteLine($"Loaded tournament state with {state.Tournaments?.Count ?? 0} tournaments and {state.ActiveRounds?.Count ?? 0} active rounds");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Deserialized tournament state is null");
+                        _ongoingRounds.Tournaments = new List<Tournament>();
+                        _ongoingRounds.TourneyRounds = new List<Round>();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error deserializing tournament state: {ex.Message}");
+                    _ongoingRounds.Tournaments = new List<Tournament>();
+                    _ongoingRounds.TourneyRounds = new List<Round>();
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error loading tournament state: {ex.Message}");
-                // If we can't load, create a new empty state
-                SaveTournamentState();
+                _ongoingRounds.Tournaments = new List<Tournament>();
+                _ongoingRounds.TourneyRounds = new List<Round>();
             }
         }
 
