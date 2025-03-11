@@ -5,6 +5,9 @@
 
 # Config files
 ConfigFile.json
+signups.json
+tournamentState.json
+tournaments.json
 .env
 
 # terminal output

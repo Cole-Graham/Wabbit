@@ -408,9 +408,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup
-                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+                // Find the signup using the TournamentManager
+                var signup = _tournamentManager.GetSignup(tournamentName);
 
                 if (signup == null)
                 {
@@ -432,7 +431,19 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Add the user to the signup
-                signup.Participants.Add((DiscordMember)context.User);
+                var newParticipantsList = new List<DiscordMember>(signup.Participants);
+
+                // Add the new player
+                newParticipantsList.Add((DiscordMember)context.User);
+
+                // Replace the participants list in the signup
+                signup.Participants = newParticipantsList;
+
+                Console.WriteLine($"User {context.User.Username} (ID: {context.User.Id}) has signed up for tournament '{tournamentName}'");
+                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
+
+                // Save the updated signup 
+                _tournamentManager.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -449,9 +460,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup
-                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+                // Find the signup using the TournamentManager
+                var signup = _tournamentManager.GetSignup(tournamentName);
 
                 if (signup == null)
                 {
@@ -474,7 +484,25 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Remove the user from the signup
-                signup.Participants.Remove(participant);
+                var newParticipantsList = new List<DiscordMember>();
+
+                // Add all participants except the one to be removed
+                foreach (var p in signup.Participants)
+                {
+                    if (p.Id != context.User.Id)
+                    {
+                        newParticipantsList.Add(p);
+                    }
+                }
+
+                // Replace the participants list in the signup
+                signup.Participants = newParticipantsList;
+
+                Console.WriteLine($"User {context.User.Username} (ID: {context.User.Id}) has canceled signup for tournament '{tournamentName}'");
+                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
+
+                // Save the updated signup
+                _tournamentManager.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -603,9 +631,8 @@ namespace Wabbit.BotClient.Commands
                 // Log player information for debugging
                 Console.WriteLine($"Adding player to signup '{tournamentName}': {player.Username} (ID: {player.Id})");
 
-                // Find the signup
-                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+                // Find the signup using the TournamentManager to ensure we get the right reference
+                var signup = _tournamentManager.GetSignup(tournamentName);
 
                 if (signup == null)
                 {
@@ -627,8 +654,16 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Add the player to the signup
-                signup.Participants.Add(player);
+                var newParticipantsList = new List<DiscordMember>(signup.Participants);
+
+                // Add the new player
+                newParticipantsList.Add(player);
+
+                // Replace the participants list in the signup
+                signup.Participants = newParticipantsList;
+
                 Console.WriteLine($"Successfully added {player.Username} (ID: {player.Id}) to signup '{tournamentName}'");
+                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
 
                 // Save the updated signup
                 _tournamentManager.UpdateSignup(signup);
@@ -650,9 +685,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup
-                var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                    s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
+                // Find the signup using the TournamentManager
+                var signup = _tournamentManager.GetSignup(tournamentName);
 
                 if (signup == null)
                 {
@@ -669,7 +703,22 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Remove the player from the signup
-                signup.Participants.Remove(existingParticipant);
+                var newParticipantsList = new List<DiscordMember>();
+
+                // Add all participants except the one to be removed
+                foreach (var participant in signup.Participants)
+                {
+                    if (participant.Id != player.Id)
+                    {
+                        newParticipantsList.Add(participant);
+                    }
+                }
+
+                // Replace the participants list in the signup
+                signup.Participants = newParticipantsList;
+
+                Console.WriteLine($"Successfully removed {player.Username} (ID: {player.Id}) from signup '{tournamentName}'");
+                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
 
                 // Save the updated signup
                 _tournamentManager.UpdateSignup(signup);
