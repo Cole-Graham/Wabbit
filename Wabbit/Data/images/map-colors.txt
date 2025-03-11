@@ -9,3 +9,13 @@ deployment layer: additive (dark maps) or normal blend mode, opacity 75/255
 
 command points: bombardier font, size 108, bold, white (drop shadow, 20 radius, 10 distance, 100% opacity, black)
 command zone outline: (224, 224, 224), size 5
+
+
+Brave
+Microsoft Edge
+Firefox
+Chrome
+Vivaldi
+Opera
+Arc
+Workona
