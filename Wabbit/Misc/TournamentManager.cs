@@ -378,6 +378,8 @@ namespace Wabbit.Misc
                     }).ToList();
 
                     Console.WriteLine($"Saving signup '{signup.Name}' with {participantsList.Count} participants");
+                    Console.WriteLine($"  - SignupChannelId: {signup.SignupChannelId}");
+                    Console.WriteLine($"  - MessageId: {signup.MessageId}");
 
                     // For debugging, log each participant
                     foreach (var p in participantsList)
@@ -1230,6 +1232,25 @@ namespace Wabbit.Misc
         public void UpdateSignup(TournamentSignup signup)
         {
             Console.WriteLine($"Updating signup '{signup.Name}' with {signup.Participants.Count} participants");
+            Console.WriteLine($"  - SignupChannelId: {signup.SignupChannelId}");
+            Console.WriteLine($"  - MessageId: {signup.MessageId}");
+
+            // Update the signup in the collection
+            var existingIndex = _ongoingRounds.TournamentSignups.FindIndex(s =>
+                s.Name.Equals(signup.Name, StringComparison.OrdinalIgnoreCase));
+
+            if (existingIndex >= 0)
+            {
+                // Replace the existing signup with the updated one
+                _ongoingRounds.TournamentSignups[existingIndex] = signup;
+                Console.WriteLine($"Updated existing signup '{signup.Name}' in collection at index {existingIndex}");
+            }
+            else
+            {
+                // Shouldn't happen, but just in case
+                Console.WriteLine($"WARNING: Signup '{signup.Name}' not found in collection, adding it");
+                _ongoingRounds.TournamentSignups.Add(signup);
+            }
 
             // Update the ParticipantInfo with the current state of Participants
             signup.ParticipantInfo = signup.Participants.Select(p => (p.Id, p.Username)).ToList();
@@ -1242,6 +1263,17 @@ namespace Wabbit.Misc
 
             // Save the current state of signups
             SaveSignupsToFile();
+
+            // Verify the signup was saved properly
+            var saved = GetSignup(signup.Name);
+            if (saved != null)
+            {
+                Console.WriteLine($"Verified saved signup '{saved.Name}' with MessageId: {saved.MessageId}");
+            }
+            else
+            {
+                Console.WriteLine($"WARNING: Could not verify saved signup '{signup.Name}'");
+            }
         }
 
         // Save both data files whenever there's a significant change

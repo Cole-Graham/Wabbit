@@ -370,10 +370,24 @@ namespace Wabbit.BotClient.Commands
                         );
 
                     var message = await signupChannel.SendMessageAsync(builder);
-                    signup.MessageId = message.Id;
 
-                    // Save updated MessageId
+                    // Store the message ID
+                    signup.MessageId = message.Id;
+                    Console.WriteLine($"Set MessageId to {message.Id} for signup '{name}'");
+
+                    // Save updated MessageId - this is critical for future updates
                     _tournamentManager.UpdateSignup(signup);
+
+                    // Verify the MessageId was saved
+                    var savedSignup = _tournamentManager.GetSignup(name);
+                    if (savedSignup == null || savedSignup.MessageId == 0)
+                    {
+                        Console.WriteLine($"WARNING: MessageId was not saved correctly for '{name}'. Current value: {savedSignup?.MessageId ?? 0}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Successfully saved MessageId {savedSignup.MessageId} for signup '{name}'");
+                    }
 
                     // Send a simple confirmation without repeating the tournament details
                     await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Check {signupChannel.Mention} for the signup form.");
