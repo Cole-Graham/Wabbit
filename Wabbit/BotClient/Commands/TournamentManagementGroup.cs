@@ -18,6 +18,7 @@ using DSharpPlus;
 using System.Reflection;
 using System.Dynamic;
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -25,13 +26,17 @@ namespace Wabbit.BotClient.Commands
     [Description("Commands for managing tournaments")]
     public class TournamentManagementGroup
     {
+        private const int autoDeleteSeconds = 30;
+
         private readonly TournamentManager _tournamentManager;
         private readonly OngoingRounds _ongoingRounds;
+        private readonly ILogger<TournamentManagementGroup> _logger;
 
-        public TournamentManagementGroup(OngoingRounds ongoingRounds)
+        public TournamentManagementGroup(OngoingRounds ongoingRounds, TournamentManager tournamentManager, ILogger<TournamentManagementGroup> logger)
         {
             _ongoingRounds = ongoingRounds;
-            _tournamentManager = new TournamentManager(ongoingRounds);
+            _tournamentManager = tournamentManager;
+            _logger = logger;
         }
 
         [Command("create")]
@@ -87,22 +92,44 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Signup name")] string signupName)
         {
-            // Defer the response immediately to prevent timeout
-            await context.DeferResponseAsync();
-
             await SafeExecute(context, async () =>
             {
-                // Find the signup
-                var signup = _tournamentManager.GetSignup(signupName);
+                await context.DeferResponseAsync();
+
+                // Get the signup
+                var client = context.Client;
+                TournamentSignup? signup = null;
+
+                try
+                {
+                    // Use GetSignupWithParticipants instead of GetSignup to load participants
+                    signup = await _tournamentManager.GetSignupWithParticipants(signupName, client);
+                }
+                catch (Exception ex)
+                {
+                    await context.EditResponseAsync($"Error loading signup: {ex.Message}");
+                    return;
+                }
 
                 if (signup == null)
                 {
-                    // Try partial match
+                    // Try to find a signup with a similar name
                     var allSignups = _tournamentManager.GetAllSignups();
-                    signup = allSignups.FirstOrDefault(s =>
-                        s.Name.Contains(signupName, StringComparison.OrdinalIgnoreCase));
+                    var similarSignup = allSignups.FirstOrDefault(s => s.Name.Equals(signupName, StringComparison.OrdinalIgnoreCase));
 
-                    if (signup == null)
+                    if (similarSignup != null)
+                    {
+                        try
+                        {
+                            signup = await _tournamentManager.GetSignupWithParticipants(similarSignup.Name, client);
+                        }
+                        catch (Exception ex)
+                        {
+                            await context.EditResponseAsync($"Error loading signup: {ex.Message}");
+                            return;
+                        }
+                    }
+                    else
                     {
                         try
                         {
@@ -117,15 +144,25 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
-                // Check if a tournament with this name already exists
-                if (_tournamentManager.GetTournament(signup.Name) != null)
+                // Check if a tournament with this name already exists (with null check)
+                if (signup?.Name != null && _tournamentManager.GetTournament(signup.Name) != null)
                 {
                     await context.EditResponseAsync($"A tournament with the name '{signup.Name}' already exists. Please delete it first or use a different name for the signup.");
                     return;
                 }
 
                 // Get the players who have signed up
-                var players = signup.Participants;
+                var players = signup?.Participants ?? new List<DiscordMember>();
+
+                // Ensure signup is not null before continuing with tournament creation
+                if (signup == null)
+                {
+                    await context.EditResponseAsync("Error: Signup could not be loaded properly.");
+                    return;
+                }
+
+                // Log number of participants for debugging
+                _logger.LogInformation($"Creating tournament from signup '{signup.Name}' with {players.Count} players");
 
                 // Check if we have enough players
                 if (players.Count < 4)
@@ -378,15 +415,15 @@ namespace Wabbit.BotClient.Commands
                     // Save updated MessageId - this is critical for future updates
                     _tournamentManager.UpdateSignup(signup);
 
-                    // Verify the MessageId was saved
+                    // Verify the MessageId was saved - this can be logged but doesn't need participants
                     var savedSignup = _tournamentManager.GetSignup(name);
                     if (savedSignup == null || savedSignup.MessageId == 0)
                     {
-                        Console.WriteLine($"WARNING: MessageId was not saved correctly for '{name}'. Current value: {savedSignup?.MessageId ?? 0}");
+                        _logger.LogWarning($"MessageId was not saved correctly for '{name}'. Current value: {savedSignup?.MessageId ?? 0}");
                     }
                     else
                     {
-                        Console.WriteLine($"Successfully saved MessageId {savedSignup.MessageId} for signup '{name}'");
+                        _logger.LogInformation($"Successfully saved MessageId {savedSignup.MessageId} for signup '{name}'");
                     }
 
                     // Send a simple confirmation without repeating the tournament details
@@ -519,15 +556,39 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                await context.DeferResponseAsync();
+
+                // Find the signup and ensure participants are loaded
+                var client = context.Client;
+                TournamentSignup? signup = null;
+
+                try
+                {
+                    signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, client);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Error loading signup: {ex.Message}");
+                }
 
                 if (signup == null)
                 {
                     // Try partial match
                     var allSignups = _tournamentManager.GetAllSignups();
-                    signup = allSignups.FirstOrDefault(s =>
+                    var similarSignup = allSignups.FirstOrDefault(s =>
                         s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                    if (similarSignup != null)
+                    {
+                        try
+                        {
+                            signup = await _tournamentManager.GetSignupWithParticipants(similarSignup.Name, client);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning($"Error loading signup with similar name: {ex.Message}");
+                        }
+                    }
 
                     if (signup == null)
                     {
@@ -562,15 +623,39 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                await context.DeferResponseAsync();
+
+                // Find the signup and ensure participants are loaded
+                var client = context.Client;
+                TournamentSignup? signup = null;
+
+                try
+                {
+                    signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, client);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Error loading signup: {ex.Message}");
+                }
 
                 if (signup == null)
                 {
                     // Try partial match
                     var allSignups = _tournamentManager.GetAllSignups();
-                    signup = allSignups.FirstOrDefault(s =>
+                    var similarSignup = allSignups.FirstOrDefault(s =>
                         s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
+
+                    if (similarSignup != null)
+                    {
+                        try
+                        {
+                            signup = await _tournamentManager.GetSignupWithParticipants(similarSignup.Name, client);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning($"Error loading signup with similar name: {ex.Message}");
+                        }
+                    }
 
                     if (signup == null)
                     {
