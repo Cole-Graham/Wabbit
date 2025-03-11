@@ -600,6 +600,9 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
+                // Log player information for debugging
+                Console.WriteLine($"Adding player to signup '{tournamentName}': {player.Username} (ID: {player.Id})");
+
                 // Find the signup
                 var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
                     s.Name.Equals(tournamentName, StringComparison.OrdinalIgnoreCase));
@@ -625,6 +628,10 @@ namespace Wabbit.BotClient.Commands
 
                 // Add the player to the signup
                 signup.Participants.Add(player);
+                Console.WriteLine($"Successfully added {player.Username} (ID: {player.Id}) to signup '{tournamentName}'");
+
+                // Save the updated signup
+                _tournamentManager.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -663,6 +670,9 @@ namespace Wabbit.BotClient.Commands
 
                 // Remove the player from the signup
                 signup.Participants.Remove(existingParticipant);
+
+                // Save the updated signup
+                _tournamentManager.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -796,14 +806,21 @@ namespace Wabbit.BotClient.Commands
             // Log the number of participants for debugging
             Console.WriteLine($"Creating embed for signup '{signup.Name}' with {signup.Participants.Count} participants");
 
-            if (signup.Participants.Count > 0)
+            if (signup.Participants != null && signup.Participants.Count > 0)
             {
                 // Create a list of participant usernames
                 var participantNames = new List<string>();
                 foreach (var participant in signup.Participants)
                 {
-                    participantNames.Add(participant.Username);
-                    Console.WriteLine($"  - Adding participant to embed: {participant.Username}");
+                    try
+                    {
+                        participantNames.Add($"{participantNames.Count + 1}. {participant.Username}");
+                        Console.WriteLine($"  - Adding participant to embed: {participant.Username} (ID: {participant.Id})");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error adding participant to embed: {ex.Message}");
+                    }
                 }
 
                 // Join the names with newlines
@@ -855,7 +872,7 @@ namespace Wabbit.BotClient.Commands
                     .WithDescription($"Format: {signup.Format}")
                     .WithColor(signup.IsOpen ? DiscordColor.Green : DiscordColor.Red)
                     .AddField("Status", signup.IsOpen ? "OPEN" : "CLOSED", true)
-                    .AddField("Creator", signup.CreatedBy?.Username ?? "Unknown", true);
+                    .AddField("Creator", signup.CreatedBy?.Username ?? signup.CreatorUsername, true);
 
                 if (signup.ScheduledStartTime.HasValue)
                 {
@@ -863,10 +880,26 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Add participants field
-                string participantsText = signup.Participants.Count > 0
-                    ? string.Join("\n", signup.Participants.Select((user, index) => $"{index + 1}. {user.Username}"))
-                    : "No players signed up yet";
-                embed.AddField($"Participants ({signup.Participants.Count})", participantsText);
+                Console.WriteLine($"Displaying {signup.Participants.Count} participants in embed for '{signup.Name}'");
+                string participantsText = "";
+
+                if (signup.Participants != null && signup.Participants.Count > 0)
+                {
+                    var participantsList = new List<string>();
+                    foreach (var participant in signup.Participants)
+                    {
+                        // Log each participant
+                        Console.WriteLine($"  - Participant: {participant.Username} (ID: {participant.Id})");
+                        participantsList.Add($"{participantsList.Count + 1}. {participant.Username}");
+                    }
+                    participantsText = string.Join("\n", participantsList);
+                }
+                else
+                {
+                    participantsText = "No players signed up yet";
+                }
+
+                embed.AddField($"Participants ({signup.Participants?.Count ?? 0})", participantsText);
 
                 // Create components based on signup status
                 var components = new List<DiscordComponent>();

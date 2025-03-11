@@ -686,9 +686,30 @@ namespace Wabbit.BotClient.Events
                 builder.AddField("Scheduled Start", formattedTime, false);
             }
 
-            if (signup.Participants.Count > 0)
+            // Log the number of participants for debugging
+            Console.WriteLine($"Creating embed for signup '{signup.Name}' with {signup.Participants.Count} participants");
+
+            if (signup.Participants != null && signup.Participants.Count > 0)
             {
-                string participants = string.Join("\n", signup.Participants.Select(p => p.Username));
+                // Create a list of participant usernames
+                var participantNames = new List<string>();
+                foreach (var participant in signup.Participants)
+                {
+                    try
+                    {
+                        participantNames.Add($"{participantNames.Count + 1}. {participant.Username}");
+                        Console.WriteLine($"  - Adding participant to embed: {participant.Username} (ID: {participant.Id})");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error adding participant to embed: {ex.Message}");
+                    }
+                }
+
+                // Join the names with newlines
+                string participants = string.Join("\n", participantNames);
+
+                // Add the field with all participants
                 builder.AddField($"Participants ({signup.Participants.Count})", participants, false);
             }
             else
