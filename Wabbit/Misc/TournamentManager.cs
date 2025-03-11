@@ -233,22 +233,36 @@ namespace Wabbit.Misc
                 };
 
                 // Create a copy with simplified data to avoid serialization issues
-                var signupsToSave = _ongoingRounds.TournamentSignups.Select(signup => new
+                var signupsToSave = _ongoingRounds.TournamentSignups.Select(signup =>
                 {
-                    signup.Name,
-                    signup.IsOpen,
-                    signup.CreatedAt,
-                    signup.Format,
-                    signup.ScheduledStartTime,
-                    signup.SignupChannelId,
-                    signup.MessageId,
-                    CreatedById = signup.CreatedBy?.Id ?? 0,
-                    CreatedByUsername = signup.CreatedBy?.Username ?? "Unknown",
-                    Participants = signup.Participants.Select(p => new
+                    // Create a list of all participants for this signup
+                    var participantsList = signup.Participants.Select(p => new
                     {
                         Id = p.Id,
                         Username = p.Username
-                    }).ToList()
+                    }).ToList();
+
+                    Console.WriteLine($"Saving signup '{signup.Name}' with {participantsList.Count} participants");
+
+                    // For debugging, log each participant
+                    foreach (var p in participantsList)
+                    {
+                        Console.WriteLine($"  - Participant: {p.Username} (ID: {p.Id})");
+                    }
+
+                    return new
+                    {
+                        signup.Name,
+                        signup.IsOpen,
+                        signup.CreatedAt,
+                        signup.Format,
+                        signup.ScheduledStartTime,
+                        signup.SignupChannelId,
+                        signup.MessageId,
+                        CreatedById = signup.CreatedBy?.Id ?? 0,
+                        CreatedByUsername = signup.CreatedBy?.Username ?? "Unknown",
+                        Participants = participantsList
+                    };
                 }).ToList();
 
                 string json = JsonSerializer.Serialize(signupsToSave, options);
@@ -1085,7 +1099,10 @@ namespace Wabbit.Misc
         // Add this method after GetSignup
         public async Task LoadParticipantsAsync(TournamentSignup signup, DSharpPlus.DiscordClient client)
         {
-            if (signup.ParticipantInfo.Count > 0 && signup.Participants.Count == 0)
+            // Clear existing participants to avoid duplicates
+            signup.Participants.Clear();
+
+            if (signup.ParticipantInfo.Count > 0)
             {
                 Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
 
@@ -1100,16 +1117,24 @@ namespace Wabbit.Misc
                             try
                             {
                                 var member = await channel.Guild.GetMemberAsync(id);
-                                if (member is not null && !signup.Participants.Any(p => p.Id == id))
+                                if (member is not null)
                                 {
                                     signup.Participants.Add(member);
                                     Console.WriteLine($"Added participant {username} (ID: {id}) to signup '{signup.Name}'");
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"Member {username} (ID: {id}) not found in guild");
                                 }
                             }
                             catch (Exception ex)
                             {
                                 Console.WriteLine($"Could not load member {username} (ID: {id}): {ex.Message}");
                             }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Could not find channel or guild for signup '{signup.Name}' (Channel ID: {signup.SignupChannelId})");
                         }
                     }
                     catch (Exception ex)
@@ -1118,8 +1143,14 @@ namespace Wabbit.Misc
                     }
                 }
 
+                Console.WriteLine($"Finished loading participants for '{signup.Name}'. Loaded {signup.Participants.Count} of {signup.ParticipantInfo.Count} participants.");
+
                 // Save the updated participants
                 UpdateSignup(signup);
+            }
+            else
+            {
+                Console.WriteLine($"No participant info found for signup '{signup.Name}'");
             }
         }
 

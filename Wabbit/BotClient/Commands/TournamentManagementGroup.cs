@@ -41,19 +41,40 @@ namespace Wabbit.BotClient.Commands
             [Description("Tournament name")] string name,
             [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format)
         {
+            // Defer the response immediately to prevent timeout
+            await context.DeferResponseAsync();
+
             await SafeExecute(context, async () =>
             {
                 // Check if a tournament with this name already exists
                 if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 {
-                    await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
+                    try
+                    {
+                        await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error responding to command: {ex.Message}");
+                        await context.Channel.SendMessageAsync($"A tournament with the name '{name}' already exists.");
+                    }
                     return;
                 }
 
                 // Inform user about next steps
-                await context.EditResponseAsync(
-                    $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
-                    $"For example: @Player1 @Player2 @Player3...");
+                try
+                {
+                    await context.EditResponseAsync(
+                        $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
+                        $"For example: @Player1 @Player2 @Player3...");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error responding to command: {ex.Message}");
+                    await context.Channel.SendMessageAsync(
+                        $"Tournament '{name}' creation started. Please @mention all players that should participate, separated by spaces. " +
+                        $"For example: @Player1 @Player2 @Player3...");
+                }
 
                 // Tournament creation will be handled by user mentioning players in follow-up message
                 // which will be processed in an event handler
@@ -66,6 +87,9 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Signup name")] string signupName)
         {
+            // Defer the response immediately to prevent timeout
+            await context.DeferResponseAsync();
+
             await SafeExecute(context, async () =>
             {
                 // Find the signup
@@ -80,7 +104,15 @@ namespace Wabbit.BotClient.Commands
 
                     if (signup == null)
                     {
-                        await context.EditResponseAsync($"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
+                        try
+                        {
+                            await context.EditResponseAsync($"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error responding to command: {ex.Message}");
+                            await context.Channel.SendMessageAsync($"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
+                        }
                         return;
                     }
                 }
@@ -182,6 +214,9 @@ namespace Wabbit.BotClient.Commands
         [Description("List all tournaments")]
         public async Task ListTournaments(CommandContext context)
         {
+            // Defer the response immediately to prevent timeout
+            await context.DeferResponseAsync();
+
             try
             {
                 // Get all tournaments from both sources
@@ -248,13 +283,29 @@ namespace Wabbit.BotClient.Commands
                     embed.AddField("No Tournaments", "There are no active tournaments or signups.");
                 }
 
-                // Send the embed
-                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                // Send the embed with proper error handling
+                try
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                }
+                catch (Exception responseEx)
+                {
+                    Console.WriteLine($"Error sending tournament list response: {responseEx.Message}");
+                    // Fallback to channel message if interaction response fails
+                    await context.Channel.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(embed));
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error listing tournaments: {ex.Message}\n{ex.StackTrace}");
-                await context.Channel.SendMessageAsync($"Error listing tournaments: {ex.Message}");
+                try
+                {
+                    await context.EditResponseAsync($"Error listing tournaments: {ex.Message}");
+                }
+                catch
+                {
+                    await context.Channel.SendMessageAsync($"Error listing tournaments: {ex.Message}");
+                }
             }
         }
 
@@ -728,9 +779,23 @@ namespace Wabbit.BotClient.Commands
                 builder.AddField("Scheduled Start", formattedTime, false);
             }
 
+            // Log the number of participants for debugging
+            Console.WriteLine($"Creating embed for signup '{signup.Name}' with {signup.Participants.Count} participants");
+
             if (signup.Participants.Count > 0)
             {
-                string participants = string.Join("\n", signup.Participants.Select(p => p.Username));
+                // Create a list of participant usernames
+                var participantNames = new List<string>();
+                foreach (var participant in signup.Participants)
+                {
+                    participantNames.Add(participant.Username);
+                    Console.WriteLine($"  - Adding participant to embed: {participant.Username}");
+                }
+
+                // Join the names with newlines
+                string participants = string.Join("\n", participantNames);
+
+                // Add the field with all participants
                 builder.AddField($"Participants ({signup.Participants.Count})", participants, false);
             }
             else
@@ -920,56 +985,30 @@ namespace Wabbit.BotClient.Commands
                     Console.WriteLine($"Failed to defer response: {deferEx.Message}. Continuing execution...");
                 }
 
-                // Wait a longer time to give Discord more time to process the defer
-                await Task.Delay(1000);  // Increased from 500ms
-
-                // Now execute the action
+                // Execute the action
                 await action();
-            }
-            catch (DSharpPlus.Exceptions.NotFoundException ex)
-            {
-                Console.WriteLine($"Discord API timeout: {ex.Message}\n{ex.StackTrace}");
-                try
-                {
-                    // Try to send a message to the channel directly
-                    await context.Channel.SendMessageAsync($"{errorPrefix}: The interaction timed out, but the command may have succeeded. Please check if the requested changes were applied.");
-                }
-                catch (Exception secondEx)
-                {
-                    Console.WriteLine($"Failed to send fallback message: {secondEx.Message}");
-                }
-            }
-            catch (DSharpPlus.Exceptions.BadRequestException ex)
-            {
-                Console.WriteLine($"Discord API bad request: {ex.Message}\n{ex.StackTrace}");
-                try
-                {
-                    // Try to send a message to the channel directly
-                    await context.Channel.SendMessageAsync($"{errorPrefix}: Discord rejected the request. This often happens when a command times out. Your command might still have worked.");
-                }
-                catch (Exception secondEx)
-                {
-                    Console.WriteLine($"Failed to send fallback message: {secondEx.Message}");
-                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Command error: {ex.Message}\n{ex.StackTrace}");
+                Console.WriteLine($"{errorPrefix}: {ex.Message}\n{ex.StackTrace}");
+
+                // Try to respond with the error message
                 try
                 {
-                    // Try to send a message directly to the channel first - most reliable
-                    await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
+                    await context.EditResponseAsync($"{errorPrefix}: {ex.Message}");
                 }
-                catch (Exception directEx)
+                catch (Exception responseEx)
                 {
-                    Console.WriteLine($"Failed to send direct channel message: {directEx.Message}");
+                    Console.WriteLine($"Failed to send error response via interaction: {responseEx.Message}");
+
+                    // Fallback to channel message if interaction response fails
                     try
                     {
-                        await SafeResponse(context, $"{errorPrefix}: {ex.Message}");
+                        await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
                     }
-                    catch (Exception responseEx)
+                    catch (Exception channelEx)
                     {
-                        Console.WriteLine($"Failed to send safe response: {responseEx.Message}");
+                        Console.WriteLine($"Failed to send error message to channel: {channelEx.Message}");
                     }
                 }
             }

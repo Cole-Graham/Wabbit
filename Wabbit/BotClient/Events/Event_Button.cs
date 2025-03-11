@@ -493,6 +493,11 @@ namespace Wabbit.BotClient.Events
 
                 // Add the user to the signup
                 signup.Participants.Add(member);
+                Console.WriteLine($"Added participant {member.Username} (ID: {member.Id}) to signup '{signup.Name}'");
+
+                // Save the updated signup
+                _tournamentManager.UpdateSignup(signup);
+                Console.WriteLine($"Saved signup '{signup.Name}' with {signup.Participants.Count} participants");
 
                 // Update the signup message
                 await UpdateSignupMessage(sender, signup);
@@ -584,6 +589,11 @@ namespace Wabbit.BotClient.Events
                 if (participant is not null)
                 {
                     signup.Participants.Remove(participant);
+                    Console.WriteLine($"Removed participant {participant.Username} (ID: {participant.Id}) from signup '{signup.Name}'");
+
+                    // Save the updated signup
+                    _tournamentManager.UpdateSignup(signup);
+                    Console.WriteLine($"Saved signup '{signup.Name}' with {signup.Participants.Count} participants");
 
                     // Update the signup message
                     await UpdateSignupMessage(sender, signup);
@@ -618,9 +628,9 @@ namespace Wabbit.BotClient.Events
             {
                 try
                 {
-                    // Load participants if needed
-                    await _tournamentManager.LoadParticipantsAsync(signup, sender);
+                    Console.WriteLine($"Updating signup message for '{signup.Name}' with {signup.Participants.Count} participants");
 
+                    // Get the channel and message
                     var channel = await sender.GetChannelAsync(signup.SignupChannelId);
                     var message = await channel.GetMessageAsync(signup.MessageId);
 
@@ -631,30 +641,29 @@ namespace Wabbit.BotClient.Events
                     var components = new List<DiscordComponent>();
                     if (signup.IsOpen)
                     {
-                        // Add signup/withdraw buttons
                         components.Add(new DiscordButtonComponent(
                             DiscordButtonStyle.Success,
-                            $"signup_{signup.Name.Replace(" ", "_")}",
+                            $"signup_{signup.Name}",
                             "Sign Up"
-                        ));
-                        components.Add(new DiscordButtonComponent(
-                            DiscordButtonStyle.Danger,
-                            $"withdraw_{signup.Name.Replace(" ", "_")}",
-                            "Withdraw"
                         ));
                     }
 
-                    // Recreate the message with the updated embed and buttons
+                    // Update the message
                     var builder = new DiscordMessageBuilder()
                         .AddEmbed(updatedEmbed)
                         .AddComponents(components);
 
                     await message.ModifyAsync(builder);
+                    Console.WriteLine($"Successfully updated signup message for '{signup.Name}'");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error updating signup message: {ex.Message}\n{ex.StackTrace}");
                 }
+            }
+            else
+            {
+                Console.WriteLine($"Cannot update signup message: Missing channel ID ({signup.SignupChannelId}) or message ID ({signup.MessageId})");
             }
         }
 
