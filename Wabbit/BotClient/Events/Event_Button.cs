@@ -429,8 +429,8 @@ namespace Wabbit.BotClient.Events
                 // Extract the tournament name from the button ID (format: signup_TournamentName)
                 string tournamentName = e.Id.Substring("signup_".Length);
 
-                // Find the signup using the TournamentManager
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Find the signup using the TournamentManager and ensure participants are loaded
+                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, sender);
 
                 if (signup == null)
                 {
@@ -579,8 +579,8 @@ namespace Wabbit.BotClient.Events
                     return;
                 }
 
-                // Find the signup
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Find the signup using the TournamentManager and ensure participants are loaded
+                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, sender);
 
                 if (signup == null)
                 {
@@ -743,8 +743,8 @@ namespace Wabbit.BotClient.Events
             // Extract tournament name from customId
             string tournamentName = e.Id.Substring("withdraw_".Length);
 
-            // Find the tournament
-            var signup = _tournamentManager.GetSignup(tournamentName);
+            // Find the tournament and ensure participants are loaded
+            var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, sender);
 
             if (signup == null)
             {

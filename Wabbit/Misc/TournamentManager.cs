@@ -1206,8 +1206,10 @@ namespace Wabbit.Misc
         // Methods for managing signups
         public TournamentSignup? GetSignup(string name)
         {
-            return _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
                 s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            return signup;
         }
 
         public List<TournamentSignup> GetAllSignups()
@@ -1634,6 +1636,24 @@ namespace Wabbit.Misc
                 .ToList() ?? new List<string>();
 
             return mapPool;
+        }
+
+        public async Task<TournamentSignup?> GetSignupWithParticipants(string name, DSharpPlus.DiscordClient client)
+        {
+            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
+                s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+            if (signup != null)
+            {
+                // Check if participants need to be loaded
+                if (signup.Participants.Count == 0 && signup.ParticipantInfo.Count > 0)
+                {
+                    Console.WriteLine($"Loading participants for signup '{name}'...");
+                    await LoadParticipantsAsync(signup, client);
+                }
+            }
+
+            return signup;
         }
     }
 }

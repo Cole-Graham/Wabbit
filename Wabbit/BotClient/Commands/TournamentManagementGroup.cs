@@ -408,8 +408,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup using the TournamentManager
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Find the signup using the TournamentManager and ensure participants are loaded
+                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
 
                 if (signup == null)
                 {
@@ -460,8 +460,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup using the TournamentManager
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Find the signup using the TournamentManager and ensure participants are loaded
+                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
 
                 if (signup == null)
                 {
@@ -631,13 +631,42 @@ namespace Wabbit.BotClient.Commands
                 // Log player information for debugging
                 Console.WriteLine($"Adding player to signup '{tournamentName}': {player.Username} (ID: {player.Id})");
 
-                // Find the signup using the TournamentManager to ensure we get the right reference
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Find the signup using the TournamentManager and ensure participants are loaded
+                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
 
                 if (signup == null)
                 {
                     await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
                     return;
+                }
+
+                // Debug: Check the ParticipantInfo (raw data from JSON)
+                Console.WriteLine($"ParticipantInfo for signup '{signup.Name}' contains {signup.ParticipantInfo.Count} entries:");
+                foreach (var (id, username) in signup.ParticipantInfo)
+                {
+                    Console.WriteLine($"  - Info: {username} (ID: {id})");
+                }
+
+                // Debug: Check current participants list
+                Console.WriteLine($"Current participants in signup '{signup.Name}':");
+                Console.WriteLine($"Initial participants list after initialization contains {signup.Participants.Count} players:");
+                foreach (var p in signup.Participants)
+                {
+                    Console.WriteLine($"  - Player: {p.Username} (ID: {p.Id})");
+                }
+
+                // If participants list is empty but ParticipantInfo has entries, load them
+                if (signup.Participants.Count == 0 && signup.ParticipantInfo.Count > 0)
+                {
+                    Console.WriteLine($"Participants list is empty but ParticipantInfo has {signup.ParticipantInfo.Count} entries. Loading participants...");
+                    await _tournamentManager.LoadParticipantsAsync(signup, context.Client);
+
+                    // Debug: Check participants list after loading
+                    Console.WriteLine($"Participants list after loading contains {signup.Participants.Count} players:");
+                    foreach (var p in signup.Participants)
+                    {
+                        Console.WriteLine($"  - Player: {p.Username} (ID: {p.Id})");
+                    }
                 }
 
                 if (!signup.IsOpen)
@@ -707,8 +736,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup using the TournamentManager
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Find the signup using the TournamentManager and ensure participants are loaded
+                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
 
                 if (signup == null)
                 {
