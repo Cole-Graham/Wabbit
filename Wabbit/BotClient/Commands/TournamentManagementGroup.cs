@@ -657,6 +657,11 @@ namespace Wabbit.BotClient.Commands
                 // Create a new list initialized with the existing participants
                 // Create a new list and explicitly copy over each participant
                 // Create a new list from the existing participants
+                Console.WriteLine($"Current participants in signup '{signup.Name}':");
+                foreach (var p in signup.Participants)
+                {
+                    Console.WriteLine($"  - {p.Username} (ID: {p.Id})");
+                }
                 var newParticipantsList = signup.Participants.ToList();
 
                 // Log the initial state of the list
