@@ -656,11 +656,8 @@ namespace Wabbit.BotClient.Commands
                 // Add the player to the signup
                 // Create a new list initialized with the existing participants
                 // Create a new list and explicitly copy over each participant
-                var newParticipantsList = new List<DiscordMember>();
-                foreach (var participant in signup.Participants)
-                {
-                    newParticipantsList.Add(participant);
-                }
+                // Create a new list from the existing participants
+                var newParticipantsList = signup.Participants.ToList();
 
                 // Log the initial state of the list
                 Console.WriteLine($"Initial participants list after initialization contains {newParticipantsList.Count} players:");
