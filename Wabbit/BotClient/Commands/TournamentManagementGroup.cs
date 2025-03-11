@@ -866,40 +866,8 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Create embed
-                var embed = new DiscordEmbedBuilder()
-                    .WithTitle($"Tournament Signup: {signup.Name}")
-                    .WithDescription($"Format: {signup.Format}")
-                    .WithColor(signup.IsOpen ? DiscordColor.Green : DiscordColor.Red)
-                    .AddField("Status", signup.IsOpen ? "OPEN" : "CLOSED", true)
-                    .AddField("Creator", signup.CreatedBy?.Username ?? signup.CreatorUsername, true);
-
-                if (signup.ScheduledStartTime.HasValue)
-                {
-                    embed.AddField("Scheduled Start", $"<t:{((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds()}:F>", true);
-                }
-
-                // Add participants field
-                Console.WriteLine($"Displaying {signup.Participants.Count} participants in embed for '{signup.Name}'");
-                string participantsText = "";
-
-                if (signup.Participants != null && signup.Participants.Count > 0)
-                {
-                    var participantsList = new List<string>();
-                    foreach (var participant in signup.Participants)
-                    {
-                        // Log each participant
-                        Console.WriteLine($"  - Participant: {participant.Username} (ID: {participant.Id})");
-                        participantsList.Add($"{participantsList.Count + 1}. {participant.Username}");
-                    }
-                    participantsText = string.Join("\n", participantsList);
-                }
-                else
-                {
-                    participantsText = "No players signed up yet";
-                }
-
-                embed.AddField($"Participants ({signup.Participants?.Count ?? 0})", participantsText);
+                // Use our existing CreateSignupEmbed method for consistency
+                var embed = CreateSignupEmbed(signup);
 
                 // Create components based on signup status
                 var components = new List<DiscordComponent>();

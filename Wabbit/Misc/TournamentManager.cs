@@ -1241,24 +1241,66 @@ namespace Wabbit.Misc
 
             if (existingIndex >= 0)
             {
-                // Replace the existing signup with the updated one
-                _ongoingRounds.TournamentSignups[existingIndex] = signup;
+                // Get the existing signup
+                var existingSignup = _ongoingRounds.TournamentSignups[existingIndex];
+
+                // Update properties but preserve participant list
+                existingSignup.IsOpen = signup.IsOpen;
+                existingSignup.SignupChannelId = signup.SignupChannelId;
+                existingSignup.MessageId = signup.MessageId;
+                existingSignup.ScheduledStartTime = signup.ScheduledStartTime;
+
+                // Set creator info if it's not already set
+                if (existingSignup.CreatorId == 0 && signup.CreatorId != 0)
+                {
+                    existingSignup.CreatorId = signup.CreatorId;
+                }
+                if (string.IsNullOrEmpty(existingSignup.CreatorUsername) && !string.IsNullOrEmpty(signup.CreatorUsername))
+                {
+                    existingSignup.CreatorUsername = signup.CreatorUsername;
+                }
+
+                // Make sure we're preserving participants
+                Console.WriteLine($"Before merge: existing signup has {existingSignup.Participants.Count} participants, new signup has {signup.Participants.Count} participants");
+
+                // Create a merged participant list
+                var allParticipants = new List<DiscordMember>(existingSignup.Participants);
+
+                // Add any new participants not in the existing list
+                foreach (var participant in signup.Participants)
+                {
+                    if (!allParticipants.Any(p => p.Id == participant.Id))
+                    {
+                        allParticipants.Add(participant);
+                        Console.WriteLine($"Added new participant: {participant.Username} (ID: {participant.Id})");
+                    }
+                }
+
+                // Update the participant list
+                existingSignup.Participants = allParticipants;
+                Console.WriteLine($"After merge: signup has {existingSignup.Participants.Count} participants");
+
+                // Update the ParticipantInfo with the current state of Participants
+                existingSignup.ParticipantInfo = existingSignup.Participants.Select(p => (p.Id, p.Username)).ToList();
+
+                // Log all participants for verification
+                Console.WriteLine($"Final participant list for signup '{signup.Name}':");
+                foreach (var participant in existingSignup.Participants)
+                {
+                    Console.WriteLine($"  - {participant.Username} (ID: {participant.Id})");
+                }
+
                 Console.WriteLine($"Updated existing signup '{signup.Name}' in collection at index {existingIndex}");
             }
             else
             {
                 // Shouldn't happen, but just in case
                 Console.WriteLine($"WARNING: Signup '{signup.Name}' not found in collection, adding it");
+
+                // Update the ParticipantInfo with the current state of Participants
+                signup.ParticipantInfo = signup.Participants.Select(p => (p.Id, p.Username)).ToList();
+
                 _ongoingRounds.TournamentSignups.Add(signup);
-            }
-
-            // Update the ParticipantInfo with the current state of Participants
-            signup.ParticipantInfo = signup.Participants.Select(p => (p.Id, p.Username)).ToList();
-
-            // Log the updated participant info
-            foreach (var (id, username) in signup.ParticipantInfo)
-            {
-                Console.WriteLine($"  - Updated participant info: {username} (ID: {id})");
             }
 
             // Save the current state of signups
@@ -1268,7 +1310,7 @@ namespace Wabbit.Misc
             var saved = GetSignup(signup.Name);
             if (saved != null)
             {
-                Console.WriteLine($"Verified saved signup '{saved.Name}' with MessageId: {saved.MessageId}");
+                Console.WriteLine($"Verified saved signup '{saved.Name}' with MessageId: {saved.MessageId}, {saved.Participants.Count} participants");
             }
             else
             {
