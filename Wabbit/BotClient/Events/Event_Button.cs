@@ -124,8 +124,7 @@ namespace Wabbit.BotClient.Events
 
                         switch (e.Id)
                         {
-                            case "btn_deck_0":
-                            case "btn_deck_1":
+                            case string s when s.StartsWith("btn_deck_"):
                                 if (round.InGame == true)
                                 {
                                     var response = new DiscordInteractionResponseBuilder().WithContent("Game is in progress. Deck submitting is disabled");
@@ -185,8 +184,8 @@ namespace Wabbit.BotClient.Events
                                 };
                                 embedResult.AddField("Map", map ?? "Unknown");
 
-                                foreach (var team in teams)
-                                    embedResult.AddField(team?.Name ?? "Unknown Team", team?.Wins.ToString() ?? "0");
+                                foreach (var teamItem in teams)
+                                    embedResult.AddField(teamItem?.Name ?? "Unknown Team", teamItem?.Wins.ToString() ?? "0");
 
                                 await e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().AddEmbed(embedResult));
 
@@ -195,11 +194,11 @@ namespace Wabbit.BotClient.Events
                                     Title = $"**{round.Name ?? "Round"}**, Game {round.Cycle}"
                                 };
 
-                                foreach (var team in teams)
+                                foreach (var teamItem in teams)
                                 {
-                                    if (team is not null && team.Participants is not null)
+                                    if (teamItem is not null && teamItem.Participants is not null)
                                     {
-                                        foreach (var p in team.Participants)
+                                        foreach (var p in teamItem.Participants)
                                         {
                                             if (p is not null && p.Player is not null)
                                                 embedDeck.AddField(p.Player.DisplayName ?? "Unknown Player", p.Deck ?? "No deck");
@@ -303,38 +302,147 @@ namespace Wabbit.BotClient.Events
                                             if (dropdown is not null && e.Values is not null)
                                             {
                                                 List<string> bannedMaps = e.Values.ToList();
+
+                                                // Update the team's map bans
                                                 teamForMapBan.MapBans = bannedMaps;
 
-                                                var btn = new DiscordButtonComponent(DiscordButtonStyle.Primary, $"btn_deck_{teams.IndexOf(teamForMapBan)}", "Deck");
-                                                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder().AddComponents(btn).WithContent("Maps have been selected \nPress the button to submit your deck"));
-
-                                                if (e.Guild is not null && server.BotChannelId.HasValue)
+                                                // Create confirmation embed with clear priority order
+                                                var confirmEmbed = new DiscordEmbedBuilder()
                                                 {
-                                                    var botChannel = await e.Guild.GetChannelAsync((ulong)server.BotChannelId);
-                                                    if (botChannel is not null)
-                                                    {
-                                                        var msg = await sender.SendMessageAsync(botChannel, $"{teamForMapBan.Name ?? "A team"} has finished map ban procedure");
-                                                        if (msg is not null && round.MsgToDel is not null)
-                                                            round.MsgToDel.Add(msg);
-                                                    }
-                                                }
-
-                                                var embed = new DiscordEmbedBuilder()
-                                                {
-                                                    Title = "Map bans"
+                                                    Title = "Review Map Ban Selections",
+                                                    Description = "Please review your map ban selections below. The order represents your ban priority.\n\n**You can change your selections by clicking the Revise button.**",
+                                                    Color = DiscordColor.Orange
                                                 };
 
-                                                foreach (var m in bannedMaps)
-                                                    embed.AddField($"Map {bannedMaps.IndexOf(m) + 1}", m ?? "Unknown");
+                                                for (int i = 0; i < bannedMaps.Count; i++)
+                                                {
+                                                    confirmEmbed.AddField($"Priority #{i + 1}", bannedMaps[i] ?? "Unknown", true);
+                                                }
 
-                                                await dropdown.ModifyAsync(new DiscordMessageBuilder().AddEmbed(embed));
+                                                // Add confirmation and revision buttons
+                                                var confirmBtn = new DiscordButtonComponent(DiscordButtonStyle.Success, $"confirm_map_bans_{teams.IndexOf(teamForMapBan)}", "Confirm Selections");
+                                                var reviseBtn = new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"revise_map_bans_{teams.IndexOf(teamForMapBan)}", "Revise Selections");
+
+                                                // Send confirm message
+                                                await dropdown.ModifyAsync(new DiscordMessageBuilder()
+                                                    .WithContent("Please confirm your map ban selections:")
+                                                    .AddEmbed(confirmEmbed)
+                                                    .AddComponents(confirmBtn, reviseBtn));
                                             }
                                         }
+                                    }
+                                }
+                                break;
+
+                            case string s when s.StartsWith("confirm_map_bans_"):
+                                int teamIndex = int.Parse(s.Replace("confirm_map_bans_", ""));
+                                var team = teams[teamIndex];
+
+                                await e.Interaction.DeferAsync();
+
+                                // Create final embed showing confirmed bans
+                                var finalEmbed = new DiscordEmbedBuilder()
+                                {
+                                    Title = "Map Bans Confirmed",
+                                    Description = "Your map ban selections have been confirmed with the following priority order:",
+                                    Color = DiscordColor.Green
+                                };
+
+                                if (team.MapBans != null)
+                                {
+                                    for (int i = 0; i < team.MapBans.Count; i++)
+                                    {
+                                        finalEmbed.AddField($"Priority #{i + 1}", team.MapBans[i] ?? "Unknown", true);
+                                    }
+                                }
+
+                                // Add deck submission button
+                                var deckBtn = new DiscordButtonComponent(DiscordButtonStyle.Primary, $"btn_deck_{teamIndex}", "Submit Deck");
+
+                                // Update message
+                                if (e.Message is not null)
+                                {
+                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                        .WithContent("Map bans confirmed! Please submit your deck next.")
+                                        .AddEmbed(finalEmbed)
+                                        .AddComponents(deckBtn));
+                                }
+
+                                // Send notification to bot channel
+                                if (e.Guild is not null && server.BotChannelId.HasValue)
+                                {
+                                    var botChannel = await e.Guild.GetChannelAsync((ulong)server.BotChannelId);
+                                    if (botChannel is not null)
+                                    {
+                                        var msg = await sender.SendMessageAsync(botChannel, $"{team.Name ?? "A team"} has confirmed their map ban selections");
+                                        if (msg is not null && round.MsgToDel is not null)
+                                            round.MsgToDel.Add(msg);
                                     }
                                 }
 
                                 // Save tournament state
                                 await _tournamentManager.SaveTournamentState(sender);
+                                break;
+
+                            case string s when s.StartsWith("revise_map_bans_"):
+                                int reviseTeamIndex = int.Parse(s.Replace("revise_map_bans_", ""));
+                                var reviseTeam = teams[reviseTeamIndex];
+
+                                await e.Interaction.DeferAsync();
+
+                                // Get the map pool from the tournament manager
+                                var mapPool = _tournamentManager.GetTournamentMapPool(round.OneVOne);
+
+                                var mapSelectOptions = new List<DiscordSelectComponentOption>();
+                                foreach (var mapName in mapPool)
+                                {
+                                    if (mapName is not null)
+                                    {
+                                        var option = new DiscordSelectComponentOption(mapName, mapName);
+                                        mapSelectOptions.Add(option);
+                                    }
+                                }
+
+                                // Recreate the dropdown based on the round length
+                                DiscordSelectComponent newDropdown;
+                                int selectionCount = round.Length == 5 ? 2 : 3; // Bo5 = 2 bans, others = 3 bans
+
+                                newDropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", mapSelectOptions, false, selectionCount, selectionCount);
+
+                                // Create a descriptive message based on the length
+                                string instructionMsg;
+                                if (round.Length == 3)
+                                {
+                                    instructionMsg = "**Scroll to see all map options!**\n\n" +
+                                        "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                        "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
+                                        "selected will be randomly banned in case both teams ban the same map. " +
+                                        "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
+                                        "randomly before each game after deck codes have been locked in.";
+                                }
+                                else if (round.Length == 5)
+                                {
+                                    instructionMsg = "**Scroll to see all map options!**\n\n" +
+                                        "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                        "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
+                                        "One of the 2nd priority maps selected by each team will be randomly banned. " +
+                                        "You will not know which maps were banned by your opponent, " +
+                                        "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
+                                }
+                                else
+                                {
+                                    instructionMsg = "**Scroll to see all map options!**\n\n" +
+                                        "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!";
+                                }
+
+                                // Reset and show dropdown again
+                                if (e.Message is not null)
+                                {
+                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                        .WithContent(instructionMsg)
+                                        .AddComponents(newDropdown));
+                                }
+
                                 break;
                         }
                     }
@@ -342,7 +450,7 @@ namespace Wabbit.BotClient.Events
                     {
                         switch (e.Id)
                         {
-                            case "btn_deck":
+                            case string s when s.StartsWith("btn_deck"):
                                 var modal = new DiscordInteractionResponseBuilder();
                                 modal.WithTitle("Enter a deck code")
                                     .WithCustomId("deck_modal")
@@ -707,6 +815,13 @@ namespace Wabbit.BotClient.Events
                             DiscordButtonStyle.Success,
                             $"signup_{signup.Name}",
                             "Sign Up"
+                        ));
+
+                        // Add withdraw button so participants can withdraw
+                        components.Add(new DiscordButtonComponent(
+                            DiscordButtonStyle.Danger,
+                            $"withdraw_{signup.Name}",
+                            "Withdraw"
                         ));
                     }
 

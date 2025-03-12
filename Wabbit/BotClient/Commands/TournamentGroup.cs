@@ -103,19 +103,26 @@ namespace Wabbit.BotClient.Commands
             {
                 case 3:
                     dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
-                    message = "Choose 3 maps to ban in order of priority. Only 2 maps from each team will be banned, leaving" +
-                            " 4 remaining maps. One of the 3rd maps selected will be randomly banned in case both teams ban the same map." +
-                            " You will not know which maps were banned by your opponent, and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
+                    message = "**Scroll to see all map options!**\n\n" +
+                        "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                        "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
+                        "selected will be randomly banned in case both teams ban the same map. " +
+                        "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
+                        "randomly before each game after deck codes have been locked in.";
                     break;
                 case 5:
                     dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 2, 2);
-                    message = "Choose 2 maps to ban in order of priority. Only 3 maps will be banned, leaving 5 remaining maps." +
-                        "One of the 2nd maps selected by each team will be randomly banned. You will not know which maps were banned by your opponent," +
+                    message = "**Scroll to see all map options!**\n\n" +
+                        "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                        "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
+                        "One of the 2nd priority maps selected by each team will be randomly banned. " +
+                        "You will not know which maps were banned by your opponent, " +
                         "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
                     break;
                 default:
                     dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
-                    message = "Select 3 maps to ban";
+                    message = "**Scroll to see all map options!**\n\n" +
+                        "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!";
                     break;
             }
 
@@ -202,19 +209,26 @@ namespace Wabbit.BotClient.Commands
             {
                 case 3:
                     dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
-                    message = "Choose 3 maps to ban in order of priority. Only 2 maps from each team will be banned, leaving" +
-                        " 4 remaining maps. One of the 3rd maps selected will be randomly banned in case both teams ban the same map." +
-                        " You will not know which maps were banned by your opponent, and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
+                    message = "**Scroll to see all map options!**\n\n" +
+                        "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                        "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
+                        "selected will be randomly banned in case both teams ban the same map. " +
+                        "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
+                        "randomly before each game after deck codes have been locked in.";
                     break;
                 case 5:
                     dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 2, 2);
-                    message = "Choose 2 maps to ban in order of priority. Only 3 maps will be banned, leaving 5 remaining maps." +
-                        "One of the 2nd maps selected by each team will be randomly banned. You will not know which maps were banned by your opponent," +
+                    message = "**Scroll to see all map options!**\n\n" +
+                        "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                        "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
+                        "One of the 2nd priority maps selected by each team will be randomly banned. " +
+                        "You will not know which maps were banned by your opponent, " +
                         "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
                     break;
-                default: // to edit
+                default:
                     dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
-                    message = "Select 3 maps to ban";
+                    message = "**Scroll to see all map options!**\n\n" +
+                        "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!";
                     break;
             }
 

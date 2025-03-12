@@ -105,7 +105,7 @@ namespace Wabbit.BotClient.Commands
                 }
                 catch (Exception ex)
                 {
-                    await context.EditResponseAsync($"Error loading signup: {ex.Message}");
+                    await SafeResponse(context, $"Error loading signup: {ex.Message}", null, true, 10);
                     return;
                 }
 
@@ -123,21 +123,13 @@ namespace Wabbit.BotClient.Commands
                         }
                         catch (Exception ex)
                         {
-                            await context.EditResponseAsync($"Error loading signup: {ex.Message}");
+                            await SafeResponse(context, $"Error loading signup: {ex.Message}", null, true, 10);
                             return;
                         }
                     }
                     else
                     {
-                        try
-                        {
-                            await context.EditResponseAsync($"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error responding to command: {ex.Message}");
-                            await context.Channel.SendMessageAsync($"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}");
-                        }
+                        await SafeResponse(context, $"Signup '{signupName}' not found. Available signups: {string.Join(", ", allSignups.Select(s => s.Name))}", null, true, 10);
                         return;
                     }
                 }
@@ -145,7 +137,7 @@ namespace Wabbit.BotClient.Commands
                 // Check if a tournament with this name already exists (with null check)
                 if (signup?.Name != null && _tournamentManager.GetTournament(signup.Name) != null)
                 {
-                    await context.EditResponseAsync($"A tournament with the name '{signup.Name}' already exists. Please delete it first or use a different name for the signup.");
+                    await SafeResponse(context, $"A tournament with the name '{signup.Name}' already exists. Please delete it first or use a different name for the signup.", null, true, 10);
                     return;
                 }
 
@@ -196,14 +188,47 @@ namespace Wabbit.BotClient.Commands
                         .AddField("Players", $"{players.Count} players")
                         .AddField("Groups", $"{tournament.Groups.Count} groups");
 
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                    // Send confirmation to command user
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed.Build()));
 
-                    await context.Channel.SendMessageAsync($"Tournament '{tournament.Name}' has been created from signup '{signup.Name}' with {players.Count} players. Format: {tournament.Format}, Groups: {tournament.Groups.Count}");
+                    // Set up auto-deletion for the response
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(10000); // 10 seconds
+                        try
+                        {
+                            await context.DeleteResponseAsync();
+                        }
+                        catch (Exception delEx)
+                        {
+                            Console.WriteLine($"Failed to delete response: {delEx.Message}");
+                        }
+                    });
+
+                    // Since we can't use ephemeral for edited responses, 
+                    // we'll just use auto-deletion for the message
+
+                    // Also send a public message in the channel
+                    var publicMsg = await context.Channel.SendMessageAsync($"Tournament '{tournament.Name}' has been created from signup '{signup.Name}' with {players.Count} players. Format: {tournament.Format}, Groups: {tournament.Groups.Count}");
+
+                    // Schedule deletion for the public message as well
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(10000); // 10 seconds
+                        try
+                        {
+                            await publicMsg.DeleteAsync();
+                        }
+                        catch (Exception delEx)
+                        {
+                            Console.WriteLine($"Failed to delete public tournament creation message: {delEx.Message}");
+                        }
+                    });
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Failed to create tournament from signup: {ex.Message}");
-                    await context.EditResponseAsync($"Failed to create tournament from signup: {ex.Message}");
+                    await SafeResponse(context, $"Failed to create tournament from signup: {ex.Message}", null, true, 10);
                 }
             }, "Failed to create tournament from signup");
         }
@@ -440,12 +465,12 @@ namespace Wabbit.BotClient.Commands
                     }
 
                     // Send a simple confirmation without repeating the tournament details
-                    await context.EditResponseAsync($"Tournament signup '{name}' created successfully. Check {signupChannel.Mention} for the signup form.");
+                    await SafeResponse(context, $"Tournament signup '{name}' created successfully. Check {signupChannel.Mention} for the signup form.", null, true, 10);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error sending signup message: {ex.Message}\n{ex.StackTrace}");
-                    await context.EditResponseAsync($"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}");
+                    await SafeResponse(context, $"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}", null, true, 10);
                 }
             }, "Failed to create tournament signup");
         }
@@ -870,42 +895,41 @@ namespace Wabbit.BotClient.Commands
                 {
                     // Delete the tournament and its related messages
                     await _tournamentManager.DeleteTournament(name, context.Client);
-                    await context.EditResponseAsync($"Tournament '{name}' has been deleted.");
+                    await SafeResponse(context, $"Tournament '{name}' has been deleted.", null, true, 10);
                     found = true;
                 }
-                else
+
+                // If not found as a tournament, try as a signup
+                if (!found)
                 {
-                    // If tournament not found, try to find a signup
                     var signup = _tournamentManager.GetSignup(name);
                     if (signup != null)
                     {
                         // Delete the signup and its related messages
                         await _tournamentManager.DeleteSignup(name, context.Client);
-                        await context.EditResponseAsync($"Tournament signup '{name}' has been deleted.");
+                        await SafeResponse(context, $"Tournament signup '{name}' has been deleted.", null, true, 10);
                         found = true;
                     }
                 }
 
+                // If neither tournament nor signup was found
                 if (!found)
                 {
-                    // Debug message showing available tournaments/signups
-                    var allTournaments = _tournamentManager.GetAllTournaments();
-                    var allSignups = _tournamentManager.GetAllSignups();
+                    // Get available tournaments and signups for a helpful message
+                    var tournaments = _tournamentManager.GetAllTournaments();
+                    var signups = _tournamentManager.GetAllSignups();
 
-                    string availableTournaments = allTournaments.Any()
-                        ? string.Join(", ", allTournaments.Select(t => t.Name))
-                        : "none";
+                    string availableItems = "";
+                    if (tournaments.Any())
+                        availableItems += $"Available tournaments: {string.Join(", ", tournaments.Select(t => t.Name))}\n";
 
-                    string availableSignups = allSignups.Any()
-                        ? string.Join(", ", allSignups.Select(s => s.Name))
-                        : "none";
+                    if (signups.Any())
+                        availableItems += $"Available signups: {string.Join(", ", signups.Select(s => s.Name))}";
 
-                    await context.EditResponseAsync(
-                        $"Could not find tournament or signup with name '{name}'.\n" +
-                        $"Available tournaments: {availableTournaments}\n" +
-                        $"Available signups: {availableSignups}\n\n" +
-                        "Please use exact names for deletion."
-                    );
+                    if (string.IsNullOrEmpty(availableItems))
+                        availableItems = "No tournaments or signups found.";
+
+                    await SafeResponse(context, $"No tournament or signup named '{name}' was found to delete.\n\n{availableItems}", null, true, 10);
                 }
             }, "Failed to delete tournament/signup");
         }
@@ -1241,7 +1265,8 @@ namespace Wabbit.BotClient.Commands
                 // Try to respond with the error message
                 try
                 {
-                    await context.EditResponseAsync($"{errorPrefix}: {ex.Message}");
+                    // Use SafeResponse for error messages to make them ephemeral and auto-delete
+                    await SafeResponse(context, $"{errorPrefix}: {ex.Message}", null, true, 10);
                 }
                 catch (Exception responseEx)
                 {
@@ -1250,11 +1275,25 @@ namespace Wabbit.BotClient.Commands
                     // Fallback to channel message if interaction response fails
                     try
                     {
-                        await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
+                        var msg = await context.Channel.SendMessageAsync($"{errorPrefix}: {ex.Message}");
+
+                        // Set up auto-deletion for channel messages too
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(10000); // 10 seconds
+                            try
+                            {
+                                await msg.DeleteAsync();
+                            }
+                            catch (Exception delEx)
+                            {
+                                Console.WriteLine($"Failed to auto-delete fallback error message: {delEx.Message}");
+                            }
+                        });
                     }
                     catch (Exception channelEx)
                     {
-                        Console.WriteLine($"Failed to send error message to channel: {channelEx.Message}");
+                        Console.WriteLine($"Failed to send any error messages: {channelEx.Message}");
                     }
                 }
             }
