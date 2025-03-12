@@ -536,20 +536,50 @@ namespace Wabbit.Misc
             return _ongoingRounds.Tournaments;
         }
 
-        public void DeleteTournament(string name)
+        public async Task DeleteTournament(string name, DiscordClient? client = null)
         {
-            Console.WriteLine($"Deleting tournament '{name}'");
-            int countBefore = _ongoingRounds.Tournaments.Count;
+            var tournament = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (tournament != null)
+            {
+                // First delete all related messages if a client is provided
+                if (client != null && tournament.RelatedMessages != null)
+                {
+                    foreach (var relatedMessage in tournament.RelatedMessages)
+                    {
+                        try
+                        {
+                            var channel = await client.GetChannelAsync(relatedMessage.ChannelId);
+                            if (channel is not null)
+                            {
+                                var message = await channel.GetMessageAsync(relatedMessage.MessageId);
+                                if (message is not null)
+                                {
+                                    await message.DeleteAsync();
+                                    Console.WriteLine($"Deleted related message of type {relatedMessage.Type} for tournament {name}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error deleting related message: {ex.Message}");
+                        }
+                    }
+                }
 
-            // Remove from collection
-            _ongoingRounds.Tournaments.RemoveAll(t =>
-                t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                // Remove from active tournaments
+                if (_ongoingRounds.Tournaments != null)
+                {
+                    _ongoingRounds.Tournaments.Remove(tournament);
+                }
 
-            int countAfter = _ongoingRounds.Tournaments.Count;
-            Console.WriteLine($"Removed {countBefore - countAfter} tournaments");
-
-            // Save changes to file
-            SaveTournamentsToFile();
+                // Save tournaments to file
+                SaveTournamentsToFile();
+                Console.WriteLine($"Tournament '{name}' deleted");
+            }
+            else
+            {
+                Console.WriteLine($"Tournament '{name}' not found");
+            }
         }
 
         public void UpdateMatchResult(Tournament tournament, Tournament.Match match, DiscordMember winner, int winnerScore, int loserScore)
@@ -1211,18 +1241,80 @@ namespace Wabbit.Misc
             return _ongoingRounds.TournamentSignups;
         }
 
-        public void DeleteSignup(string name)
+        public async Task DeleteSignup(string name, DiscordClient? client = null)
         {
-            Console.WriteLine($"Deleting signup '{name}'");
-            int countBefore = _ongoingRounds.TournamentSignups.Count;
+            // Load signups if not already loaded
+            if (_ongoingRounds.TournamentSignups == null)
+            {
+                LoadSignupsFromFile();
+            }
 
-            _ongoingRounds.TournamentSignups.RemoveAll(s =>
+            var signup = _ongoingRounds.TournamentSignups?.FirstOrDefault(s =>
                 s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-            int countAfter = _ongoingRounds.TournamentSignups.Count;
-            Console.WriteLine($"Removed {countBefore - countAfter} signups");
+            if (signup != null)
+            {
+                // First delete the main signup message
+                if (client != null && signup.SignupChannelId != 0 && signup.MessageId != 0)
+                {
+                    try
+                    {
+                        var channel = await client.GetChannelAsync(signup.SignupChannelId);
+                        if (channel is not null)
+                        {
+                            var message = await channel.GetMessageAsync(signup.MessageId);
+                            if (message is not null)
+                            {
+                                await message.DeleteAsync();
+                                Console.WriteLine($"Deleted main signup message for {name}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error deleting main signup message: {ex.Message}");
+                    }
+                }
 
-            SaveSignupsToFile();
+                // Then delete all related messages
+                if (client != null && signup.RelatedMessages != null)
+                {
+                    foreach (var relatedMessage in signup.RelatedMessages)
+                    {
+                        try
+                        {
+                            var channel = await client.GetChannelAsync(relatedMessage.ChannelId);
+                            if (channel is not null)
+                            {
+                                var message = await channel.GetMessageAsync(relatedMessage.MessageId);
+                                if (message is not null)
+                                {
+                                    await message.DeleteAsync();
+                                    Console.WriteLine($"Deleted related message of type {relatedMessage.Type} for signup {name}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error deleting related signup message: {ex.Message}");
+                        }
+                    }
+                }
+
+                // Remove from signups collection
+                if (_ongoingRounds.TournamentSignups != null)
+                {
+                    _ongoingRounds.TournamentSignups.Remove(signup);
+                }
+
+                // Save changes
+                SaveSignupsToFile();
+                Console.WriteLine($"Signup '{name}' deleted");
+            }
+            else
+            {
+                Console.WriteLine($"Signup '{name}' not found");
+            }
         }
 
         public void UpdateSignup(TournamentSignup signup)
@@ -1366,7 +1458,7 @@ namespace Wabbit.Misc
             Console.WriteLine("Finished loading all participants.");
         }
 
-        public async Task SaveTournamentState(DiscordClient client = null)
+        public async Task SaveTournamentState(DiscordClient? client = null)
         {
             try
             {
@@ -1396,7 +1488,7 @@ namespace Wabbit.Misc
                     foreach (var tournament in state.Tournaments)
                     {
                         // Only update if the tournament has an announcement channel
-                        if (tournament.AnnouncementChannel != null)
+                        if (tournament.AnnouncementChannel is not null)
                         {
                             try
                             {

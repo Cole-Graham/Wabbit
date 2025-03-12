@@ -16,6 +16,9 @@ namespace Wabbit.Models
         public bool IsComplete { get; set; } = false;
         public DiscordChannel? AnnouncementChannel { get; set; }
 
+        // Related message IDs for deletion when tournament is removed
+        public List<RelatedMessage> RelatedMessages { get; set; } = [];
+
         public class Group
         {
             public string Name { get; set; } = "";

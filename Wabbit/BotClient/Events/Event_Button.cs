@@ -517,9 +517,24 @@ namespace Wabbit.BotClient.Events
 
                 try
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    // Create the followup message with ephemeral setting and store the response
+                    var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
                         .WithContent($"You have been added to the tournament '{tournamentName}'.")
                         .AsEphemeral(true));
+
+                    // Schedule deletion after 10 seconds
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(10000); // 10 seconds
+                        try
+                        {
+                            await response.DeleteAsync();
+                        }
+                        catch (Exception deleteEx)
+                        {
+                            _logger.LogWarning($"Failed to delete confirmation message: {deleteEx.Message}");
+                        }
+                    });
                 }
                 catch (Exception followupEx)
                 {
@@ -627,9 +642,24 @@ namespace Wabbit.BotClient.Events
                     // Update the signup message
                     await UpdateSignupMessage(sender, signup);
 
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    // Send confirmation message and schedule deletion
+                    var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
                         .WithContent($"You have been removed from the tournament '{tournamentName}'.")
                         .AsEphemeral(true));
+
+                    // Schedule deletion after 10 seconds
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(10000); // 10 seconds
+                        try
+                        {
+                            await response.DeleteAsync();
+                        }
+                        catch (Exception deleteEx)
+                        {
+                            _logger.LogWarning($"Failed to delete confirmation message: {deleteEx.Message}");
+                        }
+                    });
                 }
                 else
                 {
@@ -712,10 +742,18 @@ namespace Wabbit.BotClient.Events
 
             if (signup.ScheduledStartTime.HasValue)
             {
-                // Convert DateTime to Unix timestamp
+                // Convert DateTime to PST
+                TimeZoneInfo pstZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+                DateTime pstTime = TimeZoneInfo.ConvertTimeFromUtc(signup.ScheduledStartTime.Value.ToUniversalTime(), pstZone);
+                string pstFormatted = pstTime.ToString("MMM d, yyyy h:mm tt") + " PST";
+
+                // Create Discord timestamp (in both formats)
                 long unixTimestamp = ((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds();
-                string formattedTime = $"<t:{unixTimestamp}:F>";
-                builder.AddField("Scheduled Start", formattedTime, false);
+                string discordTimestampFull = $"<t:{unixTimestamp}:F>";
+                string discordTimestampFriendly = $"<t:{unixTimestamp}:f>";
+
+                builder.AddField("Scheduled Start (PST)", pstFormatted, false);
+                builder.AddField("Scheduled Start (Local Time)", discordTimestampFriendly, false);
             }
 
             // Log the number of participants for debugging
@@ -815,10 +853,24 @@ namespace Wabbit.BotClient.Events
             // Update the signup message
             await UpdateSignupMessage(sender, signup);
 
-            // Send confirmation message
-            await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+            // Send confirmation message and schedule deletion
+            var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
                 .WithContent($"You have been removed from the '{signup.Name}' tournament.")
                 .AsEphemeral(true));
+
+            // Schedule deletion after 10 seconds
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(10000); // 10 seconds
+                try
+                {
+                    await response.DeleteAsync();
+                }
+                catch (Exception deleteEx)
+                {
+                    _logger.LogWarning($"Failed to delete confirmation message: {deleteEx.Message}");
+                }
+            });
 
             // Log the withdrawal
             _logger.LogInformation($"User {e.Interaction.User.Username} withdrawn from tournament '{signup.Name}'");

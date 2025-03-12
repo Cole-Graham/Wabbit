@@ -848,46 +848,52 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                bool deleted = false;
+                await context.DeferResponseAsync();
 
-                // Try to delete a tournament first
-                try
-                {
-                    _tournamentManager.DeleteTournament(name);
-                    await SafeResponse(context, $"Tournament '{name}' has been deleted.", null, true, 10);
-                    deleted = true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error deleting tournament: {ex.Message}");
-                }
+                bool found = false;
 
-                // If tournament wasn't found, try to delete a signup
-                if (!deleted)
+                // First try to delete tournament
+                var tournament = _tournamentManager.GetTournament(name);
+                if (tournament != null)
                 {
-                    try
+                    // Delete the tournament and its related messages
+                    await _tournamentManager.DeleteTournament(name, context.Client);
+                    await context.EditResponseAsync($"Tournament '{name}' has been deleted.");
+                    found = true;
+                }
+                else
+                {
+                    // If tournament not found, try to find a signup
+                    var signup = _tournamentManager.GetSignup(name);
+                    if (signup != null)
                     {
-                        _tournamentManager.DeleteSignup(name);
-                        await SafeResponse(context, $"Tournament signup '{name}' has been deleted.", null, true, 10);
-                        deleted = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error deleting signup: {ex.Message}");
+                        // Delete the signup and its related messages
+                        await _tournamentManager.DeleteSignup(name, context.Client);
+                        await context.EditResponseAsync($"Tournament signup '{name}' has been deleted.");
+                        found = true;
                     }
                 }
 
-                // If neither was found, show debug info
-                if (!deleted)
+                if (!found)
                 {
-                    var allTournaments = _tournamentManager.GetAllTournaments()?.Select(t => t.Name) ?? new List<string>();
-                    var allSignups = _tournamentManager.GetAllSignups()?.Select(s => s.Name) ?? new List<string>();
+                    // Debug message showing available tournaments/signups
+                    var allTournaments = _tournamentManager.GetAllTournaments();
+                    var allSignups = _tournamentManager.GetAllSignups();
 
-                    string debug = $"Could not find tournament or signup with name '{name}'.\n\n" +
-                        $"Available tournaments ({allTournaments.Count()}): {string.Join(", ", allTournaments)}\n\n" +
-                        $"Available signups ({allSignups.Count()}): {string.Join(", ", allSignups)}\n\n" +
-                        $"Please try using the exact name from the list above.";
-                    await SafeResponse(context, debug, null, true);
+                    string availableTournaments = allTournaments.Any()
+                        ? string.Join(", ", allTournaments.Select(t => t.Name))
+                        : "none";
+
+                    string availableSignups = allSignups.Any()
+                        ? string.Join(", ", allSignups.Select(s => s.Name))
+                        : "none";
+
+                    await context.EditResponseAsync(
+                        $"Could not find tournament or signup with name '{name}'.\n" +
+                        $"Available tournaments: {availableTournaments}\n" +
+                        $"Available signups: {availableSignups}\n\n" +
+                        "Please use exact names for deletion."
+                    );
                 }
             }, "Failed to delete tournament/signup");
         }
@@ -996,10 +1002,18 @@ namespace Wabbit.BotClient.Commands
 
             if (signup.ScheduledStartTime.HasValue)
             {
-                // Convert DateTime to Unix timestamp
+                // Convert DateTime to PST
+                TimeZoneInfo pstZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+                DateTime pstTime = TimeZoneInfo.ConvertTimeFromUtc(signup.ScheduledStartTime.Value.ToUniversalTime(), pstZone);
+                string pstFormatted = pstTime.ToString("MMM d, yyyy h:mm tt") + " PST";
+
+                // Create Discord timestamp (in both formats)
                 long unixTimestamp = ((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds();
-                string formattedTime = $"<t:{unixTimestamp}:F>";
-                builder.AddField("Scheduled Start", formattedTime, false);
+                string discordTimestampFull = $"<t:{unixTimestamp}:F>";
+                string discordTimestampFriendly = $"<t:{unixTimestamp}:f>";
+
+                builder.AddField("Scheduled Start (PST)", pstFormatted, false);
+                builder.AddField("Scheduled Start (Local Time)", discordTimestampFriendly, false);
             }
 
             // Log the number of participants for debugging

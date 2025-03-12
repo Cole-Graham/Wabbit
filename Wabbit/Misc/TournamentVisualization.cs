@@ -37,7 +37,7 @@ namespace Wabbit.Misc
         /// Generates a standings image for a tournament and sends it to the configured standings channel if available
         /// </summary>
         /// <returns>Path to the generated image file</returns>
-        public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient client = null)
+        public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient? client = null)
         {
             // Calculate sizes
             int width = 900; // Increase width to accommodate standings
@@ -106,9 +106,38 @@ namespace Wabbit.Misc
                             // Send the image to the channel
                             using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
                             {
-                                await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
+                                var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
                                     .AddEmbed(embed)
                                     .AddFile(Path.GetFileName(fileName), fileStream));
+
+                                // Store this message ID for later deletion if needed
+                                var relatedMessage = new Wabbit.Models.RelatedMessage
+                                {
+                                    ChannelId = standingsChannel.Id,
+                                    MessageId = message.Id,
+                                    Type = "StandingsVisualization"
+                                };
+
+                                // Add to tournament's related messages
+                                if (tournament.RelatedMessages == null)
+                                    tournament.RelatedMessages = new List<Wabbit.Models.RelatedMessage>();
+
+                                tournament.RelatedMessages.Add(relatedMessage);
+
+                                // If this is part of a TournamentManager operation, save the tournament state
+                                try
+                                {
+                                    // Get tournament manager and save the state
+                                    var scope = client.GetType().Assembly.GetType("Wabbit.Services.ServiceLocator")?.GetMethod("GetService")?.Invoke(null, new[] { typeof(TournamentManager) });
+                                    if (scope != null && scope is TournamentManager tournamentManager)
+                                    {
+                                        _ = tournamentManager.SaveTournamentState();
+                                    }
+                                }
+                                catch (Exception savEx)
+                                {
+                                    Console.WriteLine($"Error saving tournament state: {savEx.Message}");
+                                }
                             }
                         }
                     }

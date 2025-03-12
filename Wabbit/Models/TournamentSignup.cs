@@ -25,8 +25,19 @@ namespace Wabbit.Models
         public ulong SignupChannelId { get; set; }
         public ulong MessageId { get; set; }
 
+        // List of related message IDs (e.g., standings visualizations, announcement messages)
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public List<RelatedMessage> RelatedMessages { get; set; } = [];
+
         // Used to store participant info from JSON until we can convert to DiscordMembers
         [System.Text.Json.Serialization.JsonIgnore]
         public List<(ulong Id, string Username)> ParticipantInfo { get; set; } = [];
+    }
+
+    public class RelatedMessage
+    {
+        public ulong ChannelId { get; set; }
+        public ulong MessageId { get; set; }
+        public string Type { get; set; } = "Announcement"; // e.g., "Announcement", "Standings", etc.
     }
 }
