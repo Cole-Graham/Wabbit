@@ -6,6 +6,11 @@ using Wabbit.Misc;
 using Wabbit.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
 
 namespace Wabbit.BotClient.Events
 {
@@ -684,15 +689,23 @@ namespace Wabbit.BotClient.Events
                                     // Clear temporary deck code
                                     deckParticipant.TempDeckCode = null;
 
+                                    // Clean up any deck submission related messages to reduce clutter
+                                    await CleanupDeckSubmissionMessages(e.Channel, userId);
+
                                     // Update the message to show it's been confirmed
                                     var confirmedEmbed = new DiscordEmbedBuilder()
                                         .WithTitle("Deck Code Confirmed")
-                                        .WithDescription($"Your deck code has been successfully confirmed and submitted.\n```\n{deckParticipant.Deck}\n```")
+                                        .WithDescription($"Your deck code has been successfully confirmed and submitted.")
                                         .WithColor(DiscordColor.Green);
 
-                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
-                                        .WithContent($"{e.User.Mention} Your deck code has been confirmed!")
-                                        .AddEmbed(confirmedEmbed));
+                                    // Send a simple confirmation message that will be cleaned up later
+                                    await e.Channel.SendMessageAsync(
+                                        new DiscordMessageBuilder()
+                                            .WithContent($"{e.User.Mention} Your deck code has been confirmed!")
+                                            .AddEmbed(confirmedEmbed));
+
+                                    // Delete the confirmation message with the buttons
+                                    await e.Message.DeleteAsync();
 
                                     // Save tournament state
                                     await _tournamentManager.SaveTournamentState(sender);
@@ -763,19 +776,19 @@ namespace Wabbit.BotClient.Events
                                         return;
                                     }
 
+                                    // Delete the old confirmation message to reduce clutter
+                                    await e.Message.DeleteAsync();
+
+                                    // Clean up any existing deck submission prompts in the channel
+                                    await CleanupDeckSubmissionMessages(e.Channel, userId);
+
                                     // Prompt the user to submit a new deck code
                                     var promptMessage = new DiscordMessageBuilder()
-                                        .WithContent($"{e.User.Mention} Please enter your revised deck code in a reply to this message.\n\n" +
+                                        .WithContent($"{e.User.Mention} Please enter your revised deck code as a reply to this message.\n\n" +
                                                     "**Type your deck code directly as a reply to this message.**");
-
-                                    // Delete or update the original confirmation message
-                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
-                                        .WithContent($"{e.User.Mention} You've chosen to revise your deck code. Please submit a new one in response to the prompt below."));
 
                                     // Send the new prompt
                                     await e.Channel.SendMessageAsync(promptMessage);
-
-                                    // The new submission will be handled in the HandleDeckSubmission method
                                 }
                                 catch (Exception ex)
                                 {
@@ -788,6 +801,61 @@ namespace Wabbit.BotClient.Events
                                         }
                                         catch { }
                                     }
+                                }
+                                break;
+
+                            case "submit_deck_button":
+                                try
+                                {
+                                    // Try to acknowledge the interaction, but don't fail if it's already been acknowledged
+                                    try
+                                    {
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        // Interaction might already be acknowledged
+                                        Console.WriteLine($"Could not defer deck button interaction: {ex.Message}");
+                                    }
+
+                                    // Find the tournament round and user's team/participant info
+                                    var currentRound = _roundsHolder.TourneyRounds.FirstOrDefault(r =>
+                                        r.Teams?.Any(t => t.Thread?.Id == e.Channel.Id) == true);
+
+                                    if (currentRound == null)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} No active tournament round found for this channel.");
+                                        return;
+                                    }
+
+                                    // Get the team information
+                                    var currentTeam = currentRound.Teams?.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
+                                    if (currentTeam == null)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Could not find your team in this channel.");
+                                        return;
+                                    }
+
+                                    // Check if user is a participant
+                                    if (!currentTeam.Participants?.Any(p => p.Player?.Id == e.User.Id) == true)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} You are not a participant in this tournament round.");
+                                        return;
+                                    }
+
+                                    // Clean up map ban messages
+                                    await CleanupMapBanMessages(e.Channel);
+
+                                    // Delete the message with the button
+                                    await e.Message.DeleteAsync();
+
+                                    // Send the text-based deck submission prompt
+                                    await e.Channel.SendMessageAsync($"{e.User.Mention} Please enter your deck code as a reply to this message.");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error handling submit deck button: {ex.Message}");
+                                    await e.Channel.SendMessageAsync($"{e.User.Mention} Error starting deck submission: {ex.Message}");
                                 }
                                 break;
                         }
@@ -1374,6 +1442,91 @@ namespace Wabbit.BotClient.Events
 
             // Log the withdrawal
             _logger.LogInformation($"User {e.Interaction.User.Username} withdrawn from tournament '{signup.Name}'");
+        }
+
+        private async Task CleanupDeckSubmissionMessages(DiscordChannel channel, ulong userId)
+        {
+            try
+            {
+                // Get recent messages in the channel
+                var messages = channel.GetMessagesAsync(50);
+                var messageList = new List<DiscordMessage>();
+
+                // Manually collect messages from the async enumerable
+                await foreach (var message in messages)
+                {
+                    messageList.Add(message);
+                }
+
+                // Find and delete deck submission related messages for this user
+                var messagesToDelete = messageList.Where(m =>
+                    (m.Author?.IsBot == true && m.Content?.Contains("Please enter your") == true && m.Content?.Contains(userId.ToString()) == true) ||
+                    (m.Author?.IsBot == true && m.Content?.Contains("Please review your deck code") == true) ||
+                    (m.Author?.IsBot == true && m.Content?.Contains("deck code submission") == true) ||
+                    (m.Author?.IsBot == true && m.Content?.Contains("map ban selections") == true) ||
+                    (m.Author?.IsBot == true && m.Content?.Contains("Please submit your deck code") == true)
+                ).ToList();
+
+                foreach (var message in messagesToDelete)
+                {
+                    try
+                    {
+                        await message.DeleteAsync();
+                        // Add a small delay to avoid rate limiting
+                        await Task.Delay(100);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to delete message: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error cleaning up deck submission messages: {ex.Message}");
+            }
+        }
+
+        private async Task CleanupMapBanMessages(DiscordChannel channel)
+        {
+            try
+            {
+                // Get recent messages in the channel
+                var messages = channel.GetMessagesAsync(50);
+                var messageList = new List<DiscordMessage>();
+
+                // Manually collect messages from the async enumerable
+                await foreach (var message in messages)
+                {
+                    messageList.Add(message);
+                }
+
+                // Find and delete map ban related messages
+                var messagesToDelete = messageList.Where(m =>
+                    (m.Author?.IsBot == true && m.Content?.Contains("map ban") == true) ||
+                    (m.Author?.IsBot == true && m.Content?.Contains("Map Ban") == true) ||
+                    (m.Author?.IsBot == true && m.Content?.Contains("scroll to see all map options") == true) ||
+                    (m.Author?.IsBot == true && m.Embeds?.Any(e => e.Title?.Contains("Map Ban") == true) == true)
+                ).ToList();
+
+                foreach (var message in messagesToDelete)
+                {
+                    try
+                    {
+                        await message.DeleteAsync();
+                        // Add a small delay to avoid rate limiting
+                        await Task.Delay(100);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to delete map ban message: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error cleaning up map ban messages: {ex.Message}");
+            }
         }
     }
 }

@@ -87,7 +87,7 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Find the team and participant
-                var team = round.Teams.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
+                var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
                 if (team == null)
                 {
                     await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find your team data.");
