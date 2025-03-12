@@ -523,7 +523,22 @@ namespace Wabbit.BotClient.Commands
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
 
-                await context.EditResponseAsync($"You have been added to the tournament '{tournamentName}'.");
+                // Respond to the user and schedule the message to be deleted after 10 seconds
+                var message = await context.EditResponseAsync($"You have been added to the tournament '{tournamentName}'.");
+
+                // Delete the message after 10 seconds
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(10000);
+                    try
+                    {
+                        await message.DeleteAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to auto-delete signup message: {ex.Message}");
+                    }
+                });
             }, "Failed to sign up for tournament");
         }
 
@@ -1015,6 +1030,30 @@ namespace Wabbit.BotClient.Commands
 
                 await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
             }, "Failed to resume tournament");
+        }
+
+        [Command("repair_data")]
+        [Description("Repair tournament data files (admin only)")]
+        public async Task RepairData(CommandContext context)
+        {
+            await SafeExecute(context, async () =>
+            {
+                // Check permissions
+                if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.Administrator))
+                {
+                    await context.EditResponseAsync("You don't have permission to repair tournament data.");
+                    return;
+                }
+
+                // Send initial response
+                await context.EditResponseAsync("Starting tournament data repair process...");
+
+                // Call the repair method
+                await _tournamentManager.RepairDataFiles(context.Client);
+
+                // Send success message
+                await context.EditResponseAsync("Tournament data repair completed. Check console for details.");
+            }, "Failed to repair tournament data");
         }
 
         private ulong? GetSignupChannelId(CommandContext context)

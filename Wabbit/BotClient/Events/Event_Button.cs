@@ -1070,31 +1070,49 @@ namespace Wabbit.BotClient.Events
                 // Update the signup message
                 await UpdateSignupMessage(sender, signup);
 
-                try
-                {
-                    // Create the followup message with ephemeral setting and store the response
-                    var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You have been added to the tournament '{tournamentName}'.")
-                        .AsEphemeral(true));
+                // Determine if we need a followup interaction (if the interaction was already acknowledged)
+                bool followUpInteraction = true; // Default to using followup interaction as safer approach
 
-                    // Schedule deletion after 10 seconds
+                if (followUpInteraction)
+                {
+                    // Followup interaction - use followup message
+                    var response = new DiscordFollowupMessageBuilder()
+                        .WithContent($"You have been added to the tournament '{tournamentName}'.");
+
+                    var message = await e.Interaction.CreateFollowupMessageAsync(response);
+
+                    // Delete the message after 10 seconds
                     _ = Task.Run(async () =>
                     {
-                        await Task.Delay(10000); // 10 seconds
+                        await Task.Delay(10000);
                         try
                         {
-                            await response.DeleteAsync();
+                            await message.DeleteAsync();
                         }
-                        catch (Exception deleteEx)
+                        catch (Exception ex)
                         {
-                            _logger.LogWarning($"Failed to delete confirmation message: {deleteEx.Message}");
+                            Console.WriteLine($"Failed to auto-delete signup message: {ex.Message}");
                         }
                     });
                 }
-                catch (Exception followupEx)
+                else
                 {
-                    _logger.LogWarning($"Failed to send confirmation message: {followupEx.Message}");
-                    await e.Channel.SendMessageAsync($"You have been added to the tournament '{tournamentName}'.");
+                    // Regular interaction - use channel message
+                    var message = await e.Channel.SendMessageAsync($"You have been added to the tournament '{tournamentName}'.");
+
+                    // Delete the message after 10 seconds
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(10000);
+                        try
+                        {
+                            await message.DeleteAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Failed to auto-delete signup message: {ex.Message}");
+                        }
+                    });
                 }
             }
             catch (Exception ex)

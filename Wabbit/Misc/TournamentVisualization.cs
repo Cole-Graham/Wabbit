@@ -131,7 +131,9 @@ namespace Wabbit.Misc
                                     var scope = client.GetType().Assembly.GetType("Wabbit.Services.ServiceLocator")?.GetMethod("GetService")?.Invoke(null, new[] { typeof(TournamentManager) });
                                     if (scope != null && scope is TournamentManager tournamentManager)
                                     {
-                                        _ = tournamentManager.SaveTournamentState();
+                                        // NOTE: Tournament state should be saved in an async context
+                                        // If this method is made async in the future, use: await tournamentManager.SaveTournamentState();
+                                        // For now, we rely on the periodic state saves elsewhere in the code
                                     }
                                 }
                                 catch (Exception savEx)

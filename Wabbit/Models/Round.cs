@@ -13,6 +13,7 @@ namespace Wabbit.Models
         public List<string> Maps { get; set; } = [];
         public string? Pings { get; set; } // To not use LINQ each time
         public List<DiscordMessage> MsgToDel { get; set; } = [];
+        public string? TournamentId { get; set; } // Add this property to link rounds to tournaments
 
         public class Participant
         {
