@@ -742,13 +742,19 @@ namespace Wabbit.BotClient.Events
 
             if (signup.ScheduledStartTime.HasValue)
             {
-                // Convert DateTime to PST
+                // Convert DateTime to PST correctly
+                // First convert to UTC to ensure we're working from a common reference point
+                DateTime utcTime = signup.ScheduledStartTime.Value.ToUniversalTime();
+
+                // Pacific Standard Time is UTC-8 (or UTC-7 during daylight saving)
                 TimeZoneInfo pstZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
-                DateTime pstTime = TimeZoneInfo.ConvertTimeFromUtc(signup.ScheduledStartTime.Value.ToUniversalTime(), pstZone);
+                DateTime pstTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, pstZone);
+
+                // Format with proper AM/PM indicator
                 string pstFormatted = pstTime.ToString("MMM d, yyyy h:mm tt") + " PST";
 
-                // Create Discord timestamp (in both formats)
-                long unixTimestamp = ((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds();
+                // Create Discord timestamp using the original UTC time to ensure accuracy
+                long unixTimestamp = ((DateTimeOffset)utcTime).ToUnixTimeSeconds();
                 string discordTimestampFull = $"<t:{unixTimestamp}:F>";
                 string discordTimestampFriendly = $"<t:{unixTimestamp}:f>";
 
