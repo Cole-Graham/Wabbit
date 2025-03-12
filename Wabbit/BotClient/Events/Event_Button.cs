@@ -125,21 +125,40 @@ namespace Wabbit.BotClient.Events
                         switch (e.Id)
                         {
                             case string s when s.StartsWith("btn_deck_"):
-                                if (round.InGame == true)
+                                try
                                 {
-                                    var response = new DiscordInteractionResponseBuilder().WithContent("Game is in progress. Deck submitting is disabled");
-                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource, response);
-                                }
-                                else
-                                {
-                                    var modal = new DiscordInteractionResponseBuilder()
+                                    if (round.InGame == true)
                                     {
-                                        Title = "Enter a deck code",
-                                        CustomId = "deck_modal"
-                                    };
-                                    modal.AddComponents(new DiscordTextInputComponent("Deck code", "deck_code", required: true));
+                                        var response = new DiscordInteractionResponseBuilder().WithContent("Game is in progress. Deck submitting is disabled");
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource, response);
+                                    }
+                                    else
+                                    {
+                                        var modal = new DiscordInteractionResponseBuilder()
+                                        {
+                                            Title = "Enter a deck code",
+                                            CustomId = "deck_modal"
+                                        };
+                                        modal.AddComponents(new DiscordTextInputComponent("Deck code", "deck_code", required: true));
 
-                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.Modal, modal);
+                                        // Using CreateResponseAsync for a modal
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.Modal, modal);
+
+                                        // Log for debugging
+                                        Console.WriteLine($"Displayed deck submission modal to user {e.User.Username} ({e.User.Id})");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error showing deck submission modal: {ex.Message}");
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error showing the deck submission modal. Please try clicking the button again.");
+                                        }
+                                        catch { }
+                                    }
                                 }
                                 break;
 
@@ -497,7 +516,8 @@ namespace Wabbit.BotClient.Events
                                             "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
                                             "selected will be randomly banned in case both teams ban the same map. " +
                                             "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
-                                            "randomly before each game after deck codes have been locked in.";
+                                            "randomly before each game after deck codes have been locked in.\n\n" +
+                                            "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
                                     }
                                     else if (round.Length == 5)
                                     {
@@ -506,12 +526,14 @@ namespace Wabbit.BotClient.Events
                                             "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
                                             "One of the 2nd priority maps selected by each team will be randomly banned. " +
                                             "You will not know which maps were banned by your opponent, " +
-                                            "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
+                                            "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.\n\n" +
+                                            "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
                                     }
                                     else
                                     {
                                         instructionMsg = "**Scroll to see all map options!**\n\n" +
-                                            "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!";
+                                            "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                            "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
                                     }
 
                                     // Reset and show dropdown again
@@ -556,12 +578,31 @@ namespace Wabbit.BotClient.Events
                         switch (e.Id)
                         {
                             case string s when s.StartsWith("btn_deck"):
-                                var modal = new DiscordInteractionResponseBuilder();
-                                modal.WithTitle("Enter a deck code")
-                                    .WithCustomId("deck_modal")
-                                    .AddComponents(new DiscordTextInputComponent("Deck code", "deck_code", required: true));
+                                try
+                                {
+                                    var modal = new DiscordInteractionResponseBuilder();
+                                    modal.WithTitle("Enter a deck code")
+                                        .WithCustomId("deck_modal")
+                                        .AddComponents(new DiscordTextInputComponent("Deck code", "deck_code", required: true));
 
-                                await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.Modal, modal);
+                                    // Using CreateResponseAsync for a modal
+                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.Modal, modal);
+
+                                    // Log for debugging
+                                    Console.WriteLine($"Second handler: Displayed deck submission modal to user {e.User.Username} ({e.User.Id})");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error showing deck submission modal (second handler): {ex.Message}");
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error showing the deck submission modal. Please try clicking the button again.");
+                                        }
+                                        catch { }
+                                    }
+                                }
                                 break;
 
                             case "1v1_winner_dropdown":
