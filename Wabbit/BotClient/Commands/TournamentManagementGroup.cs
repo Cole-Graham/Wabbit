@@ -298,9 +298,15 @@ namespace Wabbit.BotClient.Commands
                     foreach (var signup in signups)
                     {
                         string status = signup.IsOpen ? "Open for Signups" : "Signups Closed";
-                        string scheduledTime = signup.ScheduledStartTime.HasValue ?
-                            $"<t:{((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds()}:F>" :
-                            "Not scheduled";
+                        string scheduledTime = "Not scheduled";
+
+                        if (signup.ScheduledStartTime.HasValue)
+                        {
+                            // Ensure we're getting a proper UTC timestamp
+                            DateTime utcTime = signup.ScheduledStartTime.Value.ToUniversalTime();
+                            long unixTimestamp = ((DateTimeOffset)utcTime).ToUnixTimeSeconds();
+                            scheduledTime = $"<t:{unixTimestamp}:F>";
+                        }
 
                         // Use the helper method to get the effective participant count
                         int participantCount = _tournamentManager.GetParticipantCount(signup);
@@ -373,9 +379,15 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Convert Unix timestamp to DateTime if provided
-                DateTime? scheduledStartTime = startTimeUnix > 0
-                    ? DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime
-                    : null;
+                DateTime? scheduledStartTime = null;
+                if (startTimeUnix > 0)
+                {
+                    // Convert Unix timestamp to UTC DateTime
+                    DateTimeOffset utcTime = DateTimeOffset.FromUnixTimeSeconds(startTimeUnix);
+                    scheduledStartTime = utcTime.UtcDateTime;
+
+                    Console.WriteLine($"Signup timestamp conversion: Unix {startTimeUnix} -> UTC {scheduledStartTime.Value.ToString("yyyy-MM-dd HH:mm:ss")}");
+                }
 
                 // Create the signup using TournamentManager
                 var signup = _tournamentManager.CreateSignup(
