@@ -291,7 +291,8 @@ namespace Wabbit.BotClient.Events
                                 }
                                 else
                                 {
-                                    await e.Interaction.DeferAsync();
+                                    // Always defer first to acknowledge the interaction
+                                    await e.Interaction.DeferAsync(true);
 
                                     if (e.Channel is not null)
                                     {
@@ -303,7 +304,7 @@ namespace Wabbit.BotClient.Events
                                             {
                                                 List<string> bannedMaps = e.Values.ToList();
 
-                                                // Update the team's map bans
+                                                // Store map bans temporarily
                                                 teamForMapBan.MapBans = bannedMaps;
 
                                                 // Create confirmation embed with clear priority order
@@ -323,11 +324,28 @@ namespace Wabbit.BotClient.Events
                                                 var confirmBtn = new DiscordButtonComponent(DiscordButtonStyle.Success, $"confirm_map_bans_{teams.IndexOf(teamForMapBan)}", "Confirm Selections");
                                                 var reviseBtn = new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"revise_map_bans_{teams.IndexOf(teamForMapBan)}", "Revise Selections");
 
-                                                // Send confirm message
-                                                await dropdown.ModifyAsync(new DiscordMessageBuilder()
-                                                    .WithContent("Please confirm your map ban selections:")
-                                                    .AddEmbed(confirmEmbed)
-                                                    .AddComponents(confirmBtn, reviseBtn));
+                                                try
+                                                {
+                                                    // Modify the existing message instead of sending a new one
+                                                    await dropdown.ModifyAsync(new DiscordMessageBuilder()
+                                                        .WithContent("Please confirm your map ban selections:")
+                                                        .AddEmbed(confirmEmbed)
+                                                        .AddComponents(confirmBtn, reviseBtn));
+
+                                                    // Create a followup notification for the user
+                                                    await e.Interaction.CreateFollowupMessageAsync(
+                                                        new DiscordFollowupMessageBuilder()
+                                                            .WithContent("Your map ban selections have been recorded. Please confirm or revise them.")
+                                                            .AsEphemeral(true));
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    Console.WriteLine($"Error updating map ban message: {ex.Message}");
+                                                    await e.Interaction.CreateFollowupMessageAsync(
+                                                        new DiscordFollowupMessageBuilder()
+                                                            .WithContent($"Error updating map bans: {ex.Message}")
+                                                            .AsEphemeral(true));
+                                                }
                                             }
                                         }
                                     }
@@ -338,46 +356,64 @@ namespace Wabbit.BotClient.Events
                                 int teamIndex = int.Parse(s.Replace("confirm_map_bans_", ""));
                                 var team = teams[teamIndex];
 
-                                await e.Interaction.DeferAsync();
+                                // Always defer first
+                                await e.Interaction.DeferAsync(true);
 
-                                // Create final embed showing confirmed bans
-                                var finalEmbed = new DiscordEmbedBuilder()
+                                try
                                 {
-                                    Title = "Map Bans Confirmed",
-                                    Description = "Your map ban selections have been confirmed with the following priority order:",
-                                    Color = DiscordColor.Green
-                                };
-
-                                if (team.MapBans != null)
-                                {
-                                    for (int i = 0; i < team.MapBans.Count; i++)
+                                    // Create final embed showing confirmed bans
+                                    var finalEmbed = new DiscordEmbedBuilder()
                                     {
-                                        finalEmbed.AddField($"Priority #{i + 1}", team.MapBans[i] ?? "Unknown", true);
+                                        Title = "Map Bans Confirmed",
+                                        Description = "Your map ban selections have been confirmed with the following priority order:",
+                                        Color = DiscordColor.Green
+                                    };
+
+                                    if (team.MapBans != null)
+                                    {
+                                        for (int i = 0; i < team.MapBans.Count; i++)
+                                        {
+                                            finalEmbed.AddField($"Priority #{i + 1}", team.MapBans[i] ?? "Unknown", true);
+                                        }
+                                    }
+
+                                    // Add deck submission button
+                                    var deckBtn = new DiscordButtonComponent(DiscordButtonStyle.Primary, $"btn_deck_{teamIndex}", "Submit Deck");
+
+                                    // Update message
+                                    if (e.Message is not null)
+                                    {
+                                        await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                            .WithContent("Map bans confirmed! Please submit your deck next.")
+                                            .AddEmbed(finalEmbed)
+                                            .AddComponents(deckBtn));
+                                    }
+
+                                    // Send confirmation as a followup
+                                    await e.Interaction.CreateFollowupMessageAsync(
+                                        new DiscordFollowupMessageBuilder()
+                                            .WithContent("Your map ban selections have been confirmed! Please submit your deck next.")
+                                            .AsEphemeral(true));
+
+                                    // Send notification to bot channel
+                                    if (e.Guild is not null && server.BotChannelId.HasValue)
+                                    {
+                                        var botChannel = await e.Guild.GetChannelAsync((ulong)server.BotChannelId);
+                                        if (botChannel is not null)
+                                        {
+                                            var msg = await sender.SendMessageAsync(botChannel, $"{team.Name ?? "A team"} has confirmed their map ban selections");
+                                            if (msg is not null && round.MsgToDel is not null)
+                                                round.MsgToDel.Add(msg);
+                                        }
                                     }
                                 }
-
-                                // Add deck submission button
-                                var deckBtn = new DiscordButtonComponent(DiscordButtonStyle.Primary, $"btn_deck_{teamIndex}", "Submit Deck");
-
-                                // Update message
-                                if (e.Message is not null)
+                                catch (Exception ex)
                                 {
-                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
-                                        .WithContent("Map bans confirmed! Please submit your deck next.")
-                                        .AddEmbed(finalEmbed)
-                                        .AddComponents(deckBtn));
-                                }
-
-                                // Send notification to bot channel
-                                if (e.Guild is not null && server.BotChannelId.HasValue)
-                                {
-                                    var botChannel = await e.Guild.GetChannelAsync((ulong)server.BotChannelId);
-                                    if (botChannel is not null)
-                                    {
-                                        var msg = await sender.SendMessageAsync(botChannel, $"{team.Name ?? "A team"} has confirmed their map ban selections");
-                                        if (msg is not null && round.MsgToDel is not null)
-                                            round.MsgToDel.Add(msg);
-                                    }
+                                    Console.WriteLine($"Error confirming map bans: {ex.Message}");
+                                    await e.Interaction.CreateFollowupMessageAsync(
+                                        new DiscordFollowupMessageBuilder()
+                                            .WithContent($"Error confirming map bans: {ex.Message}")
+                                            .AsEphemeral(true));
                                 }
 
                                 // Save tournament state
@@ -388,59 +424,77 @@ namespace Wabbit.BotClient.Events
                                 int reviseTeamIndex = int.Parse(s.Replace("revise_map_bans_", ""));
                                 var reviseTeam = teams[reviseTeamIndex];
 
-                                await e.Interaction.DeferAsync();
+                                // Always defer first
+                                await e.Interaction.DeferAsync(true);
 
-                                // Get the map pool from the tournament manager
-                                var mapPool = _tournamentManager.GetTournamentMapPool(round.OneVOne);
-
-                                var mapSelectOptions = new List<DiscordSelectComponentOption>();
-                                foreach (var mapName in mapPool)
+                                try
                                 {
-                                    if (mapName is not null)
+                                    // Get the map pool from the tournament manager
+                                    var mapPool = _tournamentManager.GetTournamentMapPool(round.OneVOne);
+
+                                    var mapSelectOptions = new List<DiscordSelectComponentOption>();
+                                    foreach (var mapName in mapPool)
                                     {
-                                        var option = new DiscordSelectComponentOption(mapName, mapName);
-                                        mapSelectOptions.Add(option);
+                                        if (mapName is not null)
+                                        {
+                                            var option = new DiscordSelectComponentOption(mapName, mapName);
+                                            mapSelectOptions.Add(option);
+                                        }
                                     }
-                                }
 
-                                // Recreate the dropdown based on the round length
-                                DiscordSelectComponent newDropdown;
-                                int selectionCount = round.Length == 5 ? 2 : 3; // Bo5 = 2 bans, others = 3 bans
+                                    // Recreate the dropdown based on the round length
+                                    DiscordSelectComponent newDropdown;
+                                    int selectionCount = round.Length == 5 ? 2 : 3; // Bo5 = 2 bans, others = 3 bans
 
-                                newDropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", mapSelectOptions, false, selectionCount, selectionCount);
+                                    newDropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", mapSelectOptions, false, selectionCount, selectionCount);
 
-                                // Create a descriptive message based on the length
-                                string instructionMsg;
-                                if (round.Length == 3)
-                                {
-                                    instructionMsg = "**Scroll to see all map options!**\n\n" +
-                                        "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                                        "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
-                                        "selected will be randomly banned in case both teams ban the same map. " +
-                                        "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
-                                        "randomly before each game after deck codes have been locked in.";
-                                }
-                                else if (round.Length == 5)
-                                {
-                                    instructionMsg = "**Scroll to see all map options!**\n\n" +
-                                        "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                                        "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
-                                        "One of the 2nd priority maps selected by each team will be randomly banned. " +
-                                        "You will not know which maps were banned by your opponent, " +
-                                        "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
-                                }
-                                else
-                                {
-                                    instructionMsg = "**Scroll to see all map options!**\n\n" +
-                                        "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!";
-                                }
+                                    // Create a descriptive message based on the length
+                                    string instructionMsg;
+                                    if (round.Length == 3)
+                                    {
+                                        instructionMsg = "**Scroll to see all map options!**\n\n" +
+                                            "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                            "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
+                                            "selected will be randomly banned in case both teams ban the same map. " +
+                                            "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
+                                            "randomly before each game after deck codes have been locked in.";
+                                    }
+                                    else if (round.Length == 5)
+                                    {
+                                        instructionMsg = "**Scroll to see all map options!**\n\n" +
+                                            "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                            "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
+                                            "One of the 2nd priority maps selected by each team will be randomly banned. " +
+                                            "You will not know which maps were banned by your opponent, " +
+                                            "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.";
+                                    }
+                                    else
+                                    {
+                                        instructionMsg = "**Scroll to see all map options!**\n\n" +
+                                            "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!";
+                                    }
 
-                                // Reset and show dropdown again
-                                if (e.Message is not null)
+                                    // Reset and show dropdown again
+                                    if (e.Message is not null)
+                                    {
+                                        await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                            .WithContent(instructionMsg)
+                                            .AddComponents(newDropdown));
+                                    }
+
+                                    // Send confirmation as a followup
+                                    await e.Interaction.CreateFollowupMessageAsync(
+                                        new DiscordFollowupMessageBuilder()
+                                            .WithContent("You're now revising your map ban selections. Please select maps again from the dropdown.")
+                                            .AsEphemeral(true));
+                                }
+                                catch (Exception ex)
                                 {
-                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
-                                        .WithContent(instructionMsg)
-                                        .AddComponents(newDropdown));
+                                    Console.WriteLine($"Error revising map bans: {ex.Message}");
+                                    await e.Interaction.CreateFollowupMessageAsync(
+                                        new DiscordFollowupMessageBuilder()
+                                            .WithContent($"Error revising map bans: {ex.Message}")
+                                            .AsEphemeral(true));
                                 }
 
                                 break;
