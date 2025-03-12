@@ -1164,27 +1164,40 @@ namespace Wabbit.BotClient.Commands
                 var embed = CreateSignupEmbed(signup);
 
                 // Create components based on signup status
-                var components = new List<DiscordComponent>();
+                var builder = new DiscordMessageBuilder()
+                    .AddEmbed(embed);
+
                 if (signup.IsOpen)
                 {
                     // Add signup/withdraw buttons
-                    components.Add(new DiscordButtonComponent(
-                        DiscordButtonStyle.Success,
-                        $"signup_{signup.Name.Replace(" ", "_")}",
-                        "Sign Up"
-                    ));
-                    components.Add(new DiscordButtonComponent(
-                        DiscordButtonStyle.Danger,
-                        $"withdraw_{signup.Name.Replace(" ", "_")}",
-                        "Withdraw"
-                    ));
+                    builder.AddComponents(
+                        new DiscordButtonComponent(
+                            DiscordButtonStyle.Success,
+                            $"signup_{signup.Name.Replace(" ", "_")}",
+                            "Sign Up"
+                        ),
+                        new DiscordButtonComponent(
+                            DiscordButtonStyle.Danger,
+                            $"withdraw_{signup.Name.Replace(" ", "_")}",
+                            "Withdraw"
+                        )
+                    );
+                }
+                else
+                {
+                    // Add a disabled button for closed signups
+                    builder.AddComponents(
+                        new DiscordButtonComponent(
+                            DiscordButtonStyle.Secondary,
+                            $"closed_{signup.Name.Replace(" ", "_")}",
+                            "Signups Closed",
+                            true // disabled
+                        )
+                    );
                 }
 
                 // Update the message
-                await message.ModifyAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(components)
-                );
+                await message.ModifyAsync(builder);
 
                 Console.WriteLine($"Updated signup message for '{signup.Name}'");
             }
