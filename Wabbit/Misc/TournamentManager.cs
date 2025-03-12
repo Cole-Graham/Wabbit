@@ -681,7 +681,19 @@ namespace Wabbit.Misc
                         Username = p.Username
                     }).ToList();
 
-                    // Keep minimal logging, no need to log each participant
+                    // Prepare seed information for serialization
+                    var seedList = new List<(ulong Id, int Seed)>();
+                    if (signup.Seeds != null && signup.Seeds.Any())
+                    {
+                        foreach (var seed in signup.Seeds)
+                        {
+                            ulong playerId = seed.PlayerId != 0 ? seed.PlayerId : seed.Player?.Id ?? 0;
+                            if (playerId != 0)
+                            {
+                                seedList.Add((playerId, seed.Seed));
+                            }
+                        }
+                    }
 
                     // Create a simplified object for serialization
                     var signupData = new
@@ -690,12 +702,15 @@ namespace Wabbit.Misc
                         signup.IsOpen,
                         signup.CreatedAt,
                         signup.Format,
+                        signup.Type,
                         signup.ScheduledStartTime,
                         signup.SignupChannelId,
                         signup.MessageId,
                         CreatedById = signup.CreatedBy?.Id ?? signup.CreatorId,
                         CreatedByUsername = signup.CreatedBy?.Username ?? signup.CreatorUsername,
-                        Participants = participantsList
+                        Participants = participantsList,
+                        Seeds = seedList,
+                        signup.RelatedMessages
                     };
 
                     signupsToSave.Add(signupData);
@@ -756,39 +771,33 @@ namespace Wabbit.Misc
             return player as DSharpPlus.Entities.DiscordMember;
         }
 
-        public Tournament CreateTournament(string name, List<DiscordMember> players, TournamentFormat format, DiscordChannel announcementChannel)
+        public async Task<Tournament> CreateTournament(string name, List<DiscordMember> players, TournamentFormat format, DiscordChannel announcementChannel, GameType gameType = GameType.OneVsOne, Dictionary<DiscordMember, int>? playerSeeds = null)
         {
-            // Create the tournament
+            // Create a new tournament
             var tournament = new Tournament
             {
                 Name = name,
                 Format = format,
+                GameType = gameType,
                 AnnouncementChannel = announcementChannel
             };
 
-            // Check if a tournament with this name already exists
-            if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException($"A tournament with the name '{name}' already exists.");
-            }
-
-            // Determine the number of groups based on player count and format
+            // Determine group count based on player count and format
             int groupCount = DetermineGroupCount(players.Count, format);
 
-            // Create the groups and assign players
-            CreateGroups(tournament, players, groupCount);
+            // Create groups and distribute players with seeding if available
+            CreateGroups(tournament, players, groupCount, playerSeeds);
 
-            // Add to the list of ongoing tournaments
+            // Add to ongoing tournaments
             _ongoingRounds.Tournaments.Add(tournament);
 
-            // Save immediately after creation to ensure data is persisted
-            SaveTournamentsToFile();
+            // Save all data immediately
+            await SaveAllData();
 
-            Console.WriteLine($"Created tournament '{name}' with {players.Count} players and {groupCount} groups");
             return tournament;
         }
 
-        private void CreateGroups(Tournament tournament, List<DiscordMember> players, int groupCount)
+        private void CreateGroups(Tournament tournament, List<DiscordMember> players, int groupCount, Dictionary<DiscordMember, int>? playerSeeds = null)
         {
             // Create the groups
             for (int i = 0; i < groupCount; i++)
@@ -797,15 +806,95 @@ namespace Wabbit.Misc
                 tournament.Groups.Add(group);
             }
 
-            // Distribute players evenly across groups
-            var shuffledPlayers = players.OrderBy(_ => Guid.NewGuid()).ToList();
-            for (int i = 0; i < shuffledPlayers.Count; i++)
-            {
-                var groupIndex = i % groupCount;
-                var group = tournament.Groups[groupIndex];
+            // Check if any players have predefined seeds
+            var effectivePlayerSeeds = playerSeeds ?? new Dictionary<DiscordMember, int>();
 
-                var participant = new Tournament.GroupParticipant { Player = shuffledPlayers[i] };
-                group.Participants.Add(participant);
+            // Create a list to hold players with their seeds
+            var playersWithSeeds = players
+                .Select(p => new
+                {
+                    Player = p,
+                    Seed = effectivePlayerSeeds.ContainsKey(p) ? effectivePlayerSeeds[p] : 0
+                })
+                .ToList();
+
+            // Distribute players based on seeding
+            if (playersWithSeeds.Any(p => p.Seed > 0))
+            {
+                // Sort players: seeded first (by seed), then rest randomly
+                var seededPlayers = playersWithSeeds
+                    .Where(p => p.Seed > 0)
+                    .OrderBy(p => p.Seed)
+                    .ToList();
+
+                var unseededPlayers = playersWithSeeds
+                    .Where(p => p.Seed == 0)
+                    .OrderBy(_ => Guid.NewGuid())
+                    .ToList();
+
+                Console.WriteLine($"Creating tournament with {seededPlayers.Count} seeded players and {unseededPlayers.Count} unseeded players");
+
+                // Use snake pattern for seeded players
+                bool reverseDirection = false;
+                int currentGroup = 0;
+
+                // Add seeded players using snake draft
+                foreach (var player in seededPlayers)
+                {
+                    var group = tournament.Groups[currentGroup];
+                    var participant = new Tournament.GroupParticipant
+                    {
+                        Player = player.Player,
+                        Seed = player.Seed
+                    };
+                    group.Participants.Add(participant);
+
+                    // Move to next group using snake draft pattern
+                    if (!reverseDirection)
+                    {
+                        currentGroup++;
+                        if (currentGroup >= groupCount)
+                        {
+                            currentGroup = groupCount - 1;
+                            reverseDirection = true;
+                        }
+                    }
+                    else
+                    {
+                        currentGroup--;
+                        if (currentGroup < 0)
+                        {
+                            currentGroup = 0;
+                            reverseDirection = false;
+                        }
+                    }
+                }
+
+                // Distribute unseeded players evenly to balance group sizes
+                foreach (var player in unseededPlayers)
+                {
+                    // Find the group with the fewest players
+                    var group = tournament.Groups.OrderBy(g => g.Participants.Count).First();
+                    var participant = new Tournament.GroupParticipant
+                    {
+                        Player = player.Player,
+                        Seed = player.Seed
+                    };
+                    group.Participants.Add(participant);
+                }
+            }
+            else
+            {
+                // No seeds, distribute players randomly
+                var shuffledPlayers = players.OrderBy(_ => Guid.NewGuid()).ToList();
+                for (int i = 0; i < shuffledPlayers.Count; i++)
+                {
+                    var groupIndex = i % groupCount;
+                    var group = tournament.Groups[groupIndex];
+
+                    var participant = new Tournament.GroupParticipant { Player = shuffledPlayers[i] };
+                    group.Participants.Add(participant);
+                }
             }
 
             // Create the matches within each group
@@ -1513,12 +1602,13 @@ namespace Wabbit.Misc
         }
 
         // Add a tournament signup management method
-        public TournamentSignup CreateSignup(string name, TournamentFormat format, DiscordUser creator, ulong signupChannelId, DateTime? scheduledStartTime = null)
+        public TournamentSignup CreateSignup(string name, TournamentFormat format, DiscordUser creator, ulong signupChannelId, GameType gameType = GameType.OneVsOne, DateTime? scheduledStartTime = null)
         {
             var signup = new TournamentSignup
             {
                 Name = name,
                 Format = format,
+                Type = gameType,
                 CreatedAt = DateTime.Now,
                 CreatedBy = creator,
                 CreatorId = creator?.Id ?? 0,
@@ -1531,7 +1621,7 @@ namespace Wabbit.Misc
             _ongoingRounds.TournamentSignups.Add(signup);
             SaveSignupsToFile();
 
-            Console.WriteLine($"Created tournament signup '{name}'");
+            Console.WriteLine($"Created tournament signup '{name}' with game type {gameType}");
             return signup;
         }
 
@@ -1846,7 +1936,7 @@ namespace Wabbit.Misc
                                     if (channel is not null)
                                     {
                                         // Create the tournament
-                                        var tournament = CreateTournament(signup.Name, players, signup.Format, channel);
+                                        var tournament = await CreateTournament(signup.Name, players, signup.Format, channel, signup.Type);
                                         Console.WriteLine($"Successfully created tournament '{tournament.Name}' from signup with {players.Count} players");
 
                                         // Save immediately to ensure the tournament is persisted
@@ -1990,6 +2080,9 @@ namespace Wabbit.Misc
             {
                 Console.WriteLine($"ERROR: Failed to load participants for signup '{signup.Name}': {ex.Message}");
             }
+
+            // Also load seed information for participants
+            await LoadSeedInformationAsync(signup, client);
         }
 
         // Add this method after LoadSignupsFromFile
@@ -2432,6 +2525,77 @@ namespace Wabbit.Misc
             UpdateSignup(signup);
 
             return signup;
+        }
+
+        // Add this new method after LoadParticipantsAsync
+        private async Task LoadSeedInformationAsync(TournamentSignup signup, DSharpPlus.DiscordClient client)
+        {
+            try
+            {
+                if (signup.SeedInfo == null || !signup.SeedInfo.Any())
+                {
+                    // No seed information to load
+                    return;
+                }
+
+                Console.WriteLine($"Loading seed information for '{signup.Name}'...");
+                int successCount = 0;
+                int failCount = 0;
+
+                // Initialize Seeds collection if needed
+                if (signup.Seeds == null)
+                {
+                    signup.Seeds = [];
+                }
+                else
+                {
+                    // Clear existing seeds to prevent duplicates
+                    signup.Seeds.Clear();
+                }
+
+                foreach (var (id, seedValue) in signup.SeedInfo)
+                {
+                    try
+                    {
+                        // Find the matching participant in the already loaded participants
+                        var participant = signup.Participants.FirstOrDefault(p => p.Id == id);
+
+                        if (participant is not null)
+                        {
+                            // Create and add the seed information
+                            var participantSeed = new ParticipantSeed
+                            {
+                                Player = participant,
+                                PlayerId = id,
+                                Seed = seedValue
+                            };
+
+                            signup.Seeds.Add(participantSeed);
+                            successCount++;
+                        }
+                        else
+                        {
+                            // Participant not found in loaded participants
+                            failCount++;
+                            Console.WriteLine($"Participant with ID {id} not found for seeding in '{signup.Name}'");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        failCount++;
+                        Console.WriteLine($"ERROR: Exception while loading seed for participant ID {id}: {ex.Message}");
+                    }
+                }
+
+                Console.WriteLine($"Seed information loading for '{signup.Name}' complete: {successCount} succeeded, {failCount} failed");
+
+                // Add this to avoid the "async method lacks await" warning
+                await Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Failed to load seed information for signup '{signup.Name}': {ex.Message}");
+            }
         }
     }
 }

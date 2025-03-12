@@ -11,6 +11,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
+using System.IO;
+using Wabbit.Services.Interfaces;
 
 namespace Wabbit.BotClient.Events
 {
@@ -46,7 +48,15 @@ namespace Wabbit.BotClient.Events
 
                     string customId = e.Id;
 
-                    if (customId.StartsWith("signup_"))
+                    if (customId.StartsWith("join_tournament_"))
+                    {
+                        await HandleJoinTournamentButton(sender, e);
+                    }
+                    else if (customId.StartsWith("start_tournament_"))
+                    {
+                        await HandleStartTournamentButton(sender, e);
+                    }
+                    else if (customId.StartsWith("signup_"))
                     {
                         await HandleSignupButton(sender, e);
                     }
@@ -1544,6 +1554,152 @@ namespace Wabbit.BotClient.Events
             catch (Exception ex)
             {
                 Console.WriteLine($"Error cleaning up map ban messages: {ex.Message}");
+            }
+        }
+
+        private async Task HandleJoinTournamentButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
+        {
+            try
+            {
+                // Extract tournament name from button ID
+                string tournamentName = e.Id.Replace("join_tournament_", "");
+
+                // Get the signup
+                var signup = _tournamentManager.GetSignup(tournamentName);
+                if (signup == null)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Tournament signup not found.")
+                        .AsEphemeral());
+                    return;
+                }
+
+                // Check if the player is already in the tournament
+                if (signup.Participants.Any(p => p.Id == e.User.Id))
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("You're already participating in this tournament.")
+                        .AsEphemeral());
+                    return;
+                }
+
+                // Cast the user to DiscordMember with null check
+                var member = e.User as DiscordMember;
+                if (member is null)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Unable to add you to the tournament: You must be a server member.")
+                        .AsEphemeral());
+                    return;
+                }
+
+                // Add the member to the tournament
+                signup.Participants.Add(member);
+
+                // Update the signup
+                _tournamentManager.UpdateSignup(signup);
+                await _tournamentManager.SaveAllData();
+
+                // Update the signup message
+                await UpdateSignupMessage(sender, signup);
+
+                // Notify the user
+                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .WithContent($"You've joined the tournament '{tournamentName}'!")
+                    .AsEphemeral());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling join tournament button");
+                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .WithContent($"Error joining tournament: {ex.Message}")
+                    .AsEphemeral());
+            }
+        }
+
+        private async Task HandleStartTournamentButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
+        {
+            try
+            {
+                // Extract tournament name from button ID
+                string tournamentName = e.Id.Replace("start_tournament_", "");
+
+                // Get the signup
+                var signup = _tournamentManager.GetSignup(tournamentName);
+                if (signup == null)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Tournament signup not found.")
+                        .AsEphemeral());
+                    return;
+                }
+
+                // Check if the user is the creator
+                if (signup.CreatorId != e.User.Id)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Only the tournament creator can start the tournament.")
+                        .AsEphemeral());
+                    return;
+                }
+
+                // Check if there are enough participants
+                if (signup.Participants.Count < 3)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("At least 3 participants are needed to start the tournament.")
+                        .AsEphemeral());
+                    return;
+                }
+
+                // Create scoped service to get a tournament manager instance
+                using var scope = _scopeFactory.CreateScope();
+                var tournamentManager = scope.ServiceProvider.GetRequiredService<TournamentManager>();
+
+                // Close the signup
+                signup.IsOpen = false;
+                tournamentManager.UpdateSignup(signup);
+
+                // Create the tournament
+                var tournament = await tournamentManager.CreateTournament(
+                    signup.Name,
+                    signup.Participants.ToList(),
+                    signup.Format,
+                    e.Channel,
+                    signup.Type);
+
+                // Generate standings image
+                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
+
+                // Create success message
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"🏆 Tournament Created: {tournament.Name}")
+                    .WithDescription($"Format: {tournament.Format}\nPlayers: {tournament.Groups.Sum(g => g.Participants.Count)}\nGroups: {tournament.Groups.Count}")
+                    .WithColor(DiscordColor.Green);
+
+                // Send confirmation message with standings image
+                using var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .AddEmbed(embed)
+                    .AddFile(Path.GetFileName(imagePath), fileStream));
+
+                // Notify all players
+                var notificationEmbed = new DiscordEmbedBuilder()
+                    .WithTitle($"🏆 Tournament has started: {tournament.Name}")
+                    .WithDescription("Check the tournament channel for details and your group assignments.")
+                    .WithColor(DiscordColor.Green);
+
+                // Create a public announcement
+                await e.Channel.SendMessageAsync(new DiscordMessageBuilder()
+                    .WithContent($"Tournament '{tournament.Name}' has started with {tournament.Groups.Sum(g => g.Participants.Count)} players!")
+                    .AddEmbed(embed));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling start tournament button");
+                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .WithContent($"Error starting tournament: {ex.Message}")
+                    .AsEphemeral());
             }
         }
     }

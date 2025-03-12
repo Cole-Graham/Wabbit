@@ -4,14 +4,22 @@ using System.Collections.Generic;
 
 namespace Wabbit.Models
 {
+    public enum GameType
+    {
+        OneVsOne,
+        TwoVsTwo
+    }
+
     public class TournamentSignup
     {
         public string Name { get; set; } = string.Empty;
         public bool IsOpen { get; set; } = true;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public List<DiscordMember> Participants { get; set; } = [];
+        public List<ParticipantSeed> Seeds { get; set; } = [];
         public DiscordMessage? SignupListMessage { get; set; }
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
+        public GameType Type { get; set; } = GameType.OneVsOne;
         public DateTime? ScheduledStartTime { get; set; }
         public DiscordUser CreatedBy { get; set; } = null!;
 
@@ -32,6 +40,19 @@ namespace Wabbit.Models
         // Used to store participant info from JSON until we can convert to DiscordMembers
         [System.Text.Json.Serialization.JsonIgnore]
         public List<(ulong Id, string Username)> ParticipantInfo { get; set; } = [];
+
+        // Used to store seeding info from JSON until we can convert to DiscordMembers
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public List<(ulong Id, int Seed)> SeedInfo { get; set; } = [];
+    }
+
+    public class ParticipantSeed
+    {
+        public DiscordMember Player { get; set; } = null!;
+        public int Seed { get; set; } = 0; // 0 = unseeded, 1 = first seed, 2 = second seed, etc.
+
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public ulong PlayerId { get; set; }
     }
 
     public class RelatedMessage

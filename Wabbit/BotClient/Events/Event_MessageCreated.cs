@@ -1,13 +1,15 @@
 using DSharpPlus;
 using DSharpPlus.EventArgs;
-using System.Threading.Tasks;
-using System.Collections.Generic;
+using DSharpPlus.Entities;
 using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using DSharpPlus.Entities;
+using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 namespace Wabbit.BotClient.Events
 {
@@ -16,10 +18,10 @@ namespace Wabbit.BotClient.Events
         private readonly OngoingRounds _ongoingRounds;
         private readonly TournamentManager _tournamentManager;
 
-        public Event_MessageCreated(OngoingRounds ongoingRounds)
+        public Event_MessageCreated(OngoingRounds ongoingRounds, TournamentManager tournamentManager)
         {
             _ongoingRounds = ongoingRounds;
-            _tournamentManager = new TournamentManager(ongoingRounds);
+            _tournamentManager = tournamentManager;
         }
 
         public async Task HandleEventAsync(DiscordClient sender, MessageCreatedEventArgs e)
@@ -28,22 +30,12 @@ namespace Wabbit.BotClient.Events
             if (e.Author.IsBot)
                 return;
 
-            // Check if this is a deck submission (replying to a message that starts with 'Please enter your deck code')
-            if (e.Message.ReferencedMessage is not null &&
-                e.Message.ReferencedMessage.Content is not null &&
-                e.Message.ReferencedMessage.Content.Contains("Please enter your deck code"))
-            {
-                await HandleDeckSubmission(sender, e);
-                return;
-            }
-
             // Check if this is a response to the tournament creation message
             if (e.Message.ReferencedMessage is not null)
             {
                 // Check if the referenced message is from the bot and contains "Tournament creation started"
-                if (e.Message.ReferencedMessage.Author is not null &&
-                    e.Message.ReferencedMessage.Content is not null &&
-                    e.Message.ReferencedMessage.Author.Id == sender.CurrentUser.Id &&
+                if (e.Message.ReferencedMessage.Author?.Id == sender.CurrentUser.Id &&
+                    e.Message.ReferencedMessage.Content != null &&
                     e.Message.ReferencedMessage.Content.Contains("Tournament creation started"))
                 {
                     await HandleTournamentCreation(sender, e);
@@ -52,7 +44,7 @@ namespace Wabbit.BotClient.Events
             }
 
             // Check if this is in the signup channel
-            var serverConfig = ConfigManager.Config?.Servers?.FirstOrDefault(s => s.ServerId == e.Guild?.Id);
+            var serverConfig = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == e.Guild?.Id);
             if (serverConfig?.SignupChannelId == e.Channel?.Id)
             {
                 // Handle interactions in the signup channel
@@ -60,90 +52,11 @@ namespace Wabbit.BotClient.Events
             }
         }
 
-        private async Task HandleDeckSubmission(DiscordClient sender, MessageCreatedEventArgs e)
-        {
-            try
-            {
-                Console.WriteLine($"Processing deck submission from {e.Author.Username} ({e.Author.Id})");
-
-                // Extract the deck code from the message
-                string deckCode = e.Message.Content.Trim();
-
-                if (string.IsNullOrWhiteSpace(deckCode))
-                {
-                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Your deck code seems to be empty. Please send a valid deck code.");
-                    return;
-                }
-
-                // Find the tournament round
-                var round = _ongoingRounds.TourneyRounds.FirstOrDefault(r =>
-                    r.Teams is not null &&
-                    r.Teams.Any(t => t.Thread?.Id == e.Channel.Id));
-
-                if (round == null)
-                {
-                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find an active tournament round for this channel.");
-                    return;
-                }
-
-                // Find the team and participant
-                var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
-                if (team == null)
-                {
-                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find your team data.");
-                    return;
-                }
-
-                var participant = team.Participants?.FirstOrDefault(p =>
-                    p is not null && p.Player is not null && p.Player.Id == e.Author.Id);
-
-                if (participant == null)
-                {
-                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find your participant data in this tournament.");
-                    return;
-                }
-
-                // Create confirmation buttons
-                var confirmButton = new DiscordButtonComponent(
-                    DiscordButtonStyle.Success,
-                    $"confirm_deck_{e.Author.Id}",
-                    "Confirm Deck Code");
-
-                var reviseButton = new DiscordButtonComponent(
-                    DiscordButtonStyle.Secondary,
-                    $"revise_deck_{e.Author.Id}",
-                    "Revise Deck Code");
-
-                // Send confirmation message with the submitted deck code and buttons
-                var confirmationEmbed = new DiscordEmbedBuilder()
-                    .WithTitle("Deck Code Submission")
-                    .WithDescription($"You've submitted the following deck code:\n```\n{deckCode}\n```\nPlease confirm your submission or revise if needed.")
-                    .WithColor(DiscordColor.Orange);
-
-                var confirmationMessage = await e.Channel.SendMessageAsync(
-                    new DiscordMessageBuilder()
-                        .WithContent($"{e.Author.Mention} Please review your deck code submission.")
-                        .AddEmbed(confirmationEmbed)
-                        .AddComponents(confirmButton, reviseButton));
-
-                // Store the deck code temporarily in a property on the participant
-                participant.TempDeckCode = deckCode;
-
-                // We'll handle the confirmation/revision in the component interaction event
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error processing deck submission: {ex.Message}");
-                await e.Channel.SendMessageAsync($"{e.Author.Mention} An error occurred while processing your deck submission: {ex.Message}");
-            }
-        }
-
         private async Task HandleTournamentCreation(DiscordClient sender, MessageCreatedEventArgs e)
         {
             try
             {
-                // Ensure referenced message exists
-                if (e.Message.ReferencedMessage is null || e.Message.ReferencedMessage.Content is null)
+                if (e.Message.ReferencedMessage == null || e.Message.ReferencedMessage.Content == null)
                 {
                     await e.Channel.SendMessageAsync("Referenced message not found or has no content.");
                     return;
@@ -171,65 +84,122 @@ namespace Wabbit.BotClient.Events
 
                 // Extract the format from the referenced message
                 TournamentFormat format = TournamentFormat.GroupStageWithPlayoffs; // Default format
+                GameType gameType = GameType.OneVsOne; // Default game type
 
-                try
+                // Check if seeding is mentioned
+                bool useSeeding = referencedContent.Contains("Seeding is enabled", StringComparison.OrdinalIgnoreCase);
+
+                // Try to find the format in the message content
+                if (referencedContent.Contains("format:"))
                 {
-                    // Try to find the format in the message content
-                    if (referencedContent.Contains("format:"))
+                    // Parse format string
+                    int formatStartIdx = referencedContent.IndexOf("format:") + "format:".Length;
+                    int formatEndIdx = referencedContent.IndexOf('\'', formatStartIdx + 1);
+                    if (formatStartIdx > 0 && formatEndIdx > formatStartIdx)
                     {
-                        // Parse format from the message
-                        int formatStartIdx = referencedContent.IndexOf("format:") + "format:".Length;
-                        int formatEndIdx = referencedContent.IndexOf('\"', formatStartIdx + 1);
-                        if (formatStartIdx > 0 && formatEndIdx > formatStartIdx)
-                        {
-                            string formatStr = referencedContent.Substring(formatStartIdx, formatEndIdx - formatStartIdx).Trim();
-                            // Remove quotes if present
-                            formatStr = formatStr.Trim('"', ' ');
+                        string formatStr = referencedContent.Substring(formatStartIdx, formatEndIdx - formatStartIdx).Trim();
+                        formatStr = formatStr.Trim('\'', ' ');
 
-                            if (Enum.TryParse<TournamentFormat>(formatStr, out var parsedFormat))
-                            {
-                                format = parsedFormat;
-                            }
+                        if (Enum.TryParse<TournamentFormat>(formatStr, out var parsedFormat))
+                        {
+                            format = parsedFormat;
                         }
                     }
                 }
-                catch
+
+                // Try to find the game type in the message content
+                if (referencedContent.Contains("game type:"))
                 {
-                    // If we can't parse the format, just use the default
-                    format = TournamentFormat.GroupStageWithPlayoffs;
+                    if (referencedContent.Contains("2v2"))
+                    {
+                        gameType = GameType.TwoVsTwo;
+                    }
                 }
 
                 // Parse mentions to get player list
-                List<DiscordMember> players = [];
+                List<DiscordMember> players = new List<DiscordMember>();
+                Dictionary<DiscordMember, int> playerSeeds = new Dictionary<DiscordMember, int>();
 
                 foreach (var user in e.Message.MentionedUsers)
                 {
-                    var member = await e.Guild.GetMemberAsync(user.Id);
-                    players.Add(member);
+                    try
+                    {
+                        var member = await e.Guild.GetMemberAsync(user.Id);
+                        if (member is not null)
+                        {
+                            players.Add(member);
+
+                            // If seeding is enabled, check for a number after the mention
+                            if (useSeeding)
+                            {
+                                string messageContent = e.Message.Content;
+                                string mentionPattern = $"<@!?{user.Id}>";
+                                var match = Regex.Match(messageContent, mentionPattern);
+
+                                if (match.Success)
+                                {
+                                    int mentionEnd = match.Index + match.Length;
+                                    if (mentionEnd < messageContent.Length)
+                                    {
+                                        // Look for a number after the mention
+                                        string afterMention = messageContent.Substring(mentionEnd);
+                                        var numberMatch = Regex.Match(afterMention, @"^\s*(\d+)");
+
+                                        if (numberMatch.Success && int.TryParse(numberMatch.Groups[1].Value, out int seedValue) && seedValue > 0)
+                                        {
+                                            playerSeeds[member] = seedValue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error getting member {user.Id}: {ex.Message}");
+                        // Continue with other members
+                    }
                 }
 
-                if (players.Count < 2)
+                if (players.Count < 3)
                 {
-                    await e.Channel.SendMessageAsync("At least 2 players are required to create a tournament.");
+                    await e.Channel.SendMessageAsync("At least 3 players are required to create a tournament.");
                     return;
                 }
 
                 // Create the tournament
-                var tournament = _tournamentManager.CreateTournament(tournamentName, players, format, e.Channel);
+                var tournament = await _tournamentManager.CreateTournament(
+                    tournamentName,
+                    players,
+                    format,
+                    e.Channel,
+                    gameType,
+                    useSeeding ? playerSeeds : null);
 
-                await e.Channel.SendMessageAsync($"Tournament '{tournamentName}' created successfully with {players.Count} participants!");
+                // Build response message
+                string seedInfo = "";
+                if (useSeeding && playerSeeds.Any())
+                {
+                    seedInfo = "\n**Seeded Players:**\n" + string.Join("\n",
+                        playerSeeds.OrderBy(s => s.Value)
+                                  .Select(s => $"• {s.Key.DisplayName}: Seed #{s.Value}"));
+                }
+
+                await e.Channel.SendMessageAsync($"Tournament '{tournamentName}' created successfully with {players.Count} participants! (Format: {format}, Game Type: {(gameType == GameType.OneVsOne ? "1v1" : "2v2")}){seedInfo}");
 
                 // Generate and send the standings image
                 try
                 {
                     string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
 
-                    var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
-                    var messageBuilder = new DiscordMessageBuilder()
-                        .WithContent($"📊 **{tournament.Name}** Initial Standings")
-                        .AddFile(Path.GetFileName(imagePath), fileStream);
+                    using (var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
+                    {
+                        var messageBuilder = new DiscordMessageBuilder()
+                            .WithContent($"📊 **{tournament.Name}** Initial Standings")
+                            .AddFile(Path.GetFileName(imagePath), fileStream);
 
-                    await e.Channel.SendMessageAsync(messageBuilder);
+                        await e.Channel.SendMessageAsync(messageBuilder);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -239,6 +209,7 @@ namespace Wabbit.BotClient.Events
             catch (Exception ex)
             {
                 await e.Channel.SendMessageAsync($"Error creating tournament: {ex.Message}");
+                Console.WriteLine($"Error in HandleTournamentCreation: {ex}");
             }
         }
     }

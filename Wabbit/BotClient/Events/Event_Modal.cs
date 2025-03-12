@@ -7,6 +7,7 @@ using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Linq;
 
 namespace Wabbit.BotClient.Events
 {
@@ -330,6 +331,14 @@ namespace Wabbit.BotClient.Events
                 // Extract tournament name from modal ID
                 string tournamentName = modal.Interaction.Data.CustomId.Replace("tournament_create_modal_", "");
 
+                // Check if seeding is enabled by looking for "_seeded" suffix
+                bool useSeeding = tournamentName.EndsWith("_seeded");
+                if (useSeeding)
+                {
+                    // Remove the "_seeded" suffix from the tournament name
+                    tournamentName = tournamentName.Substring(0, tournamentName.Length - 7);
+                }
+
                 // Extract players from the input
                 string playersText = modal.Values["players"];
 
@@ -338,6 +347,7 @@ namespace Wabbit.BotClient.Events
                 var matches = userMentionRegex.Matches(playersText);
 
                 List<DiscordMember> players = [];
+                Dictionary<DiscordMember, int> playerSeeds = new Dictionary<DiscordMember, int>();
 
                 if (modal.Interaction.Guild is null)
                 {
@@ -357,6 +367,47 @@ namespace Wabbit.BotClient.Events
                             if (member is not null)
                             {
                                 players.Add(member);
+
+                                // If seeding is enabled, check for a number after the mention
+                                if (useSeeding)
+                                {
+                                    // Find the position of this mention in the text
+                                    int mentionPos = match.Index;
+                                    int mentionEnd = mentionPos + match.Length;
+
+                                    // Check if there's text after this mention but before the next mention or end of text
+                                    if (mentionEnd < playersText.Length)
+                                    {
+                                        // Extract the text after this mention
+                                        string afterMention = playersText.Substring(mentionEnd);
+
+                                        // Find the next mention or the end of the text
+                                        int nextMentionPos = afterMention.IndexOf("<@");
+                                        if (nextMentionPos == -1) nextMentionPos = afterMention.Length;
+
+                                        // Extract the text between this mention and the next one
+                                        string betweenMentions = afterMention.Substring(0, nextMentionPos).Trim();
+
+                                        // Check if it starts with a number
+                                        if (betweenMentions.Length > 0 && char.IsDigit(betweenMentions[0]))
+                                        {
+                                            // Extract the number
+                                            string numberStr = "";
+                                            int i = 0;
+                                            while (i < betweenMentions.Length && (char.IsDigit(betweenMentions[i]) || betweenMentions[i] == '.'))
+                                            {
+                                                numberStr += betweenMentions[i];
+                                                i++;
+                                            }
+
+                                            // Parse the number as the seed value
+                                            if (int.TryParse(numberStr, out int seedValue) && seedValue > 0)
+                                            {
+                                                playerSeeds[member] = seedValue;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                         catch
@@ -376,11 +427,13 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Create the tournament
-                var tournament = _tournamentManager.CreateTournament(
+                var tournament = await _tournamentManager.CreateTournament(
                     tournamentName,
                     players,
                     TournamentFormat.GroupStageWithPlayoffs,
-                    modal.Interaction.Channel);
+                    modal.Interaction.Channel,
+                    GameType.OneVsOne,
+                    useSeeding ? playerSeeds : null);
 
                 // Add to ongoing tournaments
                 _roundsHolder.Tournaments.Add(tournament);
@@ -390,8 +443,18 @@ namespace Wabbit.BotClient.Events
 
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"🏆 Tournament Created: {tournament.Name}")
-                    .WithDescription($"Format: Group Stage + Playoffs\nPlayers: {players.Count}\nGroups: {tournament.Groups.Count}")
-                    .WithColor(DiscordColor.Green)
+                    .WithDescription($"Format: Group Stage + Playoffs\nPlayers: {players.Count}\nGroups: {tournament.Groups.Count}");
+
+                // Add seeding information if used
+                if (useSeeding && playerSeeds.Any())
+                {
+                    string seedInfo = string.Join("\n", playerSeeds
+                        .OrderBy(s => s.Value)
+                        .Select(s => $"• {s.Key.DisplayName}: Seed #{s.Value}"));
+                    embed.AddField("Player Seeds", seedInfo);
+                }
+
+                embed.WithColor(DiscordColor.Green)
                     .WithFooter("Use /tournament_manager show_standings to view the current standings");
 
                 // Send the tournament info with the standings image

@@ -12,6 +12,7 @@ namespace Wabbit.Models
         public List<Match> PlayoffMatches { get; set; } = [];
         public TournamentStage CurrentStage { get; set; } = TournamentStage.Groups;
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
+        public GameType GameType { get; set; } = GameType.OneVsOne;
         public int MatchesPerPlayer { get; set; } = 0; // Default to roundrobin
         public bool IsComplete { get; set; } = false;
         [System.Text.Json.Serialization.JsonIgnore]
@@ -36,6 +37,9 @@ namespace Wabbit.Models
             public int Losses { get; set; } = 0;
             public int Points => (Wins * 3) + Draws;
             public bool AdvancedToPlayoffs { get; set; } = false;
+
+            // Seeding information
+            public int Seed { get; set; } = 0; // 0 = unseeded, 1 = first seed, 2 = second seed, etc.
 
             // For tiebreakers if needed
             public int GamesWon { get; set; } = 0;
