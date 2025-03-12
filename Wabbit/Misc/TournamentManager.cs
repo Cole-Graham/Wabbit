@@ -1238,7 +1238,21 @@ namespace Wabbit.Misc
 
         public List<TournamentSignup> GetAllSignups()
         {
+            // No need to modify the Participants collection
+            // Just ensure the TournamentSignup objects have their ParticipantInfo loaded
             return _ongoingRounds.TournamentSignups;
+        }
+
+        // Add a helper method to get the effective participant count
+        public int GetParticipantCount(TournamentSignup signup)
+        {
+            if (signup.Participants != null && signup.Participants.Count > 0)
+                return signup.Participants.Count;
+
+            if (signup.ParticipantInfo != null && signup.ParticipantInfo.Count > 0)
+                return signup.ParticipantInfo.Count;
+
+            return 0;
         }
 
         public async Task DeleteSignup(string name, DiscordClient? client = null)
@@ -1393,50 +1407,90 @@ namespace Wabbit.Misc
             // Clear existing participants to avoid duplicates
             signup.Participants.Clear();
 
-            if (signup.ParticipantInfo != null && signup.ParticipantInfo.Count > 0)
+            if (signup.ParticipantInfo == null || signup.ParticipantInfo.Count == 0)
             {
-                if (verbose) Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
+                if (verbose) Console.WriteLine($"No participant info found for signup '{signup.Name}'");
+                return;
+            }
+
+            if (verbose) Console.WriteLine($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
+
+            if (signup.SignupChannelId == 0)
+            {
+                Console.WriteLine($"ERROR: Signup '{signup.Name}' has no channel ID, cannot load participants");
+                return;
+            }
+
+            // Check if client is connected
+            // DSharpPlus doesn't expose ConnectionState directly
+            try
+            {
+                // Try to get the channel first
+                var channel = await client.GetChannelAsync(signup.SignupChannelId);
+                if (channel?.Guild is null)
+                {
+                    Console.WriteLine($"ERROR: Could not find channel {signup.SignupChannelId} or its guild for signup '{signup.Name}'");
+                    return;
+                }
+
+                var guild = channel.Guild;
+                int successCount = 0;
+                int failCount = 0;
 
                 foreach (var (id, username) in signup.ParticipantInfo)
                 {
                     try
                     {
-                        // Try to get the guild from the signup channel
-                        if (signup.SignupChannelId == 0)
-                        {
-                            if (verbose) Console.WriteLine($"Signup '{signup.Name}' has no channel ID, cannot load participants");
-                            continue;
-                        }
+                        // Try to get the member with retries
+                        DiscordMember? member = null;
+                        Exception? lastException = null;
 
-                        var channel = await client.GetChannelAsync(signup.SignupChannelId);
-                        if (channel?.Guild is not null)
+                        // Try up to 3 times with short delays between attempts
+                        for (int attempt = 1; attempt <= 3; attempt++)
                         {
                             try
                             {
-                                var member = await channel.Guild.GetMemberAsync(id);
-                                if (member is not null)
-                                {
-                                    signup.Participants.Add(member);
-                                    if (verbose) Console.WriteLine($"Added participant {username} (ID: {id}) to signup '{signup.Name}'");
-                                }
+                                member = await guild.GetMemberAsync(id);
+                                if (member is not null) break;
                             }
                             catch (Exception ex)
                             {
-                                if (verbose) Console.WriteLine($"Could not load member {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
+                                lastException = ex;
+                                if (verbose) Console.WriteLine($"Attempt {attempt} failed to get member {username} (ID: {id}): {ex.Message}");
+
+                                if (attempt < 3)
+                                {
+                                    // Wait a bit before retrying (increasing delay with each attempt)
+                                    await Task.Delay(attempt * 500);
+                                }
                             }
+                        }
+
+                        if (member is not null)
+                        {
+                            signup.Participants.Add(member);
+                            successCount++;
+                            if (verbose) Console.WriteLine($"Added participant {username} (ID: {id}) to signup '{signup.Name}'");
+                        }
+                        else
+                        {
+                            failCount++;
+                            string errorMessage = lastException != null ? $": {lastException.Message}" : " (unknown error)";
+                            Console.WriteLine($"Failed to add participant {username} (ID: {id}) after 3 attempts{errorMessage}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        if (verbose) Console.WriteLine($"Error loading participant {username} (ID: {id}) for signup '{signup.Name}': {ex.Message}");
+                        failCount++;
+                        Console.WriteLine($"ERROR: Exception while processing participant {username} (ID: {id}): {ex.Message}");
                     }
                 }
 
-                if (verbose) Console.WriteLine($"Finished loading participants for '{signup.Name}'. Loaded {signup.Participants.Count} of {signup.ParticipantInfo.Count} participants.");
+                Console.WriteLine($"Participant loading for '{signup.Name}' complete: {successCount} succeeded, {failCount} failed");
             }
-            else
+            catch (Exception ex)
             {
-                if (verbose) Console.WriteLine($"No participant info found for signup '{signup.Name}'");
+                Console.WriteLine($"ERROR: Failed to load participants for signup '{signup.Name}': {ex.Message}");
             }
         }
 
@@ -1445,17 +1499,48 @@ namespace Wabbit.Misc
         {
             if (_ongoingRounds.TournamentSignups == null || !_ongoingRounds.TournamentSignups.Any())
             {
+                Console.WriteLine("No signups to load participants for");
                 return;
             }
 
-            Console.WriteLine($"Loading participants for {_ongoingRounds.TournamentSignups.Count} signups...");
+            Console.WriteLine($"Starting to load participants for {_ongoingRounds.TournamentSignups.Count} signups...");
+
+            // Wait a bit after bot startup to ensure Discord connection is stable
+            Console.WriteLine("Waiting 5 seconds to ensure Discord connection is fully established...");
+            await Task.Delay(5000);
+
+            // DSharpPlus doesn't expose ConnectionState directly
+
+            int successCount = 0;
+            int failCount = 0;
 
             foreach (var signup in _ongoingRounds.TournamentSignups)
             {
-                await LoadParticipantsAsync(signup, client);
+                try
+                {
+                    int originalCount = signup.ParticipantInfo?.Count ?? 0;
+                    await LoadParticipantsAsync(signup, client, false);
+                    int loadedCount = signup.Participants?.Count ?? 0;
+
+                    if (loadedCount == originalCount)
+                    {
+                        successCount++;
+                        Console.WriteLine($"Successfully loaded all {loadedCount} participants for signup '{signup.Name}'");
+                    }
+                    else
+                    {
+                        failCount++;
+                        Console.WriteLine($"WARNING: Only loaded {loadedCount} of {originalCount} participants for signup '{signup.Name}'");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failCount++;
+                    Console.WriteLine($"ERROR: Failed to load participants for signup '{signup.Name}': {ex.Message}");
+                }
             }
 
-            Console.WriteLine("Finished loading all participants.");
+            Console.WriteLine($"Finished loading participants: {successCount} signups fully loaded, {failCount} signups with issues");
         }
 
         public async Task SaveTournamentState(DiscordClient? client = null)

@@ -304,10 +304,13 @@ namespace Wabbit.BotClient.Commands
                             $"<t:{((DateTimeOffset)signup.ScheduledStartTime.Value).ToUnixTimeSeconds()}:F>" :
                             "Not scheduled";
 
+                        // Use the helper method to get the effective participant count
+                        int participantCount = _tournamentManager.GetParticipantCount(signup);
+
                         signupList += $"**{signup.Name}**\n" +
                                      $"Status: {status}\n" +
                                      $"Format: {signup.Format}\n" +
-                                     $"Participants: {signup.Participants.Count}\n" +
+                                     $"Participants: {participantCount}\n" +
                                      $"Scheduled Start: {scheduledTime}\n\n";
                     }
 
