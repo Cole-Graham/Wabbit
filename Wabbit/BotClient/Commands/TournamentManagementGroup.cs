@@ -906,7 +906,7 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                if (context.Guild == null)
+                if (context.Guild is null)
                 {
                     await SafeResponse(context, "This command must be used in a server.", null, true, autoDeleteSeconds);
                     return;
@@ -922,7 +922,7 @@ namespace Wabbit.BotClient.Commands
 
                 // Update the standings channel
                 server.StandingsChannelId = channel.Id;
-                ConfigManager.SaveConfig();
+                await ConfigManager.SaveConfig();
 
                 await SafeResponse(context,
                     $"Tournament standings channel has been set to {channel.Mention}. Standings visualizations will be posted here.",

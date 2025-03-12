@@ -82,7 +82,7 @@ namespace Wabbit.Misc
             data.SaveTo(stream);
 
             // If a client is provided and we have a configured standings channel, post the image there
-            if (client != null && tournament.AnnouncementChannel?.Guild != null)
+            if (client != null && tournament.AnnouncementChannel?.Guild is not null)
             {
                 try
                 {
@@ -94,7 +94,7 @@ namespace Wabbit.Misc
                     {
                         // Get the standings channel
                         var standingsChannel = await client.GetChannelAsync(server.StandingsChannelId.Value);
-                        if (standingsChannel != null)
+                        if (standingsChannel is not null)
                         {
                             // Create the embed
                             var embed = new DiscordEmbedBuilder()

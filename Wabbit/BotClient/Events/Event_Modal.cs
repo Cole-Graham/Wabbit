@@ -113,12 +113,18 @@ namespace Wabbit.BotClient.Events
                             {
                                 // Local file thumbnail - attach it
                                 string relativePath = map.Thumbnail;
+
+                                // The relativePath from map.Thumbnail already includes the full correct path
+                                // e.g. "Data/images/maps/WA_DeathRow_1v1.jpg"
+                                // Just normalize the path separators
                                 relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
                                                        .Replace('/', Path.DirectorySeparatorChar);
 
+                                // Construct the full path by combining with the base directory
                                 string baseDirectory = Directory.GetCurrentDirectory();
-                                string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
+                                string fullPath = Path.Combine(baseDirectory, relativePath);
 
+                                // Don't use Path.GetFullPath as it might modify the path further
                                 Console.WriteLine($"Attempting to access map image at: {fullPath}");
 
                                 if (!File.Exists(fullPath))

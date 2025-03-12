@@ -53,14 +53,17 @@ namespace Wabbit.BotClient.Commands
                     // It's a local file, we need to attach it
                     string relativePath = map.Thumbnail;
 
-                    // Normalize the path
+                    // The relativePath from map.Thumbnail already includes the full correct path
+                    // e.g. "Data/images/maps/WA_DeathRow_1v1.jpg"
+                    // Just normalize the path separators
                     relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
                                              .Replace('/', Path.DirectorySeparatorChar);
 
-                    // Get the base directory and full path
+                    // Construct the full path by combining with the base directory
                     string baseDirectory = Directory.GetCurrentDirectory();
-                    string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
+                    string fullPath = Path.Combine(baseDirectory, relativePath);
 
+                    // Don't use Path.GetFullPath as it might modify the path further
                     Console.WriteLine($"Attempting to access image at: {fullPath}");
 
                     if (!File.Exists(fullPath))
@@ -281,14 +284,17 @@ namespace Wabbit.BotClient.Commands
                     // It's a local file, we need to attach it
                     string relativePath = map.Thumbnail;
 
-                    // Normalize the path
+                    // The relativePath from map.Thumbnail already includes the full correct path
+                    // e.g. "Data/images/maps/WA_DeathRow_1v1.jpg"
+                    // Just normalize the path separators
                     relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
                                              .Replace('/', Path.DirectorySeparatorChar);
 
-                    // Get the base directory and full path
+                    // Construct the full path by combining with the base directory
                     string baseDirectory = Directory.GetCurrentDirectory();
-                    string fullPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
+                    string fullPath = Path.Combine(baseDirectory, relativePath);
 
+                    // Don't use Path.GetFullPath as it might modify the path further
                     Console.WriteLine($"Attempting to access image at: {fullPath}");
 
                     if (!File.Exists(fullPath))

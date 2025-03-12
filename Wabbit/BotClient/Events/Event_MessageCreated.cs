@@ -135,7 +135,7 @@ namespace Wabbit.BotClient.Events
                 // Generate and send the standings image
                 try
                 {
-                    string imagePath = TournamentVisualization.GenerateStandingsImage(tournament);
+                    string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
 
                     var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                     var messageBuilder = new DiscordMessageBuilder()
