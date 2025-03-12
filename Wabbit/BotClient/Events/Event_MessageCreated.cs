@@ -28,6 +28,15 @@ namespace Wabbit.BotClient.Events
             if (e.Author.IsBot)
                 return;
 
+            // Check if this is a deck submission (replying to a message that starts with 'Please enter your deck code')
+            if (e.Message.ReferencedMessage is not null &&
+                e.Message.ReferencedMessage.Content is not null &&
+                e.Message.ReferencedMessage.Content.Contains("Please enter your deck code"))
+            {
+                await HandleDeckSubmission(sender, e);
+                return;
+            }
+
             // Check if this is a response to the tournament creation message
             if (e.Message.ReferencedMessage is not null)
             {
@@ -48,6 +57,84 @@ namespace Wabbit.BotClient.Events
             {
                 // Handle interactions in the signup channel
                 // This could include special commands or reactions
+            }
+        }
+
+        private async Task HandleDeckSubmission(DiscordClient sender, MessageCreatedEventArgs e)
+        {
+            try
+            {
+                Console.WriteLine($"Processing deck submission from {e.Author.Username} ({e.Author.Id})");
+
+                // Extract the deck code from the message
+                string deckCode = e.Message.Content.Trim();
+
+                if (string.IsNullOrWhiteSpace(deckCode))
+                {
+                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Your deck code seems to be empty. Please send a valid deck code.");
+                    return;
+                }
+
+                // Find the tournament round
+                var round = _ongoingRounds.TourneyRounds.FirstOrDefault(r =>
+                    r.Teams is not null &&
+                    r.Teams.Any(t => t.Thread?.Id == e.Channel.Id));
+
+                if (round == null)
+                {
+                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find an active tournament round for this channel.");
+                    return;
+                }
+
+                // Find the team and participant
+                var team = round.Teams.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
+                if (team == null)
+                {
+                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find your team data.");
+                    return;
+                }
+
+                var participant = team.Participants?.FirstOrDefault(p =>
+                    p is not null && p.Player is not null && p.Player.Id == e.Author.Id);
+
+                if (participant == null)
+                {
+                    await e.Channel.SendMessageAsync($"{e.Author.Mention} Could not find your participant data in this tournament.");
+                    return;
+                }
+
+                // Create confirmation buttons
+                var confirmButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Success,
+                    $"confirm_deck_{e.Author.Id}",
+                    "Confirm Deck Code");
+
+                var reviseButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"revise_deck_{e.Author.Id}",
+                    "Revise Deck Code");
+
+                // Send confirmation message with the submitted deck code and buttons
+                var confirmationEmbed = new DiscordEmbedBuilder()
+                    .WithTitle("Deck Code Submission")
+                    .WithDescription($"You've submitted the following deck code:\n```\n{deckCode}\n```\nPlease confirm your submission or revise if needed.")
+                    .WithColor(DiscordColor.Orange);
+
+                var confirmationMessage = await e.Channel.SendMessageAsync(
+                    new DiscordMessageBuilder()
+                        .WithContent($"{e.Author.Mention} Please review your deck code submission.")
+                        .AddEmbed(confirmationEmbed)
+                        .AddComponents(confirmButton, reviseButton));
+
+                // Store the deck code temporarily in a property on the participant
+                participant.TempDeckCode = deckCode;
+
+                // We'll handle the confirmation/revision in the component interaction event
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing deck submission: {ex.Message}");
+                await e.Channel.SendMessageAsync($"{e.Author.Mention} An error occurred while processing your deck submission: {ex.Message}");
             }
         }
 

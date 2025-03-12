@@ -18,6 +18,7 @@ namespace Wabbit.Models
         {
             public DiscordMember? Player { get; set; }
             public string? Deck { get; set; }
+            public string? TempDeckCode { get; set; }
 
             // Dictionary to store deck codes by map name
             // Key: Map name, Value: Deck code used for that map

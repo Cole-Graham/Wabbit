@@ -127,35 +127,68 @@ namespace Wabbit.BotClient.Events
                             case string s when s.StartsWith("btn_deck_"):
                                 try
                                 {
+                                    // Use DeferredMessageUpdate to safely acknowledge the interaction
+                                    try
+                                    {
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                    }
+                                    catch (Exception) { /* Ignore if already acknowledged */ }
+
                                     if (round.InGame == true)
                                     {
-                                        var response = new DiscordInteractionResponseBuilder().WithContent("Game is in progress. Deck submitting is disabled");
-                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource, response);
+                                        if (e.Channel is not null)
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Game is in progress. Deck submitting is disabled");
+                                        }
                                     }
                                     else
                                     {
-                                        var modal = new DiscordInteractionResponseBuilder()
+                                        // Extract team index from button ID
+                                        int teamIdx = int.Parse(s.Replace("btn_deck_", ""));
+
+                                        // Find the participant in the team
+                                        var participantTeam = teams[teamIdx];
+                                        var userParticipant = participantTeam.Participants?.FirstOrDefault(p =>
+                                            p is not null && p.Player is not null && p.Player.Id == e.User.Id);
+
+                                        if (userParticipant != null && e.Channel is not null)
                                         {
-                                            Title = "Enter a deck code",
-                                            CustomId = "deck_modal"
-                                        };
-                                        modal.AddComponents(new DiscordTextInputComponent("Deck code", "deck_code", required: true));
+                                            // Create a message with a text input field
+                                            var promptMessage = new DiscordMessageBuilder()
+                                                .WithContent($"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
+                                                            "**Type your deck code directly as a reply to this message.**");
 
-                                        // Using CreateResponseAsync for a modal
-                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.Modal, modal);
+                                            var deckPrompt = await e.Channel.SendMessageAsync(promptMessage);
 
-                                        // Log for debugging
-                                        Console.WriteLine($"Displayed deck submission modal to user {e.User.Username} ({e.User.Id})");
+                                            // Log the action
+                                            Console.WriteLine($"Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
+
+                                            // Set up a collector for the user's response
+                                            // Since we can't directly set this up, we'll rely on the user to reply
+                                            // and handle it elsewhere in the message creation event
+
+                                            // Notify in the user's thread to explain what's happening
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Please submit your deck code by replying to the message above. " +
+                                                "Due to Discord API limitations, we've adjusted the submission process.");
+                                        }
+                                        else
+                                        {
+                                            if (e.Channel is not null)
+                                            {
+                                                await e.Channel.SendMessageAsync($"{e.User.Mention} Could not find your participant data");
+                                            }
+                                        }
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    Console.WriteLine($"Error showing deck submission modal: {ex.Message}");
+                                    Console.WriteLine($"Error handling deck button: {ex.Message}");
                                     if (e.Channel is not null)
                                     {
                                         try
                                         {
-                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error showing the deck submission modal. Please try clicking the button again.");
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error processing your deck submission request. " +
+                                                "Please type your deck code directly in this channel.");
                                         }
                                         catch { }
                                     }
@@ -571,6 +604,192 @@ namespace Wabbit.BotClient.Events
                                 }
 
                                 break;
+
+                            case string s when s.StartsWith("confirm_deck_"):
+                                // Try to acknowledge the interaction, but don't fail if it's already been acknowledged
+                                try
+                                {
+                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                }
+                                catch (Exception ex)
+                                {
+                                    // Interaction might already be acknowledged
+                                    Console.WriteLine($"Could not defer confirm deck interaction: {ex.Message}");
+                                }
+
+                                try
+                                {
+                                    // Extract the user ID from the button ID
+                                    string userIdStr = s.Replace("confirm_deck_", "");
+                                    if (!ulong.TryParse(userIdStr, out ulong userId))
+                                    {
+                                        Console.WriteLine($"Failed to parse user ID from confirm_deck button: {userIdStr}");
+                                        return;
+                                    }
+
+                                    // Find the tournament round
+                                    var roundForDeck = _roundsHolder.TourneyRounds.FirstOrDefault(r =>
+                                        r.Teams is not null &&
+                                        r.Teams.Any(t => t.Thread?.Id == e.Channel.Id));
+
+                                    if (roundForDeck == null)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Could not find an active tournament round for this channel.");
+                                        return;
+                                    }
+
+                                    // Find the team and participant
+                                    var teamForDeck = roundForDeck.Teams?.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
+                                    if (teamForDeck == null)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Could not find your team data.");
+                                        return;
+                                    }
+
+                                    var deckParticipant = teamForDeck.Participants?.FirstOrDefault(p =>
+                                        p is not null && p.Player is not null && p.Player.Id == userId);
+
+                                    if (deckParticipant == null || deckParticipant.TempDeckCode == null)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Could not find your participant data or temporary deck code.");
+                                        return;
+                                    }
+
+                                    // Only allow the user who submitted the deck to confirm it
+                                    if (e.User.Id != userId)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Only the user who submitted the deck can confirm it.");
+                                        return;
+                                    }
+
+                                    // Store the confirmed deck code
+                                    deckParticipant.Deck = deckParticipant.TempDeckCode;
+
+                                    // Also store in deck history with the current map if available
+                                    if (roundForDeck.Maps != null && roundForDeck.Maps.Count > 0 && roundForDeck.Cycle < roundForDeck.Maps.Count)
+                                    {
+                                        // Get the current map based on the cycle
+                                        int mapIndex = Math.Min(roundForDeck.Cycle, roundForDeck.Maps.Count - 1);
+                                        if (mapIndex >= 0 && mapIndex < roundForDeck.Maps.Count)
+                                        {
+                                            string currentMap = roundForDeck.Maps[mapIndex];
+                                            if (deckParticipant.DeckHistory == null)
+                                            {
+                                                deckParticipant.DeckHistory = new Dictionary<string, string>();
+                                            }
+                                            deckParticipant.DeckHistory[currentMap] = deckParticipant.Deck;
+                                        }
+                                    }
+
+                                    // Clear temporary deck code
+                                    deckParticipant.TempDeckCode = null;
+
+                                    // Update the message to show it's been confirmed
+                                    var confirmedEmbed = new DiscordEmbedBuilder()
+                                        .WithTitle("Deck Code Confirmed")
+                                        .WithDescription($"Your deck code has been successfully confirmed and submitted.\n```\n{deckParticipant.Deck}\n```")
+                                        .WithColor(DiscordColor.Green);
+
+                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                        .WithContent($"{e.User.Mention} Your deck code has been confirmed!")
+                                        .AddEmbed(confirmedEmbed));
+
+                                    // Save tournament state
+                                    await _tournamentManager.SaveTournamentState(sender);
+
+                                    // Check if all participants have submitted their decks
+                                    bool allSubmitted = roundForDeck.Teams?.All(t =>
+                                        t.Participants is not null &&
+                                        t.Participants.All(p => p is not null && !string.IsNullOrEmpty(p.Deck))) ?? false;
+
+                                    if (allSubmitted)
+                                    {
+                                        // All decks submitted - set InGame to true
+                                        roundForDeck.InGame = true;
+
+                                        // Notify players
+                                        foreach (var t in roundForDeck.Teams ?? [])
+                                        {
+                                            if (t.Thread is not null)
+                                            {
+                                                await t.Thread.SendMessageAsync("**All decks have been submitted!** The game will now proceed.");
+                                            }
+                                        }
+
+                                        // Save tournament state again
+                                        await _tournamentManager.SaveTournamentState(sender);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error confirming deck: {ex.Message}");
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error confirming your deck: {ex.Message}");
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                break;
+
+                            case string s when s.StartsWith("revise_deck_"):
+                                // Try to acknowledge the interaction, but don't fail if it's already been acknowledged
+                                try
+                                {
+                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                }
+                                catch (Exception ex)
+                                {
+                                    // Interaction might already be acknowledged
+                                    Console.WriteLine($"Could not defer revise deck interaction: {ex.Message}");
+                                }
+
+                                try
+                                {
+                                    // Extract the user ID from the button ID
+                                    string userIdStr = s.Replace("revise_deck_", "");
+                                    if (!ulong.TryParse(userIdStr, out ulong userId))
+                                    {
+                                        Console.WriteLine($"Failed to parse user ID from revise_deck button: {userIdStr}");
+                                        return;
+                                    }
+
+                                    // Only allow the user who submitted the deck to revise it
+                                    if (e.User.Id != userId)
+                                    {
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Only the user who submitted the deck can revise it.");
+                                        return;
+                                    }
+
+                                    // Prompt the user to submit a new deck code
+                                    var promptMessage = new DiscordMessageBuilder()
+                                        .WithContent($"{e.User.Mention} Please enter your revised deck code in a reply to this message.\n\n" +
+                                                    "**Type your deck code directly as a reply to this message.**");
+
+                                    // Delete or update the original confirmation message
+                                    await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                        .WithContent($"{e.User.Mention} You've chosen to revise your deck code. Please submit a new one in response to the prompt below."));
+
+                                    // Send the new prompt
+                                    await e.Channel.SendMessageAsync(promptMessage);
+
+                                    // The new submission will be handled in the HandleDeckSubmission method
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error revising deck: {ex.Message}");
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error processing your deck revision request: {ex.Message}");
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                break;
                         }
                     }
                     else
@@ -580,25 +799,39 @@ namespace Wabbit.BotClient.Events
                             case string s when s.StartsWith("btn_deck"):
                                 try
                                 {
-                                    var modal = new DiscordInteractionResponseBuilder();
-                                    modal.WithTitle("Enter a deck code")
-                                        .WithCustomId("deck_modal")
-                                        .AddComponents(new DiscordTextInputComponent("Deck code", "deck_code", required: true));
+                                    // Use DeferredMessageUpdate to safely acknowledge the interaction
+                                    try
+                                    {
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                    }
+                                    catch (Exception) { /* Ignore if already acknowledged */ }
 
-                                    // Using CreateResponseAsync for a modal
-                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.Modal, modal);
+                                    if (e.Channel is not null)
+                                    {
+                                        // Create a message with instructions for deck submission
+                                        var promptMessage = new DiscordMessageBuilder()
+                                            .WithContent($"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
+                                                        "**Type your deck code directly as a reply to this message.**");
 
-                                    // Log for debugging
-                                    Console.WriteLine($"Second handler: Displayed deck submission modal to user {e.User.Username} ({e.User.Id})");
+                                        var deckPrompt = await e.Channel.SendMessageAsync(promptMessage);
+
+                                        // Log the action
+                                        Console.WriteLine($"Second handler: Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
+
+                                        // Notify in the user's thread to explain what's happening
+                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Please submit your deck code by replying to the message above. " +
+                                            "Due to Discord API limitations, we've adjusted the submission process.");
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
-                                    Console.WriteLine($"Error showing deck submission modal (second handler): {ex.Message}");
+                                    Console.WriteLine($"Error handling deck button (second handler): {ex.Message}");
                                     if (e.Channel is not null)
                                     {
                                         try
                                         {
-                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error showing the deck submission modal. Please try clicking the button again.");
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error processing your deck submission request. " +
+                                                "Please type your deck code directly in this channel.");
                                         }
                                         catch { }
                                     }
