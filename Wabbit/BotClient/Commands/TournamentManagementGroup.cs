@@ -94,8 +94,6 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                await context.DeferResponseAsync();
-
                 // Get the signup
                 var client = context.Client;
                 TournamentSignup? signup = null;
@@ -559,7 +557,7 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                await context.DeferResponseAsync();
+                // DeferResponseAsync is already called in SafeExecute
 
                 // Find the signup and ensure participants are loaded
                 var client = context.Client;
@@ -626,7 +624,7 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                await context.DeferResponseAsync();
+                // DeferResponseAsync is already called in SafeExecute
 
                 // Find the signup and ensure participants are loaded
                 var client = context.Client;
@@ -851,8 +849,7 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                await context.DeferResponseAsync();
-
+                // DeferResponseAsync is already called in SafeExecute
                 bool found = false;
 
                 // First try to delete tournament
