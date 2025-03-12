@@ -14,6 +14,7 @@ namespace Wabbit.Models
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
         public int MatchesPerPlayer { get; set; } = 0; // Default to roundrobin
         public bool IsComplete { get; set; } = false;
+        [System.Text.Json.Serialization.JsonIgnore]
         public DiscordChannel? AnnouncementChannel { get; set; }
 
         // Related message IDs for deletion when tournament is removed

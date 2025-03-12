@@ -1932,10 +1932,19 @@ namespace Wabbit.Misc
                 // Convert rounds to state
                 var activeRounds = ConvertRoundsToState(_ongoingRounds.TourneyRounds);
 
-                // Create state object
+                // Create sanitized copies of tournaments without Discord objects
+                List<Tournament> sanitizedTournaments = new List<Tournament>();
+                foreach (var tournament in _ongoingRounds.Tournaments)
+                {
+                    // Create a clean copy without Discord objects
+                    Tournament cleanTournament = CleanTournamentForSerialization(tournament);
+                    sanitizedTournaments.Add(cleanTournament);
+                }
+
+                // Create state object with sanitized tournaments
                 var state = new TournamentState
                 {
-                    Tournaments = _ongoingRounds.Tournaments,
+                    Tournaments = sanitizedTournaments,
                     ActiveRounds = activeRounds
                 };
 
