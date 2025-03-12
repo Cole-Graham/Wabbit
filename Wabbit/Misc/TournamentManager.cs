@@ -374,10 +374,19 @@ namespace Wabbit.Misc
                 // Ensure the data directory exists
                 Directory.CreateDirectory(_dataDirectory);
 
+                // Create sanitized copies of tournaments without Discord objects
+                List<Tournament> sanitizedTournaments = new List<Tournament>();
+                foreach (var tournament in _ongoingRounds.Tournaments)
+                {
+                    // Create a clean copy without Discord objects
+                    Tournament cleanTournament = CleanTournamentForSerialization(tournament);
+                    sanitizedTournaments.Add(cleanTournament);
+                }
+
                 // Create a wrapper to match the expected format with $id and $values
                 var wrapper = new TournamentListWrapper
                 {
-                    Values = _ongoingRounds.Tournaments
+                    Values = sanitizedTournaments
                 };
 
                 // Serialize with the wrapper
@@ -396,6 +405,190 @@ namespace Wabbit.Misc
                 Console.WriteLine($"Error saving tournaments to file: {ex.Message}");
                 Console.WriteLine(ex.StackTrace);
             }
+        }
+
+        /// <summary>
+        /// Creates a clean copy of a tournament without Discord objects for serialization
+        /// </summary>
+        private Tournament CleanTournamentForSerialization(Tournament tournament)
+        {
+            var cleanTournament = new Tournament
+            {
+                Name = tournament.Name,
+                Format = tournament.Format,
+                CurrentStage = tournament.CurrentStage,
+                MatchesPerPlayer = tournament.MatchesPerPlayer,
+                IsComplete = tournament.IsComplete,
+                // Don't include AnnouncementChannel which is a Discord object
+            };
+
+            // Copy groups without Discord objects
+            cleanTournament.Groups = new List<Tournament.Group>();
+            foreach (var group in tournament.Groups)
+            {
+                var cleanGroup = new Tournament.Group
+                {
+                    Name = group.Name,
+                    IsComplete = group.IsComplete
+                };
+
+                // Copy participants
+                cleanGroup.Participants = new List<Tournament.GroupParticipant>();
+                foreach (var participant in group.Participants)
+                {
+                    var cleanParticipant = new Tournament.GroupParticipant
+                    {
+                        Wins = participant.Wins,
+                        Draws = participant.Draws,
+                        Losses = participant.Losses,
+                        GamesWon = participant.GamesWon,
+                        GamesLost = participant.GamesLost,
+                        AdvancedToPlayoffs = participant.AdvancedToPlayoffs
+                    };
+
+                    // Convert Discord player to simple string representation
+                    if (participant.Player is DSharpPlus.Entities.DiscordMember discordMember)
+                    {
+                        // Store player data in a simple serializable format
+                        cleanParticipant.Player = new
+                        {
+                            Id = discordMember.Id,
+                            Username = discordMember.Username,
+                            DisplayName = discordMember.DisplayName
+                        };
+                    }
+                    else if (participant.Player != null)
+                    {
+                        // For other player types, store as string
+                        cleanParticipant.Player = participant.Player.ToString();
+                    }
+
+                    cleanGroup.Participants.Add(cleanParticipant);
+                }
+
+                // Copy matches
+                cleanGroup.Matches = new List<Tournament.Match>();
+                foreach (var match in group.Matches)
+                {
+                    cleanGroup.Matches.Add(CleanMatchForSerialization(match));
+                }
+
+                cleanTournament.Groups.Add(cleanGroup);
+            }
+
+            // Copy playoff matches
+            cleanTournament.PlayoffMatches = new List<Tournament.Match>();
+            foreach (var match in tournament.PlayoffMatches)
+            {
+                cleanTournament.PlayoffMatches.Add(CleanMatchForSerialization(match));
+            }
+
+            // Copy related messages without Discord references
+            if (tournament.RelatedMessages != null)
+            {
+                cleanTournament.RelatedMessages = new List<RelatedMessage>();
+                foreach (var msg in tournament.RelatedMessages)
+                {
+                    cleanTournament.RelatedMessages.Add(new RelatedMessage
+                    {
+                        ChannelId = msg.ChannelId,
+                        MessageId = msg.MessageId,
+                        Type = msg.Type
+                    });
+                }
+            }
+
+            return cleanTournament;
+        }
+
+        /// <summary>
+        /// Creates a clean copy of a match without Discord objects for serialization
+        /// </summary>
+        private Tournament.Match CleanMatchForSerialization(Tournament.Match match)
+        {
+            var cleanMatch = new Tournament.Match
+            {
+                Name = match.Name,
+                Type = match.Type,
+                BestOf = match.BestOf,
+                DisplayPosition = match.DisplayPosition
+            };
+
+            // Copy participants
+            cleanMatch.Participants = new List<Tournament.MatchParticipant>();
+            foreach (var participant in match.Participants)
+            {
+                var cleanParticipant = new Tournament.MatchParticipant
+                {
+                    Score = participant.Score,
+                    IsWinner = participant.IsWinner,
+                    SourceGroupPosition = participant.SourceGroupPosition
+                };
+
+                // Handle SourceGroup reference if not null
+                if (participant.SourceGroup != null)
+                {
+                    cleanParticipant.SourceGroup = new Tournament.Group
+                    {
+                        Name = participant.SourceGroup.Name,
+                        IsComplete = participant.SourceGroup.IsComplete
+                    };
+                }
+
+                // Convert Discord player to simple string representation
+                if (participant.Player is DSharpPlus.Entities.DiscordMember discordMember)
+                {
+                    // Store player data in a simple serializable format
+                    cleanParticipant.Player = new
+                    {
+                        Id = discordMember.Id,
+                        Username = discordMember.Username,
+                        DisplayName = discordMember.DisplayName
+                    };
+                }
+                else if (participant.Player != null)
+                {
+                    // For other player types, store as string
+                    cleanParticipant.Player = participant.Player.ToString();
+                }
+
+                cleanMatch.Participants.Add(cleanParticipant);
+            }
+
+            // Handle result if exists
+            if (match.Result != null)
+            {
+                cleanMatch.Result = new Tournament.MatchResult
+                {
+                    MapResults = match.Result.MapResults != null ? new List<string>(match.Result.MapResults) : new List<string>(),
+                    CompletedAt = match.Result.CompletedAt,
+                    DeckCodes = match.Result.DeckCodes != null
+                        ? new Dictionary<string, Dictionary<string, string>>(match.Result.DeckCodes)
+                        : new Dictionary<string, Dictionary<string, string>>()
+                };
+
+                // Convert Discord winner to simple string representation
+                if (match.Result.Winner is DSharpPlus.Entities.DiscordMember discordMember)
+                {
+                    // Store winner data in a simple serializable format
+                    cleanMatch.Result.Winner = new
+                    {
+                        Id = discordMember.Id,
+                        Username = discordMember.Username,
+                        DisplayName = discordMember.DisplayName
+                    };
+                }
+                else if (match.Result.Winner != null)
+                {
+                    // For other winner types, store as string
+                    cleanMatch.Result.Winner = match.Result.Winner.ToString();
+                }
+            }
+
+            // We don't copy LinkedRound or NextMatch as those will be handled separately
+            // in the tournament state serialization
+
+            return cleanMatch;
         }
 
         // Save signups to file
