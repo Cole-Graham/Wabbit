@@ -291,8 +291,16 @@ namespace Wabbit.BotClient.Events
                                 }
                                 else
                                 {
-                                    // Always defer first to acknowledge the interaction
-                                    await e.Interaction.DeferAsync(true);
+                                    // Try to acknowledge the interaction, but don't fail if it's already been acknowledged
+                                    try
+                                    {
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        // Interaction might already be acknowledged
+                                        Console.WriteLine($"Could not defer interaction: {ex.Message}");
+                                    }
 
                                     if (e.Channel is not null)
                                     {
@@ -332,19 +340,24 @@ namespace Wabbit.BotClient.Events
                                                         .AddEmbed(confirmEmbed)
                                                         .AddComponents(confirmBtn, reviseBtn));
 
-                                                    // Create a followup notification for the user
-                                                    await e.Interaction.CreateFollowupMessageAsync(
-                                                        new DiscordFollowupMessageBuilder()
-                                                            .WithContent("Your map ban selections have been recorded. Please confirm or revise them.")
-                                                            .AsEphemeral(true));
+                                                    // Try to send a notification, but don't fail if it doesn't work
+                                                    try
+                                                    {
+                                                        await channel.SendMessageAsync($"{e.User.Mention} Your map ban selections have been recorded. Please confirm or revise them.");
+                                                    }
+                                                    catch (Exception notifyEx)
+                                                    {
+                                                        Console.WriteLine($"Could not send notification: {notifyEx.Message}");
+                                                    }
                                                 }
                                                 catch (Exception ex)
                                                 {
                                                     Console.WriteLine($"Error updating map ban message: {ex.Message}");
-                                                    await e.Interaction.CreateFollowupMessageAsync(
-                                                        new DiscordFollowupMessageBuilder()
-                                                            .WithContent($"Error updating map bans: {ex.Message}")
-                                                            .AsEphemeral(true));
+                                                    try
+                                                    {
+                                                        await channel.SendMessageAsync($"{e.User.Mention} Error updating map bans: {ex.Message}");
+                                                    }
+                                                    catch { }
                                                 }
                                             }
                                         }
@@ -356,8 +369,16 @@ namespace Wabbit.BotClient.Events
                                 int teamIndex = int.Parse(s.Replace("confirm_map_bans_", ""));
                                 var team = teams[teamIndex];
 
-                                // Always defer first
-                                await e.Interaction.DeferAsync(true);
+                                // Try to acknowledge the interaction, but don't fail if it's already been acknowledged
+                                try
+                                {
+                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                }
+                                catch (Exception ex)
+                                {
+                                    // Interaction might already be acknowledged
+                                    Console.WriteLine($"Could not defer confirmation interaction: {ex.Message}");
+                                }
 
                                 try
                                 {
@@ -389,11 +410,18 @@ namespace Wabbit.BotClient.Events
                                             .AddComponents(deckBtn));
                                     }
 
-                                    // Send confirmation as a followup
-                                    await e.Interaction.CreateFollowupMessageAsync(
-                                        new DiscordFollowupMessageBuilder()
-                                            .WithContent("Your map ban selections have been confirmed! Please submit your deck next.")
-                                            .AsEphemeral(true));
+                                    // Try to send a notification, but don't fail if it doesn't work
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Your map ban selections have been confirmed! Please submit your deck next.");
+                                        }
+                                        catch (Exception notifyEx)
+                                        {
+                                            Console.WriteLine($"Could not send confirmation notification: {notifyEx.Message}");
+                                        }
+                                    }
 
                                     // Send notification to bot channel
                                     if (e.Guild is not null && server.BotChannelId.HasValue)
@@ -410,10 +438,14 @@ namespace Wabbit.BotClient.Events
                                 catch (Exception ex)
                                 {
                                     Console.WriteLine($"Error confirming map bans: {ex.Message}");
-                                    await e.Interaction.CreateFollowupMessageAsync(
-                                        new DiscordFollowupMessageBuilder()
-                                            .WithContent($"Error confirming map bans: {ex.Message}")
-                                            .AsEphemeral(true));
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Error confirming map bans: {ex.Message}");
+                                        }
+                                        catch { }
+                                    }
                                 }
 
                                 // Save tournament state
@@ -424,8 +456,16 @@ namespace Wabbit.BotClient.Events
                                 int reviseTeamIndex = int.Parse(s.Replace("revise_map_bans_", ""));
                                 var reviseTeam = teams[reviseTeamIndex];
 
-                                // Always defer first
-                                await e.Interaction.DeferAsync(true);
+                                // Try to acknowledge the interaction, but don't fail if it's already been acknowledged
+                                try
+                                {
+                                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                }
+                                catch (Exception ex)
+                                {
+                                    // Interaction might already be acknowledged
+                                    Console.WriteLine($"Could not defer revision interaction: {ex.Message}");
+                                }
 
                                 try
                                 {
@@ -482,19 +522,30 @@ namespace Wabbit.BotClient.Events
                                             .AddComponents(newDropdown));
                                     }
 
-                                    // Send confirmation as a followup
-                                    await e.Interaction.CreateFollowupMessageAsync(
-                                        new DiscordFollowupMessageBuilder()
-                                            .WithContent("You're now revising your map ban selections. Please select maps again from the dropdown.")
-                                            .AsEphemeral(true));
+                                    // Try to send a notification, but don't fail if it doesn't work
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} You're now revising your map ban selections. Please select maps again from the dropdown.");
+                                        }
+                                        catch (Exception notifyEx)
+                                        {
+                                            Console.WriteLine($"Could not send revision notification: {notifyEx.Message}");
+                                        }
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
                                     Console.WriteLine($"Error revising map bans: {ex.Message}");
-                                    await e.Interaction.CreateFollowupMessageAsync(
-                                        new DiscordFollowupMessageBuilder()
-                                            .WithContent($"Error revising map bans: {ex.Message}")
-                                            .AsEphemeral(true));
+                                    if (e.Channel is not null)
+                                    {
+                                        try
+                                        {
+                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Error revising map bans: {ex.Message}");
+                                        }
+                                        catch { }
+                                    }
                                 }
 
                                 break;
