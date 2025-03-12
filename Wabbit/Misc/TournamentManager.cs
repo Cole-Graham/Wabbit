@@ -59,6 +59,8 @@ namespace Wabbit.Misc
                 if (File.Exists(_tournamentsFilePath))
                 {
                     string json = File.ReadAllText(_tournamentsFilePath);
+                    Console.WriteLine($"Loading tournaments from {_tournamentsFilePath}");
+
                     if (!string.IsNullOrEmpty(json))
                     {
                         var options = new JsonSerializerOptions
@@ -66,46 +68,104 @@ namespace Wabbit.Misc
                             ReferenceHandler = ReferenceHandler.Preserve
                         };
 
-                        try
+                        // Use JsonDocument to parse the structure and extract $values
+                        using JsonDocument document = JsonDocument.Parse(json);
+
+                        // Try to find $values at the top level
+                        if (document.RootElement.TryGetProperty("$values", out JsonElement valuesElement))
                         {
-                            // First try to deserialize as a list directly
-                            var tournaments = JsonSerializer.Deserialize<List<Tournament>>(json, options);
+                            // Direct $values at root level
+                            var tournaments = JsonSerializer.Deserialize<List<Tournament>>(valuesElement.GetRawText(), options);
                             if (tournaments != null)
                             {
                                 _ongoingRounds.Tournaments = tournaments;
-                                Console.WriteLine($"Loaded {tournaments.Count} tournaments from {_tournamentsFilePath}");
+                                Console.WriteLine($"Loaded {tournaments.Count} tournaments from root $values");
                                 return;
                             }
                         }
-                        catch
+
+                        // Try nested pattern with $id/$values format
+                        if (document.RootElement.TryGetProperty("$id", out _) &&
+                            document.RootElement.TryGetProperty("$values", out JsonElement rootValuesElement))
                         {
-                            // If direct deserialization fails, try with a wrapper object
-                            try
+                            // Handle direct array case
+                            if (rootValuesElement.ValueKind == JsonValueKind.Array)
                             {
-                                // Some serializers wrap lists in a container with $values
-                                var wrapper = JsonSerializer.Deserialize<TournamentListWrapper>(json, options);
-                                if (wrapper?.Values != null)
+                                var tournaments = JsonSerializer.Deserialize<List<Tournament>>(rootValuesElement.GetRawText(), options);
+                                if (tournaments != null)
                                 {
-                                    _ongoingRounds.Tournaments = wrapper.Values;
-                                    Console.WriteLine($"Loaded {wrapper.Values.Count} tournaments from wrapper in {_tournamentsFilePath}");
+                                    _ongoingRounds.Tournaments = tournaments;
+                                    Console.WriteLine($"Loaded {tournaments.Count} tournaments from standard $id/$values format");
                                     return;
                                 }
                             }
-                            catch (Exception innerEx)
+
+                            // Handle nested object case (double nesting pattern)
+                            if (rootValuesElement.ValueKind == JsonValueKind.Object &&
+                                rootValuesElement.TryGetProperty("$id", out _) &&
+                                rootValuesElement.TryGetProperty("$values", out JsonElement nestedValuesElement))
                             {
-                                Console.WriteLine($"Error deserializing tournaments from wrapper: {innerEx.Message}");
+                                var tournaments = JsonSerializer.Deserialize<List<Tournament>>(nestedValuesElement.GetRawText(), options);
+                                if (tournaments != null)
+                                {
+                                    _ongoingRounds.Tournaments = tournaments;
+                                    Console.WriteLine($"Loaded {tournaments.Count} tournaments from nested $values format");
+                                    return;
+                                }
                             }
                         }
+
+                        // Try the wrapper class approach as fallback
+                        try
+                        {
+                            var wrapper = JsonSerializer.Deserialize<TournamentListWrapper>(json, options);
+                            if (wrapper?.Values != null)
+                            {
+                                _ongoingRounds.Tournaments = wrapper.Values;
+                                Console.WriteLine($"Loaded {wrapper.Values.Count} tournaments using wrapper class");
+                                return;
+                            }
+                        }
+                        catch (Exception wrapperEx)
+                        {
+                            Console.WriteLine($"Wrapper deserialization failed: {wrapperEx.Message}");
+                        }
+
+                        // One last attempt with direct list
+                        try
+                        {
+                            var directTournaments = JsonSerializer.Deserialize<List<Tournament>>(json, options);
+                            if (directTournaments != null)
+                            {
+                                _ongoingRounds.Tournaments = directTournaments;
+                                Console.WriteLine($"Loaded {directTournaments.Count} tournaments with direct deserialization");
+                                return;
+                            }
+                        }
+                        catch (Exception directEx)
+                        {
+                            Console.WriteLine($"Direct deserialization failed: {directEx.Message}");
+                        }
+
+                        Console.WriteLine("Could not parse tournaments JSON with any known format");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Tournaments file exists but is empty");
                     }
                 }
+                else
+                {
+                    Console.WriteLine("No tournaments file found, starting with empty list");
+                }
 
-                // If we got here, either the file doesn't exist or deserialization failed
+                // If we get here, deserialization failed
                 _ongoingRounds.Tournaments = new List<Tournament>();
-                Console.WriteLine("No tournaments loaded, starting with empty list");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error loading tournaments from file: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
                 _ongoingRounds.Tournaments = new List<Tournament>();
             }
         }
@@ -383,18 +443,25 @@ namespace Wabbit.Misc
                     sanitizedTournaments.Add(cleanTournament);
                 }
 
-                // Create a wrapper to match the expected format with $id and $values
-                var wrapper = new TournamentListWrapper
+                // Option 1: Create a specific format with proper JSON structure
+                var jsonObject = new
                 {
+                    Id = "1",
                     Values = sanitizedTournaments
                 };
 
-                // Serialize with the wrapper
-                string json = JsonSerializer.Serialize(wrapper, new JsonSerializerOptions
+                var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
                     ReferenceHandler = ReferenceHandler.Preserve
-                });
+                };
+
+                // Manually construct the JSON to ensure exact format
+                // This ensures a single level of $values 
+                var json = JsonSerializer.Serialize(jsonObject, options);
+
+                // Replace the property name to match expected format
+                json = json.Replace("\"Id\"", "\"$id\"").Replace("\"Values\"", "\"$values\"");
 
                 // Write to the file
                 File.WriteAllText(_tournamentsFilePath, json);
@@ -1652,25 +1719,77 @@ namespace Wabbit.Misc
 
             try
             {
-                // 1. Check for signups that should be tournaments
+                // 0. First, make sure ParticipantInfo is preserved for all signups
+                foreach (var signup in _ongoingRounds.TournamentSignups)
+                {
+                    // If Participants is empty but ParticipantInfo has data, restore from ParticipantInfo
+                    if ((signup.Participants == null || signup.Participants.Count == 0) &&
+                        signup.ParticipantInfo != null && signup.ParticipantInfo.Count > 0)
+                    {
+                        Console.WriteLine($"Signup '{signup.Name}' has {signup.ParticipantInfo.Count} participants in ParticipantInfo but no loaded Participants");
+
+                        if (client != null)
+                        {
+                            // Force load participants from ParticipantInfo
+                            await LoadParticipantsAsync(signup, client);
+                            // Save immediately to preserve this data
+                            UpdateSignup(signup);
+                            Console.WriteLine($"Restored and saved {signup.Participants?.Count ?? 0} participants for signup '{signup.Name}'");
+                        }
+                    }
+                    else
+                    {
+                        // Make sure ParticipantInfo is in sync with Participants
+                        if (signup.Participants != null && signup.Participants.Count > 0)
+                        {
+                            if (signup.ParticipantInfo == null)
+                                signup.ParticipantInfo = new List<(ulong Id, string Username)>();
+
+                            // Check if any Participants aren't in ParticipantInfo
+                            foreach (var participant in signup.Participants)
+                            {
+                                if (!signup.ParticipantInfo.Any(p => p.Id == participant.Id))
+                                {
+                                    // Add to ParticipantInfo
+                                    signup.ParticipantInfo.Add((participant.Id, participant.Username));
+                                    Console.WriteLine($"Added participant {participant.Username} to ParticipantInfo for signup '{signup.Name}'");
+                                }
+                            }
+
+                            // Save the signup to persist changes
+                            UpdateSignup(signup);
+                        }
+                    }
+                }
+
+                // Save all signups to ensure changes are persisted
+                SaveSignupsToFile();
+
+                // 1. Check for closed signups that should be tournaments
                 var closedSignups = _ongoingRounds.TournamentSignups
-                    .Where(s => !s.IsOpen && s.Participants.Count >= 3)
+                    .Where(s => !s.IsOpen)
                     .ToList();
 
                 foreach (var signup in closedSignups)
                 {
+                    Console.WriteLine($"Checking closed signup '{signup.Name}' with {signup.ParticipantInfo.Count} participants in info and {signup.Participants.Count} loaded participants");
+
                     // Check if a tournament with this name already exists
                     if (!_ongoingRounds.Tournaments.Any(t => t.Name.Equals(signup.Name, StringComparison.OrdinalIgnoreCase)))
                     {
-                        Console.WriteLine($"Found closed signup '{signup.Name}' with {signup.Participants.Count} participants but no matching tournament");
+                        Console.WriteLine($"No matching tournament found for signup '{signup.Name}'");
 
                         // If we have a client, try to create a tournament from this signup
                         if (client != null)
                         {
                             try
                             {
-                                // Load participants
-                                await LoadParticipantsAsync(signup, client);
+                                // Ensure participants are loaded
+                                if (signup.Participants.Count == 0 && signup.ParticipantInfo.Count > 0)
+                                {
+                                    await LoadParticipantsAsync(signup, client);
+                                    Console.WriteLine($"Loaded {signup.Participants.Count} participants for signup '{signup.Name}'");
+                                }
 
                                 // Create a list of DiscordMembers from the participants
                                 List<DiscordMember> players = new List<DiscordMember>();
@@ -1695,6 +1814,7 @@ namespace Wabbit.Misc
                                     }
                                 }
 
+                                // Only create tournament if there are enough players (3 or more)
                                 if (players.Count >= 3)
                                 {
                                     // Create the tournament
@@ -1711,6 +1831,7 @@ namespace Wabbit.Misc
                                         catch
                                         {
                                             // Channel might no longer exist
+                                            Console.WriteLine($"Could not find channel with ID {signup.SignupChannelId} for signup '{signup.Name}'");
                                         }
                                     }
 
@@ -1719,19 +1840,32 @@ namespace Wabbit.Misc
                                         // Try to get any channel from the guild
                                         var guild = await client.GetGuildAsync(client.Guilds.FirstOrDefault().Key);
                                         channel = guild.Channels.FirstOrDefault().Value;
+                                        Console.WriteLine($"Using fallback channel {channel?.Name ?? "unknown"} for tournament creation");
                                     }
 
                                     if (channel is not null)
                                     {
                                         // Create the tournament
                                         var tournament = CreateTournament(signup.Name, players, signup.Format, channel);
-                                        Console.WriteLine($"Successfully created tournament '{tournament.Name}' from signup");
+                                        Console.WriteLine($"Successfully created tournament '{tournament.Name}' from signup with {players.Count} players");
+
+                                        // Save immediately to ensure the tournament is persisted
+                                        SaveTournamentsToFile();
                                     }
+                                    else
+                                    {
+                                        Console.WriteLine($"Could not find any valid channel for tournament creation from signup '{signup.Name}'");
+                                    }
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"Not creating tournament from signup '{signup.Name}' - only {players.Count} valid players found (need at least 3)");
                                 }
                             }
                             catch (Exception ex)
                             {
                                 Console.WriteLine($"Failed to create tournament from signup '{signup.Name}': {ex.Message}");
+                                Console.WriteLine(ex.StackTrace);
                             }
                         }
                     }
@@ -1941,13 +2075,6 @@ namespace Wabbit.Misc
                     sanitizedTournaments.Add(cleanTournament);
                 }
 
-                // Create state object with sanitized tournaments
-                var state = new TournamentState
-                {
-                    Tournaments = sanitizedTournaments,
-                    ActiveRounds = activeRounds
-                };
-
                 // Serialize with preservation of object references
                 var options = new JsonSerializerOptions
                 {
@@ -1955,10 +2082,32 @@ namespace Wabbit.Misc
                     ReferenceHandler = ReferenceHandler.Preserve
                 };
 
+                // Create the state object manually to ensure proper format
+                var stateObj = new
+                {
+                    Id = "1",
+                    Tournaments = new
+                    {
+                        Id = "2",
+                        Values = sanitizedTournaments
+                    },
+                    ActiveRounds = new
+                    {
+                        Id = "3",
+                        Values = activeRounds
+                    }
+                };
+
+                // Convert to JSON
+                string json = JsonSerializer.Serialize(stateObj, options);
+
+                // Replace property names to match expected format
+                json = json.Replace("\"Id\":", "\"$id\":")
+                         .Replace("\"Values\":", "\"$values\":");
+
                 // Save the state
-                string json = JsonSerializer.Serialize(state, options);
                 File.WriteAllText(_tournamentStateFilePath, json);
-                Console.WriteLine($"Saved tournament state with {activeRounds.Count} active rounds to {_tournamentStateFilePath}");
+                Console.WriteLine($"Saved tournament state with {sanitizedTournaments.Count} tournaments and {activeRounds.Count} active rounds");
 
                 // Also save tournaments and signups
                 SaveTournamentsToFile();
@@ -1969,6 +2118,7 @@ namespace Wabbit.Misc
             catch (Exception ex)
             {
                 Console.WriteLine($"Error saving tournament state: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
                 return Task.CompletedTask;
             }
         }
@@ -1980,6 +2130,8 @@ namespace Wabbit.Misc
                 if (File.Exists(_tournamentStateFilePath))
                 {
                     string json = File.ReadAllText(_tournamentStateFilePath);
+                    Console.WriteLine($"Loading tournament state from {_tournamentStateFilePath}");
+
                     if (!string.IsNullOrEmpty(json))
                     {
                         var options = new JsonSerializerOptions
@@ -1987,34 +2139,72 @@ namespace Wabbit.Misc
                             ReferenceHandler = ReferenceHandler.Preserve
                         };
 
-                        var state = JsonSerializer.Deserialize<TournamentState>(json, options);
-                        if (state != null)
+                        try
                         {
-                            Console.WriteLine($"Loaded tournament state with {state.Tournaments?.Count ?? 0} tournaments and {state.ActiveRounds?.Count ?? 0} active rounds from {_tournamentStateFilePath}");
+                            // Parse using JsonDocument for more flexibility
+                            using JsonDocument document = JsonDocument.Parse(json);
 
-                            // Update tournaments
-                            if (state.Tournaments != null && state.Tournaments.Count > 0)
+                            // Process tournaments
+                            if (document.RootElement.TryGetProperty("Tournaments", out JsonElement tournamentsElement) ||
+                                document.RootElement.TryGetProperty("tournaments", out tournamentsElement))
                             {
-                                _ongoingRounds.Tournaments = state.Tournaments;
-                                Console.WriteLine($"Restored {state.Tournaments.Count} tournaments from state");
+                                if (tournamentsElement.TryGetProperty("$values", out JsonElement tournamentsArray))
+                                {
+                                    var tournaments = JsonSerializer.Deserialize<List<Tournament>>(tournamentsArray.GetRawText(), options);
+                                    if (tournaments != null && tournaments.Count > 0)
+                                    {
+                                        Console.WriteLine($"Loaded {tournaments.Count} tournaments from state");
+                                        _ongoingRounds.Tournaments = tournaments;
+                                    }
+                                }
                             }
 
-                            // Convert active rounds back to runtime rounds
-                            if (state.ActiveRounds != null)
+                            // Process active rounds
+                            if (document.RootElement.TryGetProperty("ActiveRounds", out JsonElement roundsElement) ||
+                                document.RootElement.TryGetProperty("activeRounds", out roundsElement))
                             {
-                                var rounds = ConvertStateToRounds(state.ActiveRounds);
-                                _ongoingRounds.TourneyRounds = rounds;
-                                Console.WriteLine($"Restored {rounds.Count} tournament rounds");
+                                if (roundsElement.TryGetProperty("$values", out JsonElement roundsArray))
+                                {
+                                    var activeRounds = JsonSerializer.Deserialize<List<ActiveRound>>(roundsArray.GetRawText(), options);
+                                    if (activeRounds != null)
+                                    {
+                                        var rounds = ConvertStateToRounds(activeRounds);
+                                        _ongoingRounds.TourneyRounds = rounds;
+                                        Console.WriteLine($"Loaded {rounds.Count} tournament rounds from state");
+                                    }
+                                }
                             }
 
-                            // Link rounds to tournaments where possible
+                            // Fall back to standard deserialization if needed
+                            if (_ongoingRounds.Tournaments.Count == 0)
+                            {
+                                var state = JsonSerializer.Deserialize<TournamentState>(json, options);
+                                if (state?.Tournaments != null && state.Tournaments.Count > 0)
+                                {
+                                    _ongoingRounds.Tournaments = state.Tournaments;
+                                    Console.WriteLine($"Loaded {state.Tournaments.Count} tournaments using standard deserialization");
+                                }
+
+                                if (state?.ActiveRounds != null && state.ActiveRounds.Count > 0)
+                                {
+                                    var rounds = ConvertStateToRounds(state.ActiveRounds);
+                                    _ongoingRounds.TourneyRounds = rounds;
+                                    Console.WriteLine($"Loaded {rounds.Count} rounds using standard deserialization");
+                                }
+                            }
+
+                            // Link rounds to tournaments
                             LinkRoundsToTournaments();
-
                             return;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error parsing tournament state: {ex.Message}");
+                            Console.WriteLine(ex.StackTrace);
                         }
                     }
                 }
-                // If we got here, either no file or deserialize failed
+
                 Console.WriteLine("No tournament state loaded, starting with empty state");
             }
             catch (Exception ex)
@@ -2201,18 +2391,45 @@ namespace Wabbit.Misc
 
         public async Task<TournamentSignup?> GetSignupWithParticipants(string name, DSharpPlus.DiscordClient client)
         {
-            var signup = _ongoingRounds.TournamentSignups.FirstOrDefault(s =>
-                s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            var signup = GetSignup(name);
+            if (signup == null)
+                return null;
 
-            if (signup != null)
+            Console.WriteLine($"Loading participants for signup '{name}'");
+
+            // Load the participants
+            await LoadParticipantsAsync(signup, client);
+
+            // Make a copy of ParticipantInfo to Participants if needed
+            if ((signup.Participants == null || signup.Participants.Count == 0) &&
+                (signup.ParticipantInfo != null && signup.ParticipantInfo.Count > 0))
             {
-                // Check if participants need to be loaded
-                if (signup.Participants.Count == 0 && signup.ParticipantInfo.Count > 0)
+                Console.WriteLine($"Participants list is empty but ParticipantInfo exists, restoring {signup.ParticipantInfo.Count} participants");
+
+                // Create participants from participantInfo
+                signup.Participants = new List<DiscordMember>();
+                var guild = await client.GetGuildAsync(client.Guilds.FirstOrDefault().Key);
+
+                foreach (var info in signup.ParticipantInfo)
                 {
-                    // Load participants silently
-                    await LoadParticipantsAsync(signup, client, false);
+                    try
+                    {
+                        var member = await guild.GetMemberAsync(info.Id);
+                        if (member is not null)
+                        {
+                            signup.Participants.Add(member);
+                            Console.WriteLine($"Restored participant: {member.DisplayName}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to restore participant {info.Username}: {ex.Message}");
+                    }
                 }
             }
+
+            // Save immediately to ensure participants are preserved
+            UpdateSignup(signup);
 
             return signup;
         }
