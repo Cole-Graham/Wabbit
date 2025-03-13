@@ -53,10 +53,6 @@ namespace Wabbit.BotClient.Events
                     {
                         await HandleJoinTournamentButton(sender, e);
                     }
-                    else if (customId.StartsWith("start_tournament_"))
-                    {
-                        await HandleStartTournamentButton(sender, e);
-                    }
                     else if (customId.StartsWith("signup_"))
                     {
                         await HandleSignupButton(sender, e);
@@ -169,23 +165,17 @@ namespace Wabbit.BotClient.Events
 
                                         if (userParticipant != null && e.Channel is not null)
                                         {
-                                            // Create a message with a text input field
+                                            // Create a message with instructions for deck submission
                                             var promptMessage = new DiscordMessageBuilder()
                                                 .WithContent($"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
-                                                            "**Type your deck code directly as a reply to this message.**");
+                                                            "After submitting, you'll be able to review and confirm your deck code.");
 
                                             var deckPrompt = await e.Channel.SendMessageAsync(promptMessage);
 
                                             // Log the action
                                             Console.WriteLine($"Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
 
-                                            // Set up a collector for the user's response
-                                            // Since we can't directly set this up, we'll rely on the user to reply
-                                            // and handle it elsewhere in the message creation event
-
-                                            // Notify in the user's thread to explain what's happening
-                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Please submit your deck code by replying to the message above. " +
-                                                "Due to Discord API limitations, we've adjusted the submission process.");
+                                            // The detailed instruction message is already in the deck prompt above
                                         }
                                         else
                                         {
@@ -837,7 +827,7 @@ namespace Wabbit.BotClient.Events
                                     // Prompt the user to submit a new deck code
                                     var promptMessage = new DiscordMessageBuilder()
                                         .WithContent($"{e.User.Mention} Please enter your revised deck code as a reply to this message.\n\n" +
-                                                    "**Type your deck code directly as a reply to this message.**");
+                                                    "After submitting, you'll be able to review and confirm your deck code.");
 
                                     // Send the new prompt
                                     await e.Channel.SendMessageAsync(promptMessage);
@@ -1109,16 +1099,14 @@ namespace Wabbit.BotClient.Events
                                         // Create a message with instructions for deck submission
                                         var promptMessage = new DiscordMessageBuilder()
                                             .WithContent($"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
-                                                        "**Type your deck code directly as a reply to this message.**");
+                                                        "After submitting, you'll be able to review and confirm your deck code.");
 
                                         var deckPrompt = await e.Channel.SendMessageAsync(promptMessage);
 
                                         // Log the action
                                         Console.WriteLine($"Second handler: Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
 
-                                        // Notify in the user's thread to explain what's happening
-                                        await e.Channel.SendMessageAsync($"{e.User.Mention} Please submit your deck code by replying to the message above. " +
-                                            "Due to Discord API limitations, we've adjusted the submission process.");
+                                        // The detailed instruction message is already in the deck prompt above
                                     }
                                 }
                                 catch (Exception ex)
@@ -1865,92 +1853,6 @@ namespace Wabbit.BotClient.Events
                 _logger.LogError(ex, "Error handling join tournament button");
                 await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
                     .WithContent($"Error joining tournament: {ex.Message}")
-                    .AsEphemeral());
-            }
-        }
-
-        private async Task HandleStartTournamentButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
-        {
-            try
-            {
-                // Extract tournament name from button ID
-                string tournamentName = e.Id.Replace("start_tournament_", "");
-
-                // Get the signup
-                var signup = _tournamentManager.GetSignup(tournamentName);
-                if (signup == null)
-                {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Tournament signup not found.")
-                        .AsEphemeral());
-                    return;
-                }
-
-                // Check if the user is the creator
-                if (signup.CreatorId != e.User.Id)
-                {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Only the tournament creator can start the tournament.")
-                        .AsEphemeral());
-                    return;
-                }
-
-                // Check if there are enough participants
-                if (signup.Participants.Count < 3)
-                {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("At least 3 participants are needed to start the tournament.")
-                        .AsEphemeral());
-                    return;
-                }
-
-                // Create scoped service to get a tournament manager instance
-                using var scope = _scopeFactory.CreateScope();
-                var tournamentManager = scope.ServiceProvider.GetRequiredService<TournamentManager>();
-
-                // Close the signup
-                signup.IsOpen = false;
-                tournamentManager.UpdateSignup(signup);
-
-                // Create the tournament
-                var tournament = await tournamentManager.CreateTournament(
-                    signup.Name,
-                    signup.Participants.ToList(),
-                    signup.Format,
-                    e.Channel,
-                    signup.Type);
-
-                // Generate standings image
-                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
-
-                // Create success message
-                var embed = new DiscordEmbedBuilder()
-                    .WithTitle($"🏆 Tournament Created: {tournament.Name}")
-                    .WithDescription($"Format: {tournament.Format}\nPlayers: {tournament.Groups.Sum(g => g.Participants.Count)}\nGroups: {tournament.Groups.Count}")
-                    .WithColor(DiscordColor.Green);
-
-                // Send confirmation message with standings image
-                using var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
-                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddFile(Path.GetFileName(imagePath), fileStream));
-
-                // Notify all players
-                var notificationEmbed = new DiscordEmbedBuilder()
-                    .WithTitle($"🏆 Tournament has started: {tournament.Name}")
-                    .WithDescription("Check the tournament channel for details and your group assignments.")
-                    .WithColor(DiscordColor.Green);
-
-                // Create a public announcement
-                await e.Channel.SendMessageAsync(new DiscordMessageBuilder()
-                    .WithContent($"Tournament '{tournament.Name}' has started with {tournament.Groups.Sum(g => g.Participants.Count)} players!")
-                    .AddEmbed(embed));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error handling start tournament button");
-                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                    .WithContent($"Error starting tournament: {ex.Message}")
                     .AsEphemeral());
             }
         }

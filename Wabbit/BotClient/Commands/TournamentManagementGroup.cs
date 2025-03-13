@@ -42,73 +42,6 @@ namespace Wabbit.BotClient.Commands
             _logger = logger;
         }
 
-        [Command("create")]
-        [Description("Create a new tournament")]
-        public async Task CreateTournament(
-            CommandContext context,
-            [Description("Tournament name")] string name,
-            [Description("Tournament format")][SlashChoiceProvider<TournamentFormatChoiceProvider>] string format,
-            [Description("Game type (1v1 or 2v2)")][SlashChoiceProvider<GameTypeChoiceProvider>] string gameType = "OneVsOne",
-            [Description("Use seeding for players?")] bool useSeeding = false)
-        {
-            // Defer the response immediately to prevent timeout
-            await context.DeferResponseAsync();
-
-            await SafeExecute(context, async () =>
-            {
-                // Check if a tournament with this name already exists
-                if (_ongoingRounds.Tournaments.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    try
-                    {
-                        await context.EditResponseAsync($"A tournament with the name '{name}' already exists.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error responding to command: {ex.Message}");
-                        await context.Channel.SendMessageAsync($"A tournament with the name '{name}' already exists.");
-                    }
-                    return;
-                }
-
-                // Parse game type
-                GameType parsedGameType;
-                try
-                {
-                    parsedGameType = Enum.Parse<GameType>(gameType);
-                }
-                catch (Exception)
-                {
-                    await context.EditResponseAsync($"Invalid game type: {gameType}. Valid options are 'OneVsOne' or 'TwoVsTwo'.");
-                    return;
-                }
-
-                // Inform user about next steps
-                string seedingMessage = useSeeding ?
-                    " **Seeding is enabled**. When mentioning players, you can optionally add a number after each mention to set seed values (e.g., @Player1 1 @Player2 2)." :
-                    "";
-
-                try
-                {
-                    await context.EditResponseAsync(
-                        $"Tournament '{name}' creation started with format '{format}' and game type '{(parsedGameType == GameType.OneVsOne ? "1v1" : "2v2")}'.{seedingMessage} " +
-                        $"Please @mention all players that should participate, separated by spaces. " +
-                        $"For example: @Player1 @Player2 @Player3...");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error responding to command: {ex.Message}");
-                    await context.Channel.SendMessageAsync(
-                        $"Tournament '{name}' creation started with format '{format}' and game type '{(parsedGameType == GameType.OneVsOne ? "1v1" : "2v2")}'.{seedingMessage} " +
-                        $"Please @mention all players that should participate, separated by spaces. " +
-                        $"For example: @Player1 @Player2 @Player3...");
-                }
-
-                // Tournament creation will be handled by user mentioning players in follow-up message
-                // which will be processed in an event handler
-            }, "Failed to create tournament");
-        }
-
         [Command("create_from_signup")]
         [Description("Create a tournament from an existing signup")]
         public async Task CreateTournamentFromSignup(
@@ -598,132 +531,6 @@ namespace Wabbit.BotClient.Commands
                     await SafeResponse(context, $"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}", null, true, 10);
                 }
             }, "Failed to create tournament signup");
-        }
-
-        [Command("signup")]
-        [Description("Sign up for a tournament")]
-        public async Task Signup(
-            CommandContext context,
-            [Description("Tournament name")] string tournamentName)
-        {
-            await SafeExecute(context, async () =>
-            {
-                // Find the signup using the TournamentManager and ensure participants are loaded
-                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
-
-                if (signup == null)
-                {
-                    await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
-                    return;
-                }
-
-                if (!signup.IsOpen)
-                {
-                    await context.EditResponseAsync($"Signup '{tournamentName}' is closed.");
-                    return;
-                }
-
-                // Check if the user is already signed up
-                if (signup.Participants.Any(p => p.Id == context.User.Id))
-                {
-                    await context.EditResponseAsync($"You are already signed up for tournament '{tournamentName}'.");
-                    return;
-                }
-
-                // Add the user to the signup
-                var newParticipantsList = new List<DiscordMember>(signup.Participants);
-
-                // Add the new player
-                newParticipantsList.Add((DiscordMember)context.User);
-
-                // Replace the participants list in the signup
-                signup.Participants = newParticipantsList;
-
-                Console.WriteLine($"User {context.User.Username} (ID: {context.User.Id}) has signed up for tournament '{tournamentName}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
-
-                // Save the updated signup 
-                _tournamentManager.UpdateSignup(signup);
-
-                // Update the signup message
-                await UpdateSignupMessage(signup, context.Client);
-
-                // Respond to the user and schedule the message to be deleted after 10 seconds
-                var message = await context.EditResponseAsync($"You have been added to the tournament '{tournamentName}'.");
-
-                // Delete the message after 10 seconds
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(10000);
-                    try
-                    {
-                        await message.DeleteAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Failed to auto-delete signup message: {ex.Message}");
-                    }
-                });
-            }, "Failed to sign up for tournament");
-        }
-
-        [Command("signup_cancel")]
-        [Description("Cancel your signup for a tournament")]
-        public async Task CancelSignup(
-            CommandContext context,
-            [Description("Tournament name")] string tournamentName)
-        {
-            await SafeExecute(context, async () =>
-            {
-                // Find the signup using the TournamentManager and ensure participants are loaded
-                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
-
-                if (signup == null)
-                {
-                    await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
-                    return;
-                }
-
-                if (!signup.IsOpen)
-                {
-                    await context.EditResponseAsync($"Signup '{tournamentName}' is closed and cannot be modified.");
-                    return;
-                }
-
-                // Check if the user is signed up
-                var participant = signup.Participants.FirstOrDefault(p => p.Id == context.User.Id);
-                if (participant is null)
-                {
-                    await context.EditResponseAsync($"You are not signed up for tournament '{tournamentName}'.");
-                    return;
-                }
-
-                // Remove the user from the signup
-                var newParticipantsList = new List<DiscordMember>();
-
-                // Add all participants except the one to be removed
-                foreach (var p in signup.Participants)
-                {
-                    if (p.Id != context.User.Id)
-                    {
-                        newParticipantsList.Add(p);
-                    }
-                }
-
-                // Replace the participants list in the signup
-                signup.Participants = newParticipantsList;
-
-                Console.WriteLine($"User {context.User.Username} (ID: {context.User.Id}) has canceled signup for tournament '{tournamentName}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
-
-                // Save the updated signup
-                _tournamentManager.UpdateSignup(signup);
-
-                // Update the signup message
-                await UpdateSignupMessage(signup, context.Client);
-
-                await context.EditResponseAsync($"You have been removed from the tournament '{tournamentName}'.");
-            }, "Failed to cancel signup");
         }
 
         [Command("signup_close")]
@@ -2010,28 +1817,51 @@ namespace Wabbit.BotClient.Commands
                 round.Teams.Add(team2);
 
                 // Create a private thread for each player
-                Console.WriteLine($"Attempting to create private thread in channel {channel.Name} (ID: {channel.Id})");
+                Console.WriteLine($"Attempting to create private threads in channel {channel.Name} (ID: {channel.Id})");
                 try
                 {
+                    // Create thread for player 1
                     var thread1 = await channel.CreateThreadAsync(
-                        $"Match: {player1.DisplayName} vs {player2.DisplayName}",
+                        $"Match: {player1.DisplayName} vs {player2.DisplayName} (thread for {player1.DisplayName})",
                         DiscordAutoArchiveDuration.Day,
                         DiscordChannelType.PrivateThread,
                         $"Tournament match thread for {player1.DisplayName}"
                     );
 
-                    Console.WriteLine($"Successfully created thread: {thread1.Name} (ID: {thread1.Id})");
+                    Console.WriteLine($"Successfully created thread for player 1: {thread1.Name} (ID: {thread1.Id})");
                     team1.Thread = thread1;
 
-                    // Add players to threads
-                    Console.WriteLine($"Adding players to thread: {player1.Username}, {player2.Username}");
+                    // Add player 1 to their thread
+                    Console.WriteLine($"Adding player 1 to thread: {player1.Username}");
                     await thread1.AddThreadMemberAsync(player1);
-                    await thread1.AddThreadMemberAsync(player2);
-                    Console.WriteLine("Successfully added players to thread");
+
+                    // Create thread for player 2
+                    var thread2 = await channel.CreateThreadAsync(
+                        $"Match: {player1.DisplayName} vs {player2.DisplayName} (thread for {player2.DisplayName})",
+                        DiscordAutoArchiveDuration.Day,
+                        DiscordChannelType.PrivateThread,
+                        $"Tournament match thread for {player2.DisplayName}"
+                    );
+
+                    Console.WriteLine($"Successfully created thread for player 2: {thread2.Name} (ID: {thread2.Id})");
+                    team2.Thread = thread2;
+
+                    // Add player 2 to their thread
+                    Console.WriteLine($"Adding player 2 to thread: {player2.Username}");
+                    await thread2.AddThreadMemberAsync(player2);
+
+                    Console.WriteLine("Successfully added players to their respective threads");
+
+                    // Add tournament admins/staff to both threads if needed
+                    if (player1.Guild is not null)
+                    {
+                        await AddStaffToThread(player1.Guild, thread1);
+                        await AddStaffToThread(player1.Guild, thread2);
+                    }
                 }
                 catch (Exception threadEx)
                 {
-                    Console.WriteLine($"Failed to create or setup private thread: {threadEx.Message}");
+                    Console.WriteLine($"Failed to create or setup private threads: {threadEx.Message}");
                     Console.WriteLine($"Error details: {threadEx}");
                     // We still want to continue to create the match even if thread creation fails
                     // so we'll just log the error and continue
@@ -2118,15 +1948,15 @@ namespace Wabbit.BotClient.Commands
                     ["Player2Id"] = player2.Id
                 };
 
-                // Send messages to thread if it was created successfully
+                // Send messages to both threads if they were created successfully
                 if (team1.Thread is not null)
                 {
-                    Console.WriteLine("Sending map bans and instructions to thread");
+                    Console.WriteLine("Sending map bans and instructions to player 1's thread");
                     try
                     {
                         // Send map bans and instructions
                         var dropdownBuilder = new DiscordMessageBuilder()
-                            .WithContent(message)
+                            .WithContent($"{player1.Mention}\n\n{message}")
                             .AddComponents(mapBanDropdown);
 
                         await team1.Thread.SendMessageAsync(dropdownBuilder);
@@ -2147,16 +1977,49 @@ namespace Wabbit.BotClient.Commands
                             .AddComponents(winnerDropdown);
 
                         await team1.Thread.SendMessageAsync(winnerBuilder);
-                        Console.WriteLine("Successfully sent components to thread");
+                        Console.WriteLine("Successfully sent components to player 1's thread");
                     }
                     catch (Exception msgEx)
                     {
-                        Console.WriteLine($"Failed to send messages to thread: {msgEx.Message}");
+                        Console.WriteLine($"Failed to send messages to player 1's thread: {msgEx.Message}");
                     }
                 }
-                else
+
+                // Send similar messages to player 2's thread
+                if (team2.Thread is not null)
                 {
-                    Console.WriteLine("Thread was not created successfully, skipping sending messages");
+                    Console.WriteLine("Sending map bans and instructions to player 2's thread");
+                    try
+                    {
+                        // Send map bans and instructions
+                        var dropdownBuilder = new DiscordMessageBuilder()
+                            .WithContent($"{player2.Mention}\n\n{message}")
+                            .AddComponents(mapBanDropdown);
+
+                        await team2.Thread.SendMessageAsync(dropdownBuilder);
+
+                        // Send match overview
+                        var matchOverview = new DiscordEmbedBuilder()
+                            .WithTitle($"Match: {player1.DisplayName} vs {player2.DisplayName}")
+                            .WithDescription($"Best of {matchLength} series")
+                            .AddField("Current Score", "0 - 0", true)
+                            .AddField("Game", "1/" + (matchLength > 1 ? matchLength.ToString() : "1"), true)
+                            .WithColor(DiscordColor.Blurple);
+
+                        await team2.Thread.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(matchOverview));
+
+                        // Send game winner dropdown
+                        var winnerBuilder = new DiscordMessageBuilder()
+                            .WithContent("**When this game is complete, select the winner:**")
+                            .AddComponents(winnerDropdown);
+
+                        await team2.Thread.SendMessageAsync(winnerBuilder);
+                        Console.WriteLine("Successfully sent components to player 2's thread");
+                    }
+                    catch (Exception msgEx)
+                    {
+                        Console.WriteLine($"Failed to send messages to player 2's thread: {msgEx.Message}");
+                    }
                 }
 
                 // Send announcement message to the channel
@@ -2382,7 +2245,7 @@ namespace Wabbit.BotClient.Commands
         }
 
         // Method to handle game result selection and advance the match series
-        private async Task HandleGameResult(Round round, DiscordThreadChannel thread, string winnerId, DiscordClient client)
+        private async Task HandleGameResult(Round round, DiscordThreadChannel reportingThread, string winnerId, DiscordClient client)
         {
             try
             {
@@ -2399,6 +2262,10 @@ namespace Wabbit.BotClient.Commands
                 DiscordMember? player1 = null;
                 DiscordMember? player2 = null;
 
+                // Get both team threads so we can update both players
+                DiscordThreadChannel? player1Thread = null;
+                DiscordThreadChannel? player2Thread = null;
+
                 if (round.Teams != null)
                 {
                     foreach (var team in round.Teams)
@@ -2410,9 +2277,15 @@ namespace Wabbit.BotClient.Commands
                                 if (participant?.Player is DiscordMember member)
                                 {
                                     if (member.Id == player1Id)
+                                    {
                                         player1 = member;
+                                        player1Thread = team.Thread;
+                                    }
                                     else if (member.Id == player2Id)
+                                    {
                                         player2 = member;
+                                        player2Thread = team.Thread;
+                                    }
                                 }
                             }
                         }
@@ -2421,29 +2294,52 @@ namespace Wabbit.BotClient.Commands
 
                 if (player1 is null || player2 is null)
                 {
-                    await thread.SendMessageAsync("⚠️ Error: Could not find player information.");
+                    await reportingThread.SendMessageAsync("⚠️ Error: Could not find player information.");
                     return;
+                }
+
+                // Get list of all threads to update
+                List<DiscordThreadChannel> threadsToUpdate = new List<DiscordThreadChannel>();
+                if (player1Thread is not null) threadsToUpdate.Add(player1Thread);
+                if (player2Thread is not null) threadsToUpdate.Add(player2Thread);
+
+                // If no threads found, use the reporting thread
+                if (threadsToUpdate.Count == 0)
+                {
+                    threadsToUpdate.Add(reportingThread);
                 }
 
                 // Update scores based on winner
                 bool isDraw = winnerId == "draw";
+                string gameResultMessage;
+
                 if (isDraw)
                 {
                     draws++;
                     round.CustomProperties["Draws"] = draws;
-                    await thread.SendMessageAsync($"Game {currentGame} ended in a draw!");
+                    gameResultMessage = $"Game {currentGame} ended in a draw!";
                 }
                 else if (winnerId == player1Id.ToString())
                 {
                     player1Wins++;
                     round.CustomProperties["Player1Wins"] = player1Wins;
-                    await thread.SendMessageAsync($"Game {currentGame}: {player1.DisplayName} wins!");
+                    gameResultMessage = $"Game {currentGame}: {player1.DisplayName} wins!";
                 }
                 else if (winnerId == player2Id.ToString())
                 {
                     player2Wins++;
                     round.CustomProperties["Player2Wins"] = player2Wins;
-                    await thread.SendMessageAsync($"Game {currentGame}: {player2.DisplayName} wins!");
+                    gameResultMessage = $"Game {currentGame}: {player2.DisplayName} wins!";
+                }
+                else
+                {
+                    gameResultMessage = "Invalid winner selection.";
+                }
+
+                // Send game result to all threads
+                foreach (var currentThread in threadsToUpdate)
+                {
+                    await currentThread.SendMessageAsync(gameResultMessage);
                 }
 
                 // Check if match is complete
@@ -2526,7 +2422,7 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
-                // Update match overview
+                // Update match overview in all threads
                 var matchOverview = new DiscordEmbedBuilder()
                     .WithTitle($"Match: {player1.DisplayName} vs {player2.DisplayName}")
                     .WithDescription($"Best of {matchLength} series")
@@ -2534,12 +2430,18 @@ namespace Wabbit.BotClient.Commands
                     .AddField("Game", $"{currentGame}/{(matchLength > 1 ? matchLength.ToString() : "1")}", true)
                     .WithColor(isMatchComplete ? DiscordColor.Green : DiscordColor.Blurple);
 
-                await thread.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(matchOverview));
+                foreach (var currentThread in threadsToUpdate)
+                {
+                    await currentThread.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(matchOverview));
+                }
 
                 if (isMatchComplete)
                 {
-                    // Match is complete - announce winner and update tournament
-                    await thread.SendMessageAsync($"🏆 **{matchResult}**");
+                    // Match is complete - announce winner in all threads
+                    foreach (var currentThread in threadsToUpdate)
+                    {
+                        await currentThread.SendMessageAsync($"🏆 **{matchResult}**");
+                    }
 
                     // Find the tournament this match belongs to
                     var tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
@@ -2579,18 +2481,21 @@ namespace Wabbit.BotClient.Commands
                         }
                     }
 
-                    // Archive the thread
-                    try
+                    // Archive all threads
+                    foreach (var currentThread in threadsToUpdate)
                     {
-                        await thread.ModifyAsync(t =>
+                        try
                         {
-                            t.IsArchived = true;
-                            t.AutoArchiveDuration = DiscordAutoArchiveDuration.Hour;
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error archiving thread: {ex.Message}");
+                            await currentThread.ModifyAsync(t =>
+                            {
+                                t.IsArchived = true;
+                                t.AutoArchiveDuration = DiscordAutoArchiveDuration.Hour;
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error archiving thread {currentThread.Id}: {ex.Message}");
+                        }
                     }
                 }
                 else
@@ -2626,17 +2531,21 @@ namespace Wabbit.BotClient.Commands
                         false, 1, 1
                     );
 
-                    await thread.SendMessageAsync(
-                        new DiscordMessageBuilder()
-                            .WithContent($"**Game {currentGame} starting - When this game is complete, select the winner:**")
-                            .AddComponents(winnerDropdown)
-                    );
+                    // Send winner dropdown to all threads
+                    foreach (var currentThread in threadsToUpdate)
+                    {
+                        await currentThread.SendMessageAsync(
+                            new DiscordMessageBuilder()
+                                .WithContent($"**Game {currentGame} starting - When this game is complete, select the winner:**")
+                                .AddComponents(winnerDropdown)
+                        );
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error handling game result: {ex.Message}");
-                await thread.SendMessageAsync($"⚠️ Error handling game result: {ex.Message}");
+                await reportingThread.SendMessageAsync($"⚠️ Error handling game result: {ex.Message}");
             }
         }
 
