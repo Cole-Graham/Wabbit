@@ -144,9 +144,6 @@ namespace Wabbit.BotClient.Commands
                 foreach (var participant in team.Participants)
                     if (participant.Player is not null)
                         await thread.AddThreadMemberAsync(participant.Player);
-
-                // Add admins and moderators to the thread
-                await AddStaffToThread(context.Guild, thread);
             }
             await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round sequence commenced"));
         }
@@ -262,9 +259,6 @@ namespace Wabbit.BotClient.Commands
                 await thread.SendMessageAsync(dropdownBuilder);
                 if (player is not null)
                     await thread.AddThreadMemberAsync(player);
-
-                // Add admins and moderators to the thread
-                await AddStaffToThread(context.Guild, thread);
             }
 
             _ongoingRounds.TourneyRounds.Add(round);
@@ -320,57 +314,6 @@ namespace Wabbit.BotClient.Commands
 
             public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter) =>
                 ValueTask.FromResult(length);
-        }
-
-        /// <summary>
-        /// Adds all admins and moderators from the server to the thread
-        /// </summary>
-        private async Task AddStaffToThread(DiscordGuild guild, DiscordThreadChannel thread)
-        {
-            if (guild is null || thread is null)
-                return;
-
-            try
-            {
-                // Get all members with their roles
-                var membersAsync = guild.GetAllMembersAsync();
-                var members = new List<DiscordMember>();
-
-                // Manually collect members from the async enumerable
-                await foreach (var member in membersAsync)
-                {
-                    members.Add(member);
-                }
-
-                // Filter for members with admin or moderator roles
-                foreach (var member in members)
-                {
-                    // Check for admin/mod role names
-                    bool hasStaffRole = member.Roles.Any(r =>
-                        r.Name.Contains("Admin", StringComparison.OrdinalIgnoreCase) ||
-                        r.Name.Contains("Mod", StringComparison.OrdinalIgnoreCase) ||
-                        r.Name.Contains("Staff", StringComparison.OrdinalIgnoreCase) ||
-                        r.Name.Contains("Owner", StringComparison.OrdinalIgnoreCase));
-
-                    if (hasStaffRole)
-                    {
-                        try
-                        {
-                            await thread.AddThreadMemberAsync(member);
-                            Console.WriteLine($"Added staff member {member.Username} to thread {thread.Name}");
-                        }
-                        catch (Exception ex)
-                        {
-                            // Log but continue if we can't add a specific member
-                            Console.WriteLine($"Failed to add staff member {member.Username} to thread: {ex.Message}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error adding staff to thread: {ex.Message}");
-            }
         }
 
         #endregion

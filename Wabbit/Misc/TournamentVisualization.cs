@@ -262,9 +262,10 @@ namespace Wabbit.Misc
                 yOffset += RowHeight;
 
                 // Calculate column widths
-                int nameWidth = (int)(tableWidth * 0.30);
-                int statsWidth = (int)(tableWidth * 0.125);
-                int statusWidth = tableWidth - nameWidth - (statsWidth * 4); // Ensure exact fit
+                int nameWidth = (int)(tableWidth * 0.35); // Width for player names
+                int seedWidth = (int)(tableWidth * 0.10); // New dedicated seed column
+                int statsWidth = (int)(tableWidth * 0.09); // Slightly smaller stats columns
+                int statusWidth = tableWidth - nameWidth - seedWidth - (statsWidth * 4); // Ensure exact fit
 
                 // Draw header row
                 int xPos = Padding;
@@ -275,6 +276,11 @@ namespace Wabbit.Misc
                 textPaint.TextSize = 14;
                 canvas.DrawText("Player", xPos + (nameWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
                 xPos += nameWidth;
+
+                // Seed column header
+                canvas.DrawRect(xPos, yOffset, seedWidth, RowHeight, borderPaint);
+                canvas.DrawText("Seed", xPos + (seedWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                xPos += seedWidth;
 
                 // Participant stats
                 // W column
@@ -360,6 +366,15 @@ namespace Wabbit.Misc
 
                     canvas.DrawText(displayName, xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
                     xPos += nameWidth;
+
+                    // Seed column
+                    canvas.DrawRect(xPos, yOffset, seedWidth, RowHeight, borderPaint);
+                    textPaint.TextAlign = SKTextAlign.Center;
+
+                    // Show seed value if available, otherwise show a dash
+                    string seedText = participant.Seed > 0 ? participant.Seed.ToString() : "-";
+                    canvas.DrawText(seedText, xPos + (seedWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                    xPos += seedWidth;
 
                     // Participant stats
                     // W column

@@ -5,6 +5,7 @@ using DSharpPlus.Entities;
 using DSharpPlus.Interactivity;
 using DSharpPlus.Interactivity.Extensions;
 using DSharpPlus.Commands.ContextChecks;
+using DSharpPlus;
 using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.BotClient.Config;
@@ -15,7 +16,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using DSharpPlus;
 using DSharpPlus.Net;
 using System.Reflection;
 using System.Dynamic;
@@ -140,11 +140,10 @@ namespace Wabbit.BotClient.Commands
                 await context.EditResponseAsync(new DiscordWebhookBuilder()
                     .WithContent($"Creating tournament with {(hasSeededPlayers ? "**seeded groups**" : "**random groups**")} (based on available seeding data)"));
 
-                // Create the tournament
+                // Create tournament with random groups or using seeding if available
                 Tournament tournament;
-                if (hasSeededPlayers)
+                if (signup.Seeds != null && signup.Seeds.Any())
                 {
-                    // Create tournament with seeded groups
                     tournament = await CreateTournamentWithSeeding(signup, context.Channel);
                 }
                 else
@@ -158,18 +157,21 @@ namespace Wabbit.BotClient.Commands
                         signup.Type);
                 }
 
-                // Prepare a confirmation message with details
+                // Post the tournament standings visualization to the standings channel if configured
+                await _tournamentManager.PostTournamentVisualization(tournament, context.Client);
+
+                // Create confirmation embed
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"🏆 Tournament Created: {tournament.Name}")
-                    .WithDescription($"Tournament has been created from signup '{signupName}'.")
-                    .WithColor(DiscordColor.Green)
-                    .AddField("Format", tournament.Format.ToString(), true)
+                    .WithDescription($"A new tournament has been created from signup '{signup.Name}'.")
                     .AddField("Players", tournament.Groups.Sum(g => g.Participants.Count).ToString(), true)
-                    .AddField("Groups", tournament.Groups.Count.ToString(), true)
-                    .WithFooter("Tournament will start automatically in 5 seconds");
+                    .AddField("Format", tournament.Format.ToString(), true)
+                    .AddField("Game Type", tournament.GameType == GameType.OneVsOne ? "1v1" : "2v2", true)
+                    .WithColor(DiscordColor.Green)
+                    .WithFooter("Use /tournament_manager show_standings to view the current standings.");
 
-                // Send confirmation message
-                var confirmation = await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                // Send confirmation
+                await context.EditResponseAsync(embed);
 
                 // Send a public message
                 var publicMessage = await context.Channel.SendMessageAsync(
@@ -183,7 +185,6 @@ namespace Wabbit.BotClient.Commands
                     await Task.Delay(5000);
                     try
                     {
-                        await confirmation.DeleteAsync();
                         await publicMessage.DeleteAsync();
                     }
                     catch (Exception ex)
@@ -192,8 +193,8 @@ namespace Wabbit.BotClient.Commands
                     }
                 });
 
-                // Delete the signup
-                await _tournamentManager.DeleteSignup(signupName, context.Client);
+                // Preserve signup data instead of deleting it
+                await _tournamentManager.DeleteSignup(signupName, context.Client, true);
 
                 // Start the tournament matches
                 try
@@ -253,7 +254,15 @@ namespace Wabbit.BotClient.Commands
 
             foreach (var player in seededPlayers)
             {
-                tournament.Groups[currentGroup].Participants.Add(new Tournament.GroupParticipant { Player = player });
+                // Find the seed value for this player
+                int seedValue = signup.Seeds
+                    .FirstOrDefault(s => s.Player == player || (s.Player?.Id == player.Id))?.Seed ?? 0;
+
+                tournament.Groups[currentGroup].Participants.Add(new Tournament.GroupParticipant
+                {
+                    Player = player,
+                    Seed = seedValue  // Transfer the seed value from signup to tournament
+                });
 
                 // Move to next group using snake draft pattern
                 if (!reverseDirection)
@@ -283,7 +292,16 @@ namespace Wabbit.BotClient.Commands
             {
                 // Find the group with the fewest players
                 var group = tournament.Groups.OrderBy(g => g.Participants.Count).First();
-                group.Participants.Add(new Tournament.GroupParticipant { Player = unseededPlayers[i] });
+
+                // Get any potential seed value (should be 0 in most cases, but checking just in case)
+                int seedValue = signup.Seeds
+                    .FirstOrDefault(s => s.Player == unseededPlayers[i] || (s.Player?.Id == unseededPlayers[i].Id))?.Seed ?? 0;
+
+                group.Participants.Add(new Tournament.GroupParticipant
+                {
+                    Player = unseededPlayers[i],
+                    Seed = seedValue  // Transfer any seed value that might exist
+                });
             }
 
             // Create the matches within each group
@@ -986,7 +1004,7 @@ namespace Wabbit.BotClient.Commands
                 // Replace the participants list in the signup
                 signup.Participants = newParticipantsList;
 
-                Console.WriteLine($"Successfully removed {player.Username} (ID: {player.Id}) from signup '{tournamentName}'");
+                Console.WriteLine($"Successfully removed {player.DisplayName} (ID: {player.Id}) from signup '{tournamentName}'");
                 Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
 
                 // Save the updated signup
@@ -1148,52 +1166,15 @@ namespace Wabbit.BotClient.Commands
                 // Check permissions
                 if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.Administrator))
                 {
-                    await context.EditResponseAsync("You don't have permission to repair tournament data.");
+                    await context.EditResponseAsync("You need administrator permission to repair tournament data.");
                     return;
                 }
 
-                // Send initial response
-                await context.EditResponseAsync("Starting tournament data repair process...");
+                await context.EditResponseAsync("Repairing tournament data files...");
 
-                // Create backup directory if it doesn't exist
-                string backupDir = Path.Combine("Data", "Backups", DateTime.Now.ToString("yyyyMMdd_HHmmss"));
-                Directory.CreateDirectory(backupDir);
-
-                // Get the paths of data files
-                string dataDir = Path.Combine("Data");
-                string tournamentsFile = Path.Combine(dataDir, "tournaments.json");
-                string signupsFile = Path.Combine(dataDir, "signups.json");
-                string stateFile = Path.Combine(dataDir, "tournament_state.json");
-
-                // Create backups
-                bool backupSuccess = true;
-                try
-                {
-                    if (File.Exists(tournamentsFile))
-                        File.Copy(tournamentsFile, Path.Combine(backupDir, "tournaments.json"), true);
-
-                    if (File.Exists(signupsFile))
-                        File.Copy(signupsFile, Path.Combine(backupDir, "signups.json"), true);
-
-                    if (File.Exists(stateFile))
-                        File.Copy(stateFile, Path.Combine(backupDir, "tournament_state.json"), true);
-                }
-                catch (Exception ex)
-                {
-                    backupSuccess = false;
-                    _logger.LogError(ex, "Failed to create backups before data repair");
-                    await context.Channel.SendMessageAsync($"⚠️ Warning: Failed to create backups: {ex.Message}");
-                }
-
-                // Call the repair method
                 await _tournamentManager.RepairDataFiles(context.Client);
 
-                // Send success message
-                string backupMsg = backupSuccess
-                    ? $"Backups created in {backupDir}"
-                    : "Warning: Backups could not be created";
-
-                await context.EditResponseAsync($"✅ Tournament data repair completed successfully! {backupMsg}");
+                await context.EditResponseAsync("Tournament data files have been repaired.");
             }, "Failed to repair tournament data");
         }
 
@@ -1664,161 +1645,175 @@ namespace Wabbit.BotClient.Commands
 
         private async Task StartGroupStageMatches(Tournament tournament, DiscordClient client, GameType gameType)
         {
-            try
+            // Only process each group if there are matches to be played
+            foreach (var group in tournament.Groups)
             {
-                Console.WriteLine($"Starting group stage matches for tournament '{tournament.Name}'");
+                // Schedule the first match for each pair of players
+                // Instead of creating all threads at once, we'll only create the first round of matches
+                var matches = new List<(DiscordMember, DiscordMember)>();
 
-                // Define possible match length settings
-                int[] possibleMatchLengths = [1, 3, 5]; // Bo1, Bo3, Bo5
-                // Default to Bo3 for group stage, but can be changed to other options
-                int defaultMatchLength = 3;
-
-                // Check if we need to retrieve match length preference from a config
-                // For now, hardcode to Bo3 for group stage
-                int matchLength = defaultMatchLength;
-
-                // Process each group
-                foreach (var group in tournament.Groups)
+                foreach (var p1 in group.Participants)
                 {
-                    Console.WriteLine($"Processing group '{group.Name}' with {group.Participants.Count} participants");
-
-                    // Create all possible match pairs within this group
-                    List<(Tournament.GroupParticipant, Tournament.GroupParticipant)> matchPairs = new();
-
-                    // Loop through all participants to create unique pairs
-                    for (int i = 0; i < group.Participants.Count; i++)
+                    foreach (var p2 in group.Participants)
                     {
-                        for (int j = i + 1; j < group.Participants.Count; j++)
+                        // Skip if same player or if a match between these players already exists
+                        if (p1 == p2 ||
+                            group.Matches.Any(m => m.Participants.Count == 2 &&
+                                ((m.Participants[0].Player == p1.Player && m.Participants[1].Player == p2.Player) ||
+                                 (m.Participants[0].Player == p2.Player && m.Participants[1].Player == p1.Player))))
                         {
-                            matchPairs.Add((group.Participants[i], group.Participants[j]));
+                            continue;
                         }
-                    }
 
-                    Console.WriteLine($"Created {matchPairs.Count} match pairs for group '{group.Name}'");
+                        // Convert players to DiscordMember
+                        var member1 = p1.Player as DiscordMember;
+                        var member2 = p2.Player as DiscordMember;
 
-                    // Schedule each match
-                    foreach (var matchPair in matchPairs)
-                    {
-                        try
+                        if (member1 is not null && member2 is not null)
                         {
-                            // Check if players are valid DiscordMembers
-                            if (matchPair.Item1.Player is not DiscordMember player1 ||
-                                matchPair.Item2.Player is not DiscordMember player2)
-                            {
-                                Console.WriteLine($"One or both players are not valid DiscordMembers. Skipping match.");
-                                continue;
-                            }
-
-                            // Create match based on game type
-                            if (gameType == GameType.OneVsOne)
-                            {
-                                // Create a 1v1 match with the appropriate match length
-                                await CreateAndStart1v1Match(tournament, group, player1, player2, client, matchLength);
-                            }
-                            else
-                            {
-                                // 2v2 matches require more logic to find teams
-                                // This would need to be implemented based on how teams are formed
-                                Console.WriteLine("2v2 matches are not yet implemented for automatic tournament running");
-                            }
-
-                            // Add a small delay between match creations to avoid rate limits
-                            await Task.Delay(2000);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error creating match: {ex.Message}");
+                            matches.Add((member1, member2));
                         }
                     }
                 }
 
-                Console.WriteLine($"Group stage matches started for tournament '{tournament.Name}'");
+                // Only create half of the matches now - the other half will be created as these complete
+                // This way each player plays against each other player once
+                var uniqueMatches = new HashSet<(ulong, ulong)>();
+                var matchesToCreate = new List<(DiscordMember, DiscordMember)>();
+
+                foreach (var match in matches)
+                {
+                    var sortedIds = new[] { match.Item1.Id, match.Item2.Id }.OrderBy(id => id).ToArray();
+                    var matchKey = (sortedIds[0], sortedIds[1]);
+
+                    if (uniqueMatches.Add(matchKey))
+                    {
+                        matchesToCreate.Add(match);
+                    }
+                }
+
+                // Create the first round of matches
+                foreach (var match in matchesToCreate)
+                {
+                    int matchLength = 1; // Default Bo1 for group stages
+                    await CreateAndStart1v1Match(tournament, group, match.Item1, match.Item2, client, matchLength);
+
+                    // Add a slight delay to avoid rate limiting
+                    await Task.Delay(1000);
+                }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error starting group stage: {ex.Message}");
-                Console.WriteLine(ex.StackTrace);
-            }
+
+            // Update tournament state
+            await _tournamentManager.SaveTournamentState(client);
         }
 
         private async Task CreateAndStart1v1Match(Tournament tournament, Tournament.Group group, DiscordMember player1, DiscordMember player2, DiscordClient client, int matchLength)
         {
             try
             {
-                Console.WriteLine($"Creating 1v1 match: {player1.DisplayName} vs {player2.DisplayName}");
-
-                // Find the bot channel from configuration
-                DiscordChannel? matchChannel = null;
-                var guild = player1.Guild;
-
-                // Get server configuration from config
-                var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == guild.Id);
-                if (server != null && server.BotChannelId.HasValue)
+                // Find or create a channel to use for the match
+                DiscordChannel? channel = tournament.AnnouncementChannel;
+                if (channel is null)
                 {
-                    try
+                    var guild = player1.Guild;
+
+                    // Get the server config to find the bot channel ID
+                    var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == guild.Id);
+                    if (server != null && server.BotChannelId.HasValue)
                     {
-                        // Get the bot channel from the config
-                        matchChannel = await client.GetChannelAsync(server.BotChannelId.Value);
-                        Console.WriteLine($"Using configured bot channel: {matchChannel.Name}");
+                        try
+                        {
+                            channel = await guild.GetChannelAsync(server.BotChannelId.Value);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Failed to get bot channel with ID {server.BotChannelId.Value}");
+                        }
                     }
-                    catch (Exception ex)
+
+                    // Fallback if bot channel ID is not configured or channel not found
+                    if (channel is null)
                     {
-                        Console.WriteLine($"Error getting bot channel: {ex.Message}");
+                        var channels = await guild.GetChannelsAsync();
+                        channel = channels.FirstOrDefault(c =>
+                            c.Type == DiscordChannelType.Text &&
+                            (c.Name.Contains("general", StringComparison.OrdinalIgnoreCase) ||
+                             c.Name.Contains("chat", StringComparison.OrdinalIgnoreCase))
+                        );
+
+                        // If no suitable channel found, use the first text channel
+                        if (channel is null)
+                        {
+                            channel = channels.FirstOrDefault(c => c.Type == DiscordChannelType.Text);
+                        }
                     }
-                }
 
-                // Fall back to tournament announcement channel if bot channel is not found
-                if (matchChannel is null && tournament.AnnouncementChannel is not null)
-                {
-                    matchChannel = tournament.AnnouncementChannel;
-                    Console.WriteLine($"Falling back to tournament announcement channel: {matchChannel.Name}");
-                }
-
-                // Final fallback to general channel
-                if (matchChannel is null)
-                {
-                    var channels = await guild.GetChannelsAsync();
-                    matchChannel = channels.FirstOrDefault(c => c.Name.Contains("general", StringComparison.OrdinalIgnoreCase)) ??
-                                  channels.FirstOrDefault(c => c.Name.Contains("chat", StringComparison.OrdinalIgnoreCase)) ??
-                                  channels.FirstOrDefault();
-
-                    if (matchChannel is null)
+                    if (channel is null)
                     {
-                        Console.WriteLine("Could not find a suitable channel for the match");
+                        _logger.LogError($"Could not find a suitable channel for tournament match in guild {guild.Name}");
                         return;
                     }
-                    Console.WriteLine($"Falling back to general channel: {matchChannel.Name}");
                 }
 
-                // Create a match in the tournament structure
+                // Create a new match
                 var match = new Tournament.Match
                 {
                     Name = $"{player1.DisplayName} vs {player2.DisplayName}",
                     Type = MatchType.GroupStage,
-                    BestOf = matchLength // Use the matchLength parameter
+                    BestOf = matchLength,
+                    Participants = new List<Tournament.MatchParticipant>
+                    {
+                        new Tournament.MatchParticipant { Player = player1 },
+                        new Tournament.MatchParticipant { Player = player2 }
+                    }
                 };
 
-                // Create a round with the same settings as the 1v1 command would
-                string pings = $"{player1.Mention} {player2.Mention}";
+                // Add match to the group
+                group.Matches.Add(match);
+
+                // Create and start a round for this match
                 var round = new Round
                 {
                     Name = match.Name,
-                    Length = match.BestOf,
+                    Length = matchLength,
                     OneVOne = true,
                     Teams = new List<Round.Team>(),
-                    Pings = pings,
-                    TournamentId = tournament.Name // Use tournament name as identifier
+                    Pings = $"{player1.Mention} {player2.Mention}"
                 };
 
-                // Add participants
-                match.Participants.Add(new Tournament.MatchParticipant { Player = player1 });
-                match.Participants.Add(new Tournament.MatchParticipant { Player = player2 });
+                // Create teams (one player per team)
+                var team1 = new Round.Team
+                {
+                    Name = player1.DisplayName,
+                    Participants = new List<Round.Participant> { new Round.Participant { Player = player1 } }
+                };
 
-                // Add the match to the group
-                group.Matches.Add(match);
+                var team2 = new Round.Team
+                {
+                    Name = player2.DisplayName,
+                    Participants = new List<Round.Participant> { new Round.Participant { Player = player2 } }
+                };
 
-                // Setup map ban options just like in the 1v1 command would
-                string?[] maps1v1 = Maps.MapCollection?.Where(m => m.Size == "1v1").Select(m => m.Name).ToArray() ?? Array.Empty<string?>();
+                round.Teams.Add(team1);
+                round.Teams.Add(team2);
+
+                // Create a private thread for each player
+                var thread1 = await channel.CreateThreadAsync(
+                    $"Match: {player1.DisplayName} vs {player2.DisplayName}",
+                    DiscordAutoArchiveDuration.Day,
+                    DiscordChannelType.PrivateThread,
+                    $"Tournament match thread for {player1.DisplayName}"
+                );
+
+                team1.Thread = thread1;
+
+                // Add players to threads
+                await thread1.AddThreadMemberAsync(player1);
+                await thread1.AddThreadMemberAsync(player2);
+
+                // Create map ban dropdown options
+                string?[] maps1v1 = _tournamentManager.GetTournamentMapPool(true).ToArray();
+
                 var options = new List<DiscordSelectComponentOption>();
                 foreach (var map in maps1v1)
                 {
@@ -1829,135 +1824,154 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
-                // Create dropdown and message based on match length (Bo3 by default)
-                DiscordSelectComponent dropdown;
+                // Create map ban dropdown
+                DiscordSelectComponent mapBanDropdown;
                 string message;
 
-                switch (round.Length)
+                switch (matchLength)
                 {
                     case 3:
-                        dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
+                        mapBanDropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
                         message = "**Scroll to see all map options!**\n\n" +
-                            "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                            "Only 2 maps from each team will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
-                            "selected will be randomly banned in case both teams ban the same map. " +
-                            "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
-                            "randomly before each game after deck codes have been locked in.\n\n" +
-                            "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
+                            "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                             "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
                         break;
                     case 5:
-                        dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 2, 2);
+                        mapBanDropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 2, 2);
                         message = "**Scroll to see all map options!**\n\n" +
-                            "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                            "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
-                            "One of the 2nd priority maps selected by each team will be randomly banned. " +
-                            "You will not know which maps were banned by your opponent, " +
-                            "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.\n\n" +
+                            "Select 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
                             "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
                         break;
                     default:
-                        dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
+                        mapBanDropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 1, 1);
                         message = "**Scroll to see all map options!**\n\n" +
-                            "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                            "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
+                            "Select 1 map to ban. This map will not be played in this match.\n\n" +
+                            "**Note:** After making your selection, you'll have a chance to review your choice and confirm or revise it.";
                         break;
                 }
 
-                var dropdownBuilder = new DiscordMessageBuilder()
-                    .WithContent(message)
-                    .AddComponents(dropdown);
-
-                // Create teams and threads
-                List<DiscordMember> players = [player1, player2];
-                foreach (var player in players)
+                // Create winner selection dropdown
+                var winnerOptions = new List<DiscordSelectComponentOption>
                 {
-                    string displayName = player?.DisplayName ?? "Player";
-                    Round.Team team = new() { Name = displayName };
-                    Round.Participant participant = new() { Player = player };
-                    team.Participants.Add(participant);
-
-                    round.Teams.Add(team);
-
-                    // Create a private thread for this player
-                    try
-                    {
-                        var thread = await matchChannel.CreateThreadAsync(displayName, DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
-                        team.Thread = thread;
-
-                        // Send map ban options to the thread
-                        await thread.SendMessageAsync(dropdownBuilder);
-                        if (player is not null)
-                            await thread.AddThreadMemberAsync(player);
-
-                        // Add admins and moderators to the thread
-                        if (player?.Guild is not null)
-                            await AddStaffToThread(player.Guild, thread);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error creating thread for {displayName}: {ex.Message}");
-                        // Continue with the match even if thread creation fails
-                    }
-                }
-
-                // Link the round to the match
-                match.LinkedRound = round;
-
-                // Add the round to ongoing rounds
-                _ongoingRounds.TourneyRounds.Add(round);
-
-                // Send a message to the channel
-                string matchTypeEmoji = match.BestOf switch
-                {
-                    1 => "🎯", // Single game (Bo1)
-                    3 => "🔄", // Best of 3
-                    5 => "🏆", // Best of 5
-                    _ => "🎮", // Default
+                    new DiscordSelectComponentOption(
+                        $"{player1.DisplayName} wins 2-0",
+                        $"{player1.Id}:2:0",
+                        $"{player1.DisplayName} won 2-0"
+                    ),
+                    new DiscordSelectComponentOption(
+                        $"{player1.DisplayName} wins 2-1",
+                        $"{player1.Id}:2:1",
+                        $"{player1.DisplayName} won 2-1"
+                    ),
+                    new DiscordSelectComponentOption(
+                        $"{player2.DisplayName} wins 2-0",
+                        $"{player2.Id}:2:0",
+                        $"{player2.DisplayName} won 2-0"
+                    ),
+                    new DiscordSelectComponentOption(
+                        $"{player2.DisplayName} wins 2-1",
+                        $"{player2.Id}:2:1",
+                        $"{player2.DisplayName} won 2-1"
+                    )
                 };
 
-                // Create an embed for the match announcement
-                var matchEmbed = new DiscordEmbedBuilder()
-                    .WithTitle($"{matchTypeEmoji} Group Stage Match: {player1.DisplayName} vs {player2.DisplayName}")
-                    .WithDescription($"A Best of {match.BestOf} match has been created in the tournament: **{tournament.Name}**\n\n" +
-                                    $"Please check your private threads in <#{matchChannel.Id}> for map bans and match details.")
+                // Adjust winner options based on match length
+                if (matchLength == 1)
+                {
+                    winnerOptions = new List<DiscordSelectComponentOption>
+                    {
+                        new DiscordSelectComponentOption(
+                            $"{player1.DisplayName} wins",
+                            $"{player1.Id}:1:0",
+                            $"{player1.DisplayName} won"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player2.DisplayName} wins",
+                            $"{player2.Id}:1:0",
+                            $"{player2.DisplayName} won"
+                        )
+                    };
+                }
+                else if (matchLength == 5)
+                {
+                    winnerOptions = new List<DiscordSelectComponentOption>
+                    {
+                        new DiscordSelectComponentOption(
+                            $"{player1.DisplayName} wins 3-0",
+                            $"{player1.Id}:3:0",
+                            $"{player1.DisplayName} won 3-0"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player1.DisplayName} wins 3-1",
+                            $"{player1.Id}:3:1",
+                            $"{player1.DisplayName} won 3-1"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player1.DisplayName} wins 3-2",
+                            $"{player1.Id}:3:2",
+                            $"{player1.DisplayName} won 3-2"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player2.DisplayName} wins 3-0",
+                            $"{player2.Id}:3:0",
+                            $"{player2.DisplayName} won 3-0"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player2.DisplayName} wins 3-1",
+                            $"{player2.Id}:3:1",
+                            $"{player2.DisplayName} won 3-1"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player2.DisplayName} wins 3-2",
+                            $"{player2.Id}:3:2",
+                            $"{player2.DisplayName} won 3-2"
+                        )
+                    };
+                }
+
+                var winnerDropdown = new DiscordSelectComponent(
+                    "tournament_match_winner_dropdown",
+                    "Select the match winner and score",
+                    winnerOptions,
+                    false, 1, 1
+                );
+
+                // Send map bans and instructions
+                var dropdownBuilder = new DiscordMessageBuilder()
+                    .WithContent(message)
+                    .AddComponents(mapBanDropdown);
+
+                await thread1.SendMessageAsync(dropdownBuilder);
+
+                // Send match winner dropdown
+                var winnerBuilder = new DiscordMessageBuilder()
+                    .WithContent("**When the match is complete, select the winner and score:**")
+                    .AddComponents(winnerDropdown);
+
+                await thread1.SendMessageAsync(winnerBuilder);
+
+                // Send announcement message to the channel
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"🎮 Match Started: {player1.DisplayName} vs {player2.DisplayName}")
+                    .WithDescription($"A new Bo{matchLength} match has started in Group {group.Name}.")
+                    .AddField("Players", $"{player1.Mention} vs {player2.Mention}", false)
                     .WithColor(DiscordColor.Blue)
-                    .WithFooter($"Tournament Group: {group.Name}");
+                    .WithTimestamp(DateTime.Now);
 
-                var announceMsg = await matchChannel.SendMessageAsync(matchEmbed);
+                await channel.SendMessageAsync(embed);
 
-                // Try to notify players via DM
-                try
-                {
-                    var playerNotifyEmbed = new DiscordEmbedBuilder()
-                        .WithTitle($"🎮 Your Tournament Match is Ready")
-                        .WithDescription($"A Best of {match.BestOf} match has been created for you in the tournament: **{tournament.Name}**\n\n" +
-                                        $"Please check the <#{matchChannel.Id}> channel for your private thread where you'll make map bans.")
-                        .WithColor(DiscordColor.Green)
-                        .WithFooter("Good luck!");
-
-                    await player1.SendMessageAsync(playerNotifyEmbed);
-                    await player2.SendMessageAsync(playerNotifyEmbed);
-                }
-                catch (Exception ex)
-                {
-                    // Players may have DMs disabled, don't let this stop the process
-                    Console.WriteLine($"Could not send DM to one or more players: {ex.Message}");
-                }
-
-                // Add to messages to delete when round is complete
-                if (round.MsgToDel == null)
-                    round.MsgToDel = new List<DiscordMessage>();
-                round.MsgToDel.Add(announceMsg);
+                // Add to ongoing rounds and link to tournament match
+                _ongoingRounds.TourneyRounds.Add(round);
+                match.LinkedRound = round;
 
                 // Save tournament state
                 await _tournamentManager.SaveTournamentState(client);
 
-                Console.WriteLine($"Created match: {player1.DisplayName} vs {player2.DisplayName}");
+                _logger.LogInformation($"Started match {match.Name} in Group {group.Name}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error creating 1v1 match: {ex.Message}");
-                Console.WriteLine(ex.StackTrace);
+                _logger.LogError(ex, $"Error creating 1v1 match between {player1?.DisplayName} and {player2?.DisplayName}");
             }
         }
 
@@ -2010,6 +2024,139 @@ namespace Wabbit.BotClient.Commands
             {
                 Console.WriteLine($"Error adding staff to thread: {ex.Message}");
             }
+        }
+
+        // New method to handle match completion and schedule next matches as needed
+        public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
+        {
+            if (tournament == null || match == null || !match.IsComplete)
+                return;
+
+            try
+            {
+                // Find the group this match belongs to
+                var group = tournament.Groups.FirstOrDefault(g => g.Matches.Contains(match));
+                if (group == null)
+                    return; // Not a group stage match
+
+                // Check if the group is complete after this match
+                _tournamentManager.UpdateTournamentFromRound(tournament);
+
+                // If the group isn't complete, schedule new matches for these players if needed
+                if (!group.IsComplete)
+                {
+                    foreach (var participant in match.Participants)
+                    {
+                        if (participant?.Player is not DiscordMember player)
+                            continue;
+
+                        // Find all participants this player hasn't played against yet
+                        var opponentsToPlay = group.Participants
+                            .Where(p => p.Player is DiscordMember && p.Player != participant.Player)
+                            .Select(p => p.Player as DiscordMember)
+                            .Where(opponent => opponent is not null && !group.Matches.Any(m =>
+                                m.Participants.Count == 2 &&
+                                m.Participants.Any(mp => mp.Player is DiscordMember playerMember && playerMember.Id == player.Id) &&
+                                m.Participants.Any(mp => mp.Player is DiscordMember opponentMember && opponentMember.Id == opponent.Id)))
+                            .ToList();
+
+                        // If this player has opponents they haven't played, create one new match
+                        if (opponentsToPlay.Any())
+                        {
+                            // Schedule only one new match for this player
+                            var opponent = opponentsToPlay.First();
+
+                            // Guard against null opponent (shouldn't happen due to filtering, but compiler doesn't know that)
+                            if (opponent is null)
+                            {
+                                _logger.LogError("Opponent was null when attempting to create a match. Skipping.");
+                                continue;
+                            }
+
+                            // Check if this match is already being created by the other player's loop
+                            var key = new[] { player.Id, opponent.Id }.OrderBy(id => id).ToArray();
+                            var matchKey = $"{key[0]}_{key[1]}";
+
+                            // Use a simple locking mechanism to avoid duplicate match creation
+                            if (!_processingMatches.Contains(matchKey))
+                            {
+                                try
+                                {
+                                    _processingMatches.Add(matchKey);
+
+                                    // First close the current match thread if it exists
+                                    if (match.LinkedRound?.Teams != null)
+                                    {
+                                        foreach (var team in match.LinkedRound.Teams)
+                                        {
+                                            if (team.Thread is not null)
+                                            {
+                                                try
+                                                {
+                                                    await team.Thread.ModifyAsync(t =>
+                                                    {
+                                                        t.IsArchived = true;
+                                                        t.Locked = true;
+                                                    });
+                                                }
+                                                catch
+                                                {
+                                                    // Thread might already be deleted or archived
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Create a new match
+                                    _logger.LogInformation($"Creating new match for {player.DisplayName} vs {opponent.DisplayName} in group {group.Name}");
+                                    await CreateAndStart1v1Match(tournament, group, player, opponent, client, 3);
+                                }
+                                finally
+                                {
+                                    _processingMatches.Remove(matchKey);
+                                }
+                            }
+
+                            // Only schedule one new match per player to avoid flooding
+                            break;
+                        }
+                    }
+                }
+                // If group is complete, check if all groups are complete to set up playoffs
+                else if (tournament.Groups.All(g => g.IsComplete) && tournament.CurrentStage == TournamentStage.Groups)
+                {
+                    // Set up playoffs
+                    _tournamentManager.SetupPlayoffs(tournament);
+
+                    // Post updated standings
+                    await _tournamentManager.PostTournamentVisualization(tournament, client);
+
+                    // Start playoff matches if we're ready
+                    if (tournament.CurrentStage == TournamentStage.Playoffs)
+                    {
+                        await StartPlayoffMatches(tournament, client);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling match completion");
+            }
+        }
+
+        // Add a new field to track matches being processed
+        private readonly HashSet<string> _processingMatches = new HashSet<string>();
+
+        // New method to start playoff matches
+        private Task StartPlayoffMatches(Tournament tournament, DiscordClient client)
+        {
+            // For now, just log that playoffs are starting
+            _logger.LogInformation($"Starting playoff matches for tournament {tournament.Name}");
+
+            // We would implement the playoff bracket matches here
+            // Similar to group stage matches but with elimination rules
+
+            return Task.CompletedTask;
         }
     }
 

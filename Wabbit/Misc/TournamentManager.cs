@@ -11,6 +11,7 @@ using DSharpPlus.Entities;
 using MatchType = Wabbit.Models.MatchType;
 using Wabbit.Services;
 using Wabbit.Data;
+using Wabbit.BotClient.Config;
 
 namespace Wabbit.Misc
 {
@@ -175,6 +176,18 @@ namespace Wabbit.Misc
         {
             [JsonPropertyName("$values")]
             public List<Tournament> Values { get; set; } = new List<Tournament>();
+        }
+
+        // Custom property naming policy to handle $values property
+        private class CustomPropertyNamingPolicy : JsonNamingPolicy
+        {
+            public override string ConvertName(string name)
+            {
+                // Only rename "Values" to "$values" but let the serializer handle other properties
+                if (name == "Values")
+                    return "$values";
+                return name;  // Leave other property names unchanged
+            }
         }
 
         // Load signups from file
@@ -443,25 +456,21 @@ namespace Wabbit.Misc
                     sanitizedTournaments.Add(cleanTournament);
                 }
 
-                // Option 1: Create a specific format with proper JSON structure
+                // Create a wrapper object WITHOUT manually adding Id properties
                 var jsonObject = new
                 {
-                    Id = "1",
                     Values = sanitizedTournaments
                 };
 
                 var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    ReferenceHandler = ReferenceHandler.Preserve
+                    ReferenceHandler = ReferenceHandler.Preserve,
+                    PropertyNamingPolicy = new CustomPropertyNamingPolicy()
                 };
 
-                // Manually construct the JSON to ensure exact format
-                // This ensures a single level of $values 
+                // Let the serializer handle all the reference tracking
                 var json = JsonSerializer.Serialize(jsonObject, options);
-
-                // Replace the property name to match expected format
-                json = json.Replace("\"Id\"", "\"$id\"").Replace("\"Values\"", "\"$values\"");
 
                 // Write to the file
                 File.WriteAllText(_tournamentsFilePath, json);
@@ -795,6 +804,67 @@ namespace Wabbit.Misc
             await SaveAllData();
 
             return tournament;
+        }
+
+        // Add a new method to generate and post standings visualization
+        public async Task PostTournamentVisualization(Tournament tournament, DiscordClient client)
+        {
+            if (client == null || tournament == null || tournament.AnnouncementChannel is null || tournament.AnnouncementChannel.Guild is null)
+                return;
+
+            try
+            {
+                // Find the standings channel in the server config
+                var serverId = tournament.AnnouncementChannel.Guild.Id;
+                var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == serverId);
+
+                if (server != null && server.StandingsChannelId.HasValue)
+                {
+                    // Generate the standings image
+                    string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, client);
+
+                    // Get the standings channel
+                    var standingsChannel = await client.GetChannelAsync(server.StandingsChannelId.Value);
+                    if (standingsChannel is not null)
+                    {
+                        // Create the embed
+                        var embed = new DiscordEmbedBuilder()
+                            .WithTitle($"🏆 Tournament Standings: {tournament.Name}")
+                            .WithDescription($"Format: {tournament.Format}\nPlayers: {tournament.Groups.Sum(g => g.Participants.Count)}\nGroups: {tournament.Groups.Count}")
+                            .WithColor(DiscordColor.Gold)
+                            .WithFooter("Tournament Standings");
+
+                        // Send the image to the channel
+                        using (var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
+                        {
+                            var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
+                                .AddEmbed(embed)
+                                .AddFile(Path.GetFileName(imagePath), fileStream));
+
+                            // Store this message ID for later deletion if needed
+                            var relatedMessage = new RelatedMessage
+                            {
+                                ChannelId = standingsChannel.Id,
+                                MessageId = message.Id,
+                                Type = "StandingsVisualization"
+                            };
+
+                            // Add to tournament's related messages
+                            if (tournament.RelatedMessages == null)
+                                tournament.RelatedMessages = new List<RelatedMessage>();
+
+                            tournament.RelatedMessages.Add(relatedMessage);
+
+                            // Save updated tournament state
+                            await SaveTournamentState(client);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error posting standings visualization: {ex.Message}");
+            }
         }
 
         private void CreateGroups(Tournament tournament, List<DiscordMember> players, int groupCount, Dictionary<DiscordMember, int>? playerSeeds = null)
@@ -1216,6 +1286,48 @@ namespace Wabbit.Misc
                 {
                     tournament.CurrentStage = TournamentStage.Complete;
                     tournament.IsComplete = true;
+
+                    // Automatically archive the tournament data
+                    try
+                    {
+                        // We can't await here since this method isn't async
+                        // Save the tournament before archiving
+                        SaveTournamentsToFile();
+
+                        // Queue the archive operation to run in the background
+                        Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await ArchiveTournamentData(tournament.Name);
+                                Console.WriteLine($"Tournament '{tournament.Name}' has been completed and automatically archived!");
+
+                                // Send notification about completion if tournament has an announcement channel
+                                if (tournament.AnnouncementChannel is not null)
+                                {
+                                    var embed = new DiscordEmbedBuilder()
+                                        .WithTitle("🏆 Tournament Complete! 🏆")
+                                        .WithDescription($"The tournament **{tournament.Name}** has been completed and all data has been archived.")
+                                        .WithColor(DiscordColor.Gold)
+                                        .WithTimestamp(DateTime.Now)
+                                        .Build();
+
+                                    await tournament.AnnouncementChannel.SendMessageAsync(embed: embed);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Tournament completed but failed to archive data: {ex.Message}");
+                            }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Tournament completed but failed to archive data: {ex.Message}");
+                    }
+
+                    // Let users know the tournament is complete
+                    Console.WriteLine($"Tournament '{tournament.Name}' is now complete!");
                 }
             }
 
@@ -1229,13 +1341,82 @@ namespace Wabbit.Misc
 
         private void CheckGroupCompletion(Tournament.Group group)
         {
-            if (group.Matches?.All(m => m?.IsComplete == true) == true)
+            // A group is complete when all possible matches have been played
+            if (!group.IsComplete && group.Matches.All(m => m.IsComplete))
             {
-                group.IsComplete = true;
+                int totalParticipants = group.Participants.Count;
+                int expectedMatches = (totalParticipants * (totalParticipants - 1)) / 2; // n(n-1)/2 combinations
+
+                if (group.Matches.Count >= expectedMatches)
+                {
+                    group.IsComplete = true;
+
+                    // Determine the top 2 players in the group based on points
+                    // Points system: Win = 3 points, Draw = 1 point, Loss = 0 points
+                    var topPlayers = group.Participants
+                        .OrderByDescending(p => p.Points)
+                        .ThenByDescending(p => p.GamesWon) // First tiebreaker: total games won
+                        .ThenBy(p => p.GamesLost)          // Second tiebreaker: total games lost
+                        .Take(2)
+                        .ToList();
+
+                    // Handle advancement
+                    if (topPlayers.Count > 0)
+                    {
+                        topPlayers[0].AdvancedToPlayoffs = true;
+
+                        // Check if there's a second place (might not be in small groups)
+                        if (topPlayers.Count > 1)
+                        {
+                            // Only advance the second player if there's a clear distinction
+                            // between them and the third place (if there is one)
+                            var allSortedPlayers = group.Participants
+                                .OrderByDescending(p => p.Points)
+                                .ThenByDescending(p => p.GamesWon)
+                                .ThenBy(p => p.GamesLost)
+                                .ToList();
+
+                            // If there are more than 2 players, check if there's a tie for second place
+                            if (allSortedPlayers.Count > 2)
+                            {
+                                var secondPlace = allSortedPlayers[1];
+                                var thirdPlace = allSortedPlayers[2];
+
+                                // If tied on points, require additional tiebreaker(s)
+                                if (secondPlace.Points == thirdPlace.Points)
+                                {
+                                    // If tied on game wins too, require additional tiebreaker
+                                    if (secondPlace.GamesWon == thirdPlace.GamesWon &&
+                                        secondPlace.GamesLost == thirdPlace.GamesLost)
+                                    {
+                                        // For now, don't auto-advance anyone in a perfect tie situation
+                                        // This will require a tiebreaker match to be played
+                                        Console.WriteLine($"Perfect tie detected between players in Group {group.Name}. Tiebreaker needed.");
+                                    }
+                                    else
+                                    {
+                                        // Second place won by game difference
+                                        topPlayers[1].AdvancedToPlayoffs = true;
+                                    }
+                                }
+                                else
+                                {
+                                    // Clear second place by points
+                                    topPlayers[1].AdvancedToPlayoffs = true;
+                                }
+                            }
+                            else
+                            {
+                                // If only 2 players, second place always advances
+                                topPlayers[1].AdvancedToPlayoffs = true;
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        private void SetupPlayoffs(Tournament tournament)
+        public void SetupPlayoffs(Tournament tournament)
         {
             // Sort participants in each group by points (and tiebreakers if needed)
             foreach (var group in tournament.Groups)
@@ -1653,7 +1834,7 @@ namespace Wabbit.Misc
             return 0;
         }
 
-        public async Task DeleteSignup(string name, DiscordClient? client = null)
+        public async Task DeleteSignup(string name, DiscordClient? client = null, bool preserveData = false)
         {
             // Load signups if not already loaded
             if (_ongoingRounds.TournamentSignups == null)
@@ -1713,15 +1894,15 @@ namespace Wabbit.Misc
                     }
                 }
 
-                // Remove from signups collection
-                if (_ongoingRounds.TournamentSignups != null)
+                // Only remove from signups collection if we're not preserving data
+                if (!preserveData && _ongoingRounds.TournamentSignups != null)
                 {
                     _ongoingRounds.TournamentSignups.Remove(signup);
                 }
 
                 // Save changes
                 SaveSignupsToFile();
-                Console.WriteLine($"Signup '{name}' deleted");
+                Console.WriteLine($"Signup '{name}' {(preserveData ? "processed" : "deleted")}");
             }
             else
             {
@@ -1798,6 +1979,108 @@ namespace Wabbit.Misc
             SaveTournamentsToFile();
             SaveSignupsToFile();
             await SaveTournamentState();
+        }
+
+        /// <summary>
+        /// Archives tournament data when a tournament is completed
+        /// </summary>
+        public async Task ArchiveTournamentData(string tournamentName, DiscordClient? client = null)
+        {
+            try
+            {
+                // Find the tournament
+                var tournament = GetTournament(tournamentName);
+                if (tournament == null)
+                {
+                    Console.WriteLine($"Cannot archive tournament '{tournamentName}' - not found");
+                    return;
+                }
+
+                // Check if the tournament is complete
+                if (!tournament.IsComplete)
+                {
+                    Console.WriteLine($"Cannot archive tournament '{tournamentName}' - not yet complete");
+                    return;
+                }
+
+                // Create archive directory if it doesn't exist
+                var archiveDir = Path.Combine(_dataDirectory, "Archives");
+                Directory.CreateDirectory(archiveDir);
+
+                // Create a directory for this specific tournament
+                var tournamentDir = Path.Combine(archiveDir, tournamentName);
+                Directory.CreateDirectory(tournamentDir);
+
+                // Archive tournament data
+                var tournamentJson = File.ReadAllText(_tournamentsFilePath);
+                using (JsonDocument doc = JsonDocument.Parse(tournamentJson))
+                {
+                    if (doc.RootElement.TryGetProperty("$values", out JsonElement tournamentValues))
+                    {
+                        // Find the specific tournament to archive
+                        foreach (JsonElement tournamentElement in tournamentValues.EnumerateArray())
+                        {
+                            if (tournamentElement.TryGetProperty("Name", out JsonElement nameElement) &&
+                                nameElement.GetString() == tournamentName)
+                            {
+                                // Write this tournament to its own archive file
+                                string singleTournamentJson = tournamentElement.GetRawText();
+                                File.WriteAllText(Path.Combine(tournamentDir, "tournament.json"), singleTournamentJson);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Archive signup data if it exists
+                var signup = GetSignup(tournamentName);
+                if (signup != null)
+                {
+                    // Create a standalone object for this signup
+                    var signupData = new
+                    {
+                        signup.Name,
+                        signup.IsOpen,
+                        signup.CreatedAt,
+                        signup.Format,
+                        signup.Type,
+                        signup.ScheduledStartTime,
+                        signup.SignupChannelId,
+                        signup.MessageId,
+                        CreatedById = signup.CreatedBy?.Id ?? signup.CreatorId,
+                        CreatedByUsername = signup.CreatedBy?.Username ?? signup.CreatorUsername,
+                        Participants = signup.ParticipantInfo,
+                        Seeds = signup.Seeds?.Select(s => new { PlayerId = s.PlayerId, Seed = s.Seed }).ToList(),
+                        signup.RelatedMessages
+                    };
+
+                    var options = new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                    };
+
+                    string signupJson = JsonSerializer.Serialize(signupData, options);
+                    File.WriteAllText(Path.Combine(tournamentDir, "signup.json"), signupJson);
+
+                    // Now that we've archived the signup data, we can remove it from the active list
+                    await DeleteSignup(tournamentName, client);
+                }
+
+                // Archive tournament state data
+                var stateJson = File.ReadAllText(_tournamentStateFilePath);
+                File.WriteAllText(Path.Combine(tournamentDir, "tournament_state.json"), stateJson);
+
+                // Remove the tournament from the active list
+                await DeleteTournament(tournamentName, client);
+
+                Console.WriteLine($"Tournament '{tournamentName}' and related data have been archived to {tournamentDir}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error archiving tournament data: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+            }
         }
 
         /// <summary>
@@ -2168,35 +2451,28 @@ namespace Wabbit.Misc
                     sanitizedTournaments.Add(cleanTournament);
                 }
 
-                // Serialize with preservation of object references
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    ReferenceHandler = ReferenceHandler.Preserve
-                };
-
-                // Create the state object manually to ensure proper format
+                // Create the state object WITHOUT manually adding Id properties
                 var stateObj = new
                 {
-                    Id = "1",
                     Tournaments = new
                     {
-                        Id = "2",
                         Values = sanitizedTournaments
                     },
                     ActiveRounds = new
                     {
-                        Id = "3",
                         Values = activeRounds
                     }
                 };
 
-                // Convert to JSON
-                string json = JsonSerializer.Serialize(stateObj, options);
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    ReferenceHandler = ReferenceHandler.Preserve,
+                    PropertyNamingPolicy = new CustomPropertyNamingPolicy()
+                };
 
-                // Replace property names to match expected format
-                json = json.Replace("\"Id\":", "\"$id\":")
-                         .Replace("\"Values\":", "\"$values\":");
+                // Let the serializer handle all reference tracking
+                string json = JsonSerializer.Serialize(stateObj, options);
 
                 // Save the state
                 File.WriteAllText(_tournamentStateFilePath, json);

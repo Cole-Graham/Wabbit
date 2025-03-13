@@ -438,7 +438,7 @@ namespace Wabbit.BotClient.Events
                 // Add to ongoing tournaments
                 _roundsHolder.Tournaments.Add(tournament);
 
-                // Generate and send standings image
+                // Generate visualization for the response message
                 string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
 
                 var embed = new DiscordEmbedBuilder()
@@ -457,7 +457,7 @@ namespace Wabbit.BotClient.Events
                 embed.WithColor(DiscordColor.Green)
                     .WithFooter("Use /tournament_manager show_standings to view the current standings");
 
-                // Send the tournament info with the standings image
+                // Send the tournament info with the standings image to the modal interaction channel
                 var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                 var messageBuilder = new DiscordFollowupMessageBuilder()
                     .AddEmbed(embed)
@@ -465,23 +465,8 @@ namespace Wabbit.BotClient.Events
 
                 await modal.Interaction.CreateFollowupMessageAsync(messageBuilder);
 
-                // Notify all players
-                var notificationEmbed = new DiscordEmbedBuilder()
-                    .WithTitle($"🏆 You've been added to tournament: {tournament.Name}")
-                    .WithDescription("Check the tournament channel for details and your group assignments.")
-                    .WithColor(DiscordColor.Green);
-
-                foreach (var player in players)
-                {
-                    try
-                    {
-                        await player.SendMessageAsync(notificationEmbed);
-                    }
-                    catch
-                    {
-                        // Player may have DMs disabled, continue anyway
-                    }
-                }
+                // Also post to the standings channel if configured
+                await _tournamentManager.PostTournamentVisualization(tournament, sender);
             }
             catch (Exception ex)
             {

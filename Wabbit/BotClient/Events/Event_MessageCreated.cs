@@ -187,24 +187,8 @@ namespace Wabbit.BotClient.Events
 
                 await e.Channel.SendMessageAsync($"Tournament '{tournamentName}' created successfully with {players.Count} participants! (Format: {format}, Game Type: {(gameType == GameType.OneVsOne ? "1v1" : "2v2")}){seedInfo}");
 
-                // Generate and send the standings image
-                try
-                {
-                    string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
-
-                    using (var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
-                    {
-                        var messageBuilder = new DiscordMessageBuilder()
-                            .WithContent($"📊 **{tournament.Name}** Initial Standings")
-                            .AddFile(Path.GetFileName(imagePath), fileStream);
-
-                        await e.Channel.SendMessageAsync(messageBuilder);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    await e.Channel.SendMessageAsync($"Tournament created, but failed to generate standings image: {ex.Message}");
-                }
+                // Also post to the standings channel if configured
+                await _tournamentManager.PostTournamentVisualization(tournament, sender);
             }
             catch (Exception ex)
             {

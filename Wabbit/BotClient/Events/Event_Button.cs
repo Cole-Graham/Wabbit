@@ -256,6 +256,18 @@ namespace Wabbit.BotClient.Events
 
                                 await e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().AddEmbed(embedResult));
 
+                                // Get tournament and match information
+                                var tournamentMatchResult = FindTournamentMatchForRound(round);
+                                if (tournamentMatchResult == null)
+                                {
+                                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                        .WithContent("Could not find the tournament match."));
+                                    return;
+                                }
+
+                                // Use deconstruction to get tournament and match
+                                var (tournamentObj, matchObj) = tournamentMatchResult.Value;
+
                                 var embedDeck = new DiscordEmbedBuilder()
                                 {
                                     Title = $"**{round.Name ?? "Round"}**, Game {round.Cycle}"
@@ -267,8 +279,37 @@ namespace Wabbit.BotClient.Events
                                     {
                                         foreach (var p in teamItem.Participants)
                                         {
-                                            if (p is not null && p.Player is not null)
-                                                embedDeck.AddField(p.Player.DisplayName ?? "Unknown Player", p.Deck ?? "No deck");
+                                            if (p is not null && p.Player is not null && p.Player.Id == e.User.Id)
+                                            {
+                                                string title = "Player";
+                                                if (p.Player is DiscordMember dMember)
+                                                    title = dMember.DisplayName;
+
+                                                embedDeck.AddField(title, $"Deck code: {p.Deck}");
+
+                                                if (map != null)
+                                                {
+                                                    // Store this deck code in the participant's history for this map
+                                                    if (p.Deck != null)
+                                                    {
+                                                        p.DeckHistory[map] = p.Deck;
+                                                    }
+
+                                                    // Also store in tournament match data for verification
+                                                    if (tournamentObj != null && matchObj != null && matchObj.Result != null)
+                                                    {
+                                                        string playerId = p.Player is DiscordMember member ? member.Id.ToString() : "unknown";
+
+                                                        if (!matchObj.Result.DeckCodes.ContainsKey(playerId))
+                                                            matchObj.Result.DeckCodes[playerId] = new Dictionary<string, string>();
+
+                                                        if (p.Deck != null)
+                                                        {
+                                                            matchObj.Result.DeckCodes[playerId][map] = p.Deck;
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -342,7 +383,7 @@ namespace Wabbit.BotClient.Events
                                 }
 
                                 // Track the played map
-                                string currentMapName = round.Maps[round.Cycle - 1];
+                                string currentMap = round.Maps[round.Cycle - 1];
 
                                 // Save tournament state to record the played map
                                 await _tournamentManager.SaveTournamentState(sender);
@@ -687,12 +728,12 @@ namespace Wabbit.BotClient.Events
                                         int mapIndex = Math.Min(roundForDeck.Cycle, roundForDeck.Maps.Count - 1);
                                         if (mapIndex >= 0 && mapIndex < roundForDeck.Maps.Count)
                                         {
-                                            string currentMap = roundForDeck.Maps[mapIndex];
+                                            string mapName = roundForDeck.Maps[mapIndex];
                                             if (deckParticipant.DeckHistory == null)
                                             {
                                                 deckParticipant.DeckHistory = new Dictionary<string, string>();
                                             }
-                                            deckParticipant.DeckHistory[currentMap] = deckParticipant.Deck;
+                                            deckParticipant.DeckHistory[mapName] = deckParticipant.Deck;
                                         }
                                     }
 
@@ -866,6 +907,118 @@ namespace Wabbit.BotClient.Events
                                 {
                                     Console.WriteLine($"Error handling submit deck button: {ex.Message}");
                                     await e.Channel.SendMessageAsync($"{e.User.Mention} Error starting deck submission: {ex.Message}");
+                                }
+                                break;
+
+                            case "tournament_match_winner_dropdown":
+                                try
+                                {
+                                    await e.Interaction.DeferAsync();
+
+                                    // Find the tournament round
+                                    var tourneyRound = _roundsHolder.TourneyRounds?.FirstOrDefault(r =>
+                                        r.Teams?.Any(t => t.Thread?.Id == e.Channel.Id) == true);
+
+                                    if (tourneyRound == null)
+                                    {
+                                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                            .WithContent("Could not find the tournament round."));
+                                        return;
+                                    }
+
+                                    // Get winner ID
+                                    if (e.Values == null || !e.Values.Any())
+                                    {
+                                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                            .WithContent("No winner selected."));
+                                        return;
+                                    }
+
+                                    // Parse winner ID and score
+                                    string[] parts = e.Values[0].Split(':');
+                                    if (parts.Length != 3)
+                                    {
+                                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                            .WithContent("Invalid selection format."));
+                                        return;
+                                    }
+
+                                    ulong winnerId = ulong.Parse(parts[0]);
+                                    int winnerScore = int.Parse(parts[1]);
+                                    int loserScore = int.Parse(parts[2]);
+
+                                    // Find the winner
+                                    DiscordMember? winnerMember = null;
+                                    if (tourneyRound.Teams != null)
+                                    {
+                                        foreach (var matchTeam in tourneyRound.Teams)
+                                        {
+                                            foreach (var matchParticipant in matchTeam.Participants)
+                                            {
+                                                if (matchParticipant.Player is DiscordMember member && member.Id == winnerId)
+                                                {
+                                                    winnerMember = member;
+                                                    break;
+                                                }
+                                            }
+                                            if (winnerMember is not null) break;
+                                        }
+                                    }
+
+                                    if (winnerMember is null)
+                                    {
+                                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                            .WithContent("Could not find the winner."));
+                                        return;
+                                    }
+
+                                    // Find tournament and match
+                                    var matchResult = FindTournamentMatchForRound(tourneyRound);
+                                    if (matchResult == null)
+                                    {
+                                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                            .WithContent("Could not find the tournament match."));
+                                        return;
+                                    }
+
+                                    // Use null-conditional operators to safely access tournament and match
+                                    Tournament? tournament = matchResult.Value.Item1;
+                                    Tournament.Match? match = matchResult.Value.Item2;
+
+                                    if (tournament == null || match == null)
+                                    {
+                                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                            .WithContent("Tournament or match information is missing."));
+                                        return;
+                                    }
+
+                                    // Update match result
+                                    _tournamentManager.UpdateMatchResult(tournament, match, winnerMember, winnerScore, loserScore);
+
+                                    // Update tournament state
+                                    await _tournamentManager.SaveTournamentState(sender);
+
+                                    // Create a success message
+                                    var embed = new DiscordEmbedBuilder()
+                                        .WithTitle("Match Result Recorded")
+                                        .WithDescription($"**Winner:** {winnerMember?.DisplayName ?? "Unknown"}\n**Score:** {winnerScore}-{loserScore}")
+                                        .WithColor(DiscordColor.Green);
+
+                                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                        .AddEmbed(embed));
+
+                                    // Handle match completion to create new matches or advance to playoffs
+                                    using (var scope = _scopeFactory.CreateScope())
+                                    {
+                                        var tournamentManagementGroup = scope.ServiceProvider.GetRequiredService<Wabbit.BotClient.Commands.TournamentManagementGroup>();
+                                        await tournamentManagementGroup.HandleMatchCompletion(tournament, match, sender);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Error processing tournament match winner");
+                                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                                        .WithContent($"Error processing match result: {ex.Message}"));
                                 }
                                 break;
                         }
@@ -1136,16 +1289,7 @@ namespace Wabbit.BotClient.Events
                 }
                 catch (Exception msgEx)
                 {
-                    _logger.LogWarning($"Failed to send error message: {msgEx.Message}");
-                    try
-                    {
-                        // Direct message as a final fallback
-                        await e.Channel.SendMessageAsync($"An error occurred processing your signup: {ex.Message}");
-                    }
-                    catch
-                    {
-                        _logger.LogError("Failed to send any error messages");
-                    }
+                    _logger.LogError($"Failed to send error message: {msgEx.Message}");
                 }
             }
         }
@@ -1227,7 +1371,7 @@ namespace Wabbit.BotClient.Events
 
                     // Send confirmation message and schedule deletion
                     var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You have been removed from the tournament '{tournamentName}'.")
+                        .WithContent($"You have been removed from the '{signup.Name}' tournament.")
                         .AsEphemeral(true));
 
                     // Schedule deletion after 10 seconds
@@ -1555,6 +1699,39 @@ namespace Wabbit.BotClient.Events
             {
                 Console.WriteLine($"Error cleaning up map ban messages: {ex.Message}");
             }
+        }
+
+        // Helper method to find a tournament match that is linked to a specific round
+        private (Tournament, Tournament.Match)? FindTournamentMatchForRound(Round round)
+        {
+            if (round == null)
+                return null;
+
+            // Search all tournaments
+            foreach (var tournament in _tournamentManager.GetAllTournaments())
+            {
+                foreach (var group in tournament.Groups)
+                {
+                    foreach (var match in group.Matches)
+                    {
+                        if (match.LinkedRound == round)
+                        {
+                            return (tournament, match);
+                        }
+                    }
+                }
+
+                // Also check playoff matches
+                foreach (var match in tournament.PlayoffMatches)
+                {
+                    if (match.LinkedRound == round)
+                    {
+                        return (tournament, match);
+                    }
+                }
+            }
+
+            return null;
         }
 
         private async Task HandleJoinTournamentButton(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
