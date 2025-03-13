@@ -2,6 +2,7 @@
 using DSharpPlus.Commands;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Wabbit.BotClient.Commands;
 using Wabbit.BotClient.Config;
 using Wabbit.BotClient.Events;
@@ -47,13 +48,11 @@ namespace Wabbit
 
                 builder.ConfigureServices(services =>
                 {
+                    services.AddSingleton(ongoingRounds);
+                    services.AddSingleton(tournamentManager);
                     services.AddSingleton<IRandomProvider, RandomProvider>();
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
-
-                    // Use the existing instances
-                    services.AddSingleton(ongoingRounds);
-                    services.AddSingleton(tournamentManager);
                 });
 
                 builder.ConfigureEventHandlers(events =>
