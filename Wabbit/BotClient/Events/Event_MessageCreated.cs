@@ -3,6 +3,7 @@ using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Microsoft.Extensions.Logging;
 using Wabbit.Misc;
+using Wabbit.Services.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,14 +14,20 @@ namespace Wabbit.BotClient.Events
     public class Event_MessageCreated : IEventHandler<MessageCreatedEventArgs>
     {
         private readonly OngoingRounds _roundsHolder;
-        private readonly TournamentManager _tournamentManager;
         private readonly ILogger<Event_MessageCreated> _logger;
+        private readonly ITournamentStateService _stateService;
+        private readonly ITournamentManagerService _tournamentManagerService;
 
-        public Event_MessageCreated(OngoingRounds roundsHolder, TournamentManager tournamentManager, ILogger<Event_MessageCreated> logger)
+        public Event_MessageCreated(
+            OngoingRounds roundsHolder,
+            ILogger<Event_MessageCreated> logger,
+            ITournamentStateService stateService,
+            ITournamentManagerService tournamentManagerService)
         {
             _roundsHolder = roundsHolder;
-            _tournamentManager = tournamentManager;
             _logger = logger;
+            _stateService = stateService;
+            _tournamentManagerService = tournamentManagerService;
         }
 
         public Task HandleEventAsync(DiscordClient sender, MessageCreatedEventArgs e)
@@ -103,7 +110,7 @@ namespace Wabbit.BotClient.Events
                     _logger.LogInformation($"Received deck code from {e.Author.Username} in thread {e.Channel.Name}");
 
                     // Save tournament state to preserve the temp deck code
-                    await _tournamentManager.SaveTournamentState(sender);
+                    await _stateService.SaveTournamentStateAsync(sender);
                 }
                 catch (Exception ex)
                 {

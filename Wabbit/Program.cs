@@ -41,20 +41,28 @@ namespace Wabbit
                 // Create a shared OngoingRounds instance
                 var ongoingRounds = new OngoingRounds();
 
-                // Create and initialize the TournamentManager
-                var tournamentManager = new TournamentManager(ongoingRounds);
-
                 DiscordClientBuilder builder = DiscordClientBuilder.CreateDefault(ConfigManager.Config.Token, DiscordIntents.All);
 
                 builder.ConfigureServices(services =>
                 {
                     services.AddSingleton(ongoingRounds);
-                    services.AddSingleton(tournamentManager);
+
+                    // Register tournament services
+                    services.AddSingleton<ITournamentRepositoryService, TournamentRepositoryService>();
+                    services.AddSingleton<ITournamentSignupService, TournamentSignupService>();
+                    services.AddSingleton<ITournamentGroupService, TournamentGroupService>();
+                    services.AddSingleton<ITournamentPlayoffService, TournamentPlayoffService>();
+                    services.AddSingleton<ITournamentStateService, TournamentStateService>();
+                    services.AddSingleton<ITournamentMatchService, TournamentMatchService>();
+                    services.AddSingleton<ITournamentGameService, TournamentGameService>();
+                    services.AddSingleton<ITournamentMapService, TournamentMapService>();
+                    services.AddSingleton<ITournamentService, TournamentService>();
+                    services.AddSingleton<ITournamentManagerService, TournamentManagerService>();
+
+                    // Register existing services
                     services.AddSingleton<IRandomProvider, RandomProvider>();
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
-                    services.AddSingleton<ITournamentGameService, TournamentGameService>();
-                    services.AddSingleton<ITournamentMatchService, TournamentMatchService>();
                     services.AddSingleton<TournamentManagementGroup>();
                 });
 
@@ -86,9 +94,13 @@ namespace Wabbit
 
                 await client.ConnectAsync(status: DiscordUserStatus.Online);
 
-                // Load tournament state
-                tournamentManager.LoadTournamentState();
-                await tournamentManager.LoadAllParticipantsAsync(client);
+                // Load tournament state using the state service
+                var stateService = client.ServiceProvider.GetRequiredService<ITournamentStateService>();
+                stateService.LoadTournamentState();
+
+                // Load tournament participants
+                var tournamentManagerService = client.ServiceProvider.GetRequiredService<ITournamentManagerService>();
+                await tournamentManagerService.LoadAllParticipantsAsync(client);
 
                 await Task.Delay(-1);
             }

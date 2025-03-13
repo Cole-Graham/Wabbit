@@ -33,22 +33,40 @@ namespace Wabbit.BotClient.Commands
     {
         private const int autoDeleteSeconds = 30;
 
-        private readonly TournamentManager _tournamentManager;
+        // New services
+        private readonly ITournamentManagerService _tournamentService;
         private readonly OngoingRounds _ongoingRounds;
         private readonly ILogger<TournamentManagementGroup> _logger;
+        private readonly ITournamentRepositoryService _repositoryService;
+        private readonly ITournamentSignupService _signupService;
+        private readonly ITournamentStateService _stateService;
+        private readonly ITournamentGroupService _groupService;
+        private readonly ITournamentPlayoffService _playoffService;
         private readonly ITournamentGameService _tournamentGameService;
         private readonly ITournamentMatchService _tournamentMatchService;
 
         public TournamentManagementGroup(
             OngoingRounds ongoingRounds,
-            TournamentManager tournamentManager,
             ILogger<TournamentManagementGroup> logger,
+            ITournamentManagerService tournamentService,
+            ITournamentRepositoryService repositoryService,
+            ITournamentSignupService signupService,
+            ITournamentStateService stateService,
+            ITournamentGroupService groupService,
+            ITournamentPlayoffService playoffService,
             ITournamentGameService tournamentGameService,
             ITournamentMatchService tournamentMatchService)
         {
             _ongoingRounds = ongoingRounds;
-            _tournamentManager = tournamentManager;
             _logger = logger;
+
+            // Initialize new services
+            _tournamentService = tournamentService;
+            _repositoryService = repositoryService;
+            _signupService = signupService;
+            _stateService = stateService;
+            _groupService = groupService;
+            _playoffService = playoffService;
             _tournamentGameService = tournamentGameService;
             _tournamentMatchService = tournamentMatchService;
         }
@@ -64,7 +82,7 @@ namespace Wabbit.BotClient.Commands
             await SafeExecute(context, async () =>
             {
                 // Load the signup with participants
-                var signup = await _tournamentManager.GetSignupWithParticipants(signupName, context.Client);
+                var signup = await _signupService.GetSignupWithParticipantsAsync(signupName, context.Client);
                 if (signup == null)
                 {
                     await SafeResponse(context, $"No signup found with name '{signupName}'", null, true);
@@ -93,7 +111,7 @@ namespace Wabbit.BotClient.Commands
                 else
                 {
                     // Create tournament with default settings
-                    tournament = await _tournamentManager.CreateTournament(
+                    tournament = await _tournamentService.CreateTournamentAsync(
                         signup.Name,
                         signup.Participants,
                         signup.Format,
@@ -102,7 +120,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Post the tournament standings visualization to the standings channel if configured
-                await _tournamentManager.PostTournamentVisualization(tournament, context.Client);
+                await _tournamentService.PostTournamentVisualizationAsync(tournament, context.Client);
 
                 // Create confirmation embed
                 var embed = new DiscordEmbedBuilder()
@@ -123,6 +141,12 @@ namespace Wabbit.BotClient.Commands
                         .WithContent($"**Tournament Created**: {tournament.Name} has been created and will start shortly!")
                         .WithAllowedMentions(new IMention[] { new RoleMention() }));
 
+                // Clean up signup data
+                await _signupService.DeleteSignupAsync(signupName, context.Client, true);
+
+                // Save tournament state
+                await SaveTournamentStateAsync(context.Client);
+
                 // Auto-delete both messages after a short time
                 _ = Task.Run(async () =>
                 {
@@ -136,22 +160,6 @@ namespace Wabbit.BotClient.Commands
                         Console.WriteLine($"Failed to delete messages: {ex.Message}");
                     }
                 });
-
-                // Preserve signup data instead of deleting it
-                await _tournamentManager.DeleteSignup(signupName, context.Client, true);
-
-                // Start the tournament matches
-                try
-                {
-                    // Slight delay to allow system to settle
-                    await Task.Delay(5000);
-                    await StartGroupStageMatches(tournament, context.Client, signup.Type);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error starting matches for tournament {tournament.Name}: {ex.Message}");
-                    Console.WriteLine(ex.StackTrace);
-                }
             }, "Failed to create tournament from signup");
         }
 
@@ -170,13 +178,13 @@ namespace Wabbit.BotClient.Commands
 
             // Determine group count based on player count
             int playerCount = signup.Participants.Count;
-            int groupCount = _tournamentMatchService.DetermineGroupCount(playerCount, signup.Format);
+            int groupCount = _groupService.DetermineGroupCount(playerCount, signup.Format);
 
             // Get optimal group sizes
-            List<int> groupSizes = _tournamentMatchService.GetOptimalGroupSizes(playerCount, groupCount);
+            List<int> groupSizes = _groupService.GetOptimalGroupSizes(playerCount, groupCount);
 
             // Get advancement criteria
-            var advancementCriteria = _tournamentMatchService.GetAdvancementCriteria(playerCount, groupCount);
+            var advancementCriteria = _playoffService.GetAdvancementCriteria(playerCount, groupCount);
 
             // Store advancement criteria in tournament's custom properties
             if (tournament.CustomProperties == null)
@@ -279,7 +287,7 @@ namespace Wabbit.BotClient.Commands
                     {
                         var match = new Tournament.Match
                         {
-                            Name = $"{GetPlayerDisplayName(group.Participants[i].Player)} vs {GetPlayerDisplayName(group.Participants[j].Player)}",
+                            Name = $"{_groupService.GetPlayerDisplayName(group.Participants[i].Player)} vs {_groupService.GetPlayerDisplayName(group.Participants[j].Player)}",
                             Type = TournamentMatchType.GroupStage,
                             Participants = new List<Tournament.MatchParticipant>
                             {
@@ -295,8 +303,8 @@ namespace Wabbit.BotClient.Commands
             // Add tournament to ongoing tournaments
             _ongoingRounds.Tournaments.Add(tournament);
 
-            // Save state
-            await _tournamentManager.SaveAllData();
+            // Save tournament state
+            await _repositoryService.SaveTournamentsAsync();
 
             // Log creation details for debugging
             var participantCounts = string.Join(", ", tournament.Groups.Select(g => g.Participants.Count));
@@ -335,7 +343,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Generate the standings image and post it to the standings channel if configured
-                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, context.Client);
+                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, context.Client, _stateService);
 
                 // Send the image with the tournament standings
                 var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
@@ -355,108 +363,89 @@ namespace Wabbit.BotClient.Commands
         [Description("List all tournaments")]
         public async Task ListTournaments(CommandContext context)
         {
-            // Defer the response immediately to prevent timeout
             await context.DeferResponseAsync();
 
-            try
+            await SafeExecute(context, async () =>
             {
-                // Get all tournaments from both sources
-                var activeTournaments = _tournamentManager.GetAllTournaments() ?? new List<Tournament>();
-                var signups = _tournamentManager.GetAllSignups() ?? new List<TournamentSignup>();
+                // Get all tournaments and signups
+                var activeTournaments = _tournamentService.GetAllTournaments() ?? new List<Tournament>();
+                var signups = _signupService.GetAllSignups() ?? new List<TournamentSignup>();
 
-                // Create an embed to display all tournaments and signups
+                // Create embed
                 var embed = new DiscordEmbedBuilder()
-                    .WithTitle("Tournament Manager")
-                    .WithDescription("List of all tournaments and signups")
-                    .WithColor(DiscordColor.Blurple)
-                    .WithTimestamp(DateTime.Now);
+                    .WithTitle("🏆 Tournaments & Signups")
+                    .WithColor(DiscordColor.Gold);
 
-                // Add active tournaments section
-                if (activeTournaments.Any())
+                // Active Tournaments
+                StringBuilder activeTournamentsText = new StringBuilder();
+                if (activeTournaments.Count > 0)
                 {
-                    string tournamentList = "";
-                    foreach (var tournament in activeTournaments)
+                    foreach (var tournament in activeTournaments.OrderBy(t => t.IsComplete).ThenBy(t => t.Name))
                     {
-                        // Calculate progress
-                        int totalMatches = tournament.Groups.Sum(g => g.Matches.Count) + tournament.PlayoffMatches.Count;
-                        int completedMatches = tournament.Groups.Sum(g => g.Matches.Count(m => m.IsComplete)) +
-                                              tournament.PlayoffMatches.Count(m => m.IsComplete);
-
-                        // Determine status
-                        string status = tournament.IsComplete ? "Complete" :
-                                       tournament.CurrentStage == TournamentStage.Playoffs ? "In Progress - Playoffs" :
-                                       "In Progress - Groups";
-
-                        tournamentList += $"**{tournament.Name}**\n" +
-                                         $"Status: {status}\n" +
-                                         $"Format: {tournament.Format}\n" +
-                                         $"Progress: {completedMatches}/{totalMatches} matches completed\n" +
-                                         $"Groups: {tournament.Groups.Count}\n\n";
-                    }
-
-                    embed.AddField("Active Tournaments", tournamentList.Trim());
-                }
-
-                // Add signups section
-                if (signups.Any())
-                {
-                    string signupList = "";
-                    foreach (var signup in signups)
-                    {
-                        string status = signup.IsOpen ? "Open for Signups" : "Signups Closed";
-                        string scheduledTime = "Not scheduled";
-
-                        if (signup.ScheduledStartTime.HasValue)
+                        string status = "";
+                        if (tournament.IsComplete)
                         {
-                            // Ensure we're getting a proper UTC timestamp
-                            DateTime utcTime = signup.ScheduledStartTime.Value.ToUniversalTime();
-                            long unixTimestamp = ((DateTimeOffset)utcTime).ToUnixTimeSeconds();
-                            scheduledTime = $"<t:{unixTimestamp}:F>";
+                            status = "✅ Complete";
+                        }
+                        else if (tournament.CurrentStage == TournamentStage.Groups)
+                        {
+                            bool allGroupsComplete = tournament.Groups.All(g => g.IsComplete);
+                            status = allGroupsComplete ? "⏳ Group Stage Complete" : "🏁 Group Stage";
+                        }
+                        else if (tournament.CurrentStage == TournamentStage.Playoffs)
+                        {
+                            status = "🥇 Playoffs";
                         }
 
-                        // Use the helper method to get the effective participant count
-                        int participantCount = _tournamentManager.GetParticipantCount(signup);
-
-                        signupList += $"**{signup.Name}**\n" +
-                                     $"Status: {status}\n" +
-                                     $"Format: {signup.Format}\n" +
-                                     $"Participants: {participantCount}\n" +
-                                     $"Scheduled Start: {scheduledTime}\n\n";
+                        int playerCount = tournament.Groups.Sum(g => g.Participants.Count);
+                        activeTournamentsText.AppendLine($"**{tournament.Name}** - {status} - {playerCount} players");
                     }
-
-                    embed.AddField("Tournament Signups", signupList.Trim());
                 }
-
-                // If no tournaments or signups, add a message
-                if (!activeTournaments.Any() && !signups.Any())
+                else
                 {
-                    embed.AddField("No Tournaments", "There are no active tournaments or signups.");
+                    activeTournamentsText.AppendLine("*No active tournaments*");
                 }
 
-                // Send the embed with proper error handling
-                try
+                // Open Signups
+                StringBuilder openSignupsText = new StringBuilder();
+                var openSignups = signups.Where(s => s.IsOpen).ToList();
+                if (openSignups.Count > 0)
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                    foreach (var signup in openSignups.OrderBy(s => s.Name))
+                    {
+                        int participantCount = _signupService.GetParticipantCount(signup);
+                        openSignupsText.AppendLine($"**{signup.Name}** - {participantCount} participants");
+                    }
                 }
-                catch (Exception responseEx)
+                else
                 {
-                    Console.WriteLine($"Error sending tournament list response: {responseEx.Message}");
-                    // Fallback to channel message if interaction response fails
-                    await context.Channel.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(embed));
+                    openSignupsText.AppendLine("*No open signups*");
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error listing tournaments: {ex.Message}\n{ex.StackTrace}");
-                try
+
+                // Closed Signups
+                StringBuilder closedSignupsText = new StringBuilder();
+                var closedSignups = signups.Where(s => !s.IsOpen).ToList();
+                if (closedSignups.Count > 0)
                 {
-                    await context.EditResponseAsync($"Error listing tournaments: {ex.Message}");
+                    foreach (var signup in closedSignups.OrderBy(s => s.Name))
+                    {
+                        int participantCount = _signupService.GetParticipantCount(signup);
+                        closedSignupsText.AppendLine($"**{signup.Name}** - {participantCount} participants - ⏸️ Closed");
+                    }
                 }
-                catch
+                else
                 {
-                    await context.Channel.SendMessageAsync($"Error listing tournaments: {ex.Message}");
+                    closedSignupsText.AppendLine("*No closed signups*");
                 }
-            }
+
+                // Add fields to embed
+                embed.AddField("Active Tournaments", activeTournamentsText.ToString(), false);
+                embed.AddField("Open Signups", openSignupsText.ToString(), false);
+                embed.AddField("Closed Signups", closedSignupsText.ToString(), false);
+
+                // Send response
+                await context.EditResponseAsync(embed);
+            }, "Failed to list tournaments and signups");
         }
 
         [Command("signup_create")]
@@ -471,7 +460,7 @@ namespace Wabbit.BotClient.Commands
             await SafeExecute(context, async () =>
             {
                 // Check if a signup with this name already exists
-                if (_ongoingRounds.TournamentSignups.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                if (_signupService.GetAllSignups().Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 {
                     await context.EditResponseAsync($"A signup with the name '{name}' already exists.");
                     return;
@@ -508,8 +497,8 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Create the signup using TournamentManager
-                var signup = _tournamentManager.CreateSignup(
+                // Create the signup using the new SignupService
+                var signup = _signupService.CreateSignup(
                     name,
                     Enum.Parse<TournamentFormat>(format),
                     context.User,
@@ -546,10 +535,10 @@ namespace Wabbit.BotClient.Commands
                     Console.WriteLine($"Set MessageId to {message.Id} for signup '{name}'");
 
                     // Save updated MessageId - this is critical for future updates
-                    _tournamentManager.UpdateSignup(signup);
+                    _signupService.UpdateSignup(signup);
 
-                    // Verify the MessageId was saved - this can be logged but doesn't need participants
-                    var savedSignup = _tournamentManager.GetSignup(name);
+                    // Verify the MessageId was saved
+                    var savedSignup = _signupService.GetSignup(name);
                     if (savedSignup == null || savedSignup.MessageId == 0)
                     {
                         _logger.LogWarning($"MessageId was not saved correctly for '{name}'. Current value: {savedSignup?.MessageId ?? 0}");
@@ -578,15 +567,13 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // DeferResponseAsync is already called in SafeExecute
-
                 // Find the signup and ensure participants are loaded
                 var client = context.Client;
                 TournamentSignup? signup = null;
 
                 try
                 {
-                    signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, client);
+                    signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, client);
                 }
                 catch (Exception ex)
                 {
@@ -596,7 +583,7 @@ namespace Wabbit.BotClient.Commands
                 if (signup == null)
                 {
                     // Try partial match
-                    var allSignups = _tournamentManager.GetAllSignups();
+                    var allSignups = _signupService.GetAllSignups();
                     var similarSignup = allSignups.FirstOrDefault(s =>
                         s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
 
@@ -604,7 +591,7 @@ namespace Wabbit.BotClient.Commands
                     {
                         try
                         {
-                            signup = await _tournamentManager.GetSignupWithParticipants(similarSignup.Name, client);
+                            signup = await _signupService.GetSignupWithParticipantsAsync(similarSignup.Name, client);
                         }
                         catch (Exception ex)
                         {
@@ -627,7 +614,7 @@ namespace Wabbit.BotClient.Commands
 
                 // Close the signup
                 signup.IsOpen = false;
-                _tournamentManager.UpdateSignup(signup);
+                _signupService.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -645,15 +632,13 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // DeferResponseAsync is already called in SafeExecute
-
                 // Find the signup and ensure participants are loaded
                 var client = context.Client;
                 TournamentSignup? signup = null;
 
                 try
                 {
-                    signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, client);
+                    signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, client);
                 }
                 catch (Exception ex)
                 {
@@ -663,7 +648,7 @@ namespace Wabbit.BotClient.Commands
                 if (signup == null)
                 {
                     // Try partial match
-                    var allSignups = _tournamentManager.GetAllSignups();
+                    var allSignups = _signupService.GetAllSignups();
                     var similarSignup = allSignups.FirstOrDefault(s =>
                         s.Name.Contains(tournamentName, StringComparison.OrdinalIgnoreCase));
 
@@ -671,7 +656,7 @@ namespace Wabbit.BotClient.Commands
                     {
                         try
                         {
-                            signup = await _tournamentManager.GetSignupWithParticipants(similarSignup.Name, client);
+                            signup = await _signupService.GetSignupWithParticipantsAsync(similarSignup.Name, client);
                         }
                         catch (Exception ex)
                         {
@@ -688,7 +673,7 @@ namespace Wabbit.BotClient.Commands
 
                 // Reopen the signup
                 signup.IsOpen = true;
-                _tournamentManager.UpdateSignup(signup);
+                _signupService.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -710,7 +695,7 @@ namespace Wabbit.BotClient.Commands
                         if (signup.IsOpen)
                         {
                             signup.IsOpen = false;
-                            _tournamentManager.UpdateSignup(signup);
+                            _signupService.UpdateSignup(signup);
                             await UpdateSignupMessage(signup, context.Client);
                             await context.Channel.SendMessageAsync($"Tournament signup '{signup.Name}' has been automatically closed after {durationMinutes} minutes.");
                         }
@@ -738,16 +723,14 @@ namespace Wabbit.BotClient.Commands
                 // Log player information for debugging (minimal)
                 Console.WriteLine($"Adding player to signup '{tournamentName}': {player.Username} (ID: {player.Id})");
 
-                // Find the signup using the TournamentManager and ensure participants are loaded
-                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
+                // Find the signup using the SignupService and ensure participants are loaded
+                var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, context.Client);
 
                 if (signup == null)
                 {
                     await context.EditResponseAsync($"Signup '{tournamentName}' not found.");
                     return;
                 }
-
-                // Remove all the debug logging that was added for troubleshooting
 
                 if (!signup.IsOpen)
                 {
@@ -763,8 +746,6 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Add the player to the signup
-                // Create a new list initialized with the existing participants
-                // Create a new list and explicitly copy over each participant
                 // Create a new list from the existing participants
                 Console.WriteLine($"Current participants in signup '{signup.Name}':");
                 foreach (var p in signup.Participants)
@@ -797,7 +778,7 @@ namespace Wabbit.BotClient.Commands
                 Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
 
                 // Save the updated signup
-                _tournamentManager.UpdateSignup(signup);
+                _signupService.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -816,8 +797,8 @@ namespace Wabbit.BotClient.Commands
         {
             await SafeExecute(context, async () =>
             {
-                // Find the signup using the TournamentManager and ensure participants are loaded
-                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, context.Client);
+                // Find the signup using the SignupService and ensure participants are loaded
+                var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, context.Client);
 
                 if (signup == null)
                 {
@@ -852,7 +833,7 @@ namespace Wabbit.BotClient.Commands
                 Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
 
                 // Save the updated signup
-                _tournamentManager.UpdateSignup(signup);
+                _signupService.UpdateSignup(signup);
 
                 // Update the signup message
                 await UpdateSignupMessage(signup, context.Client);
@@ -868,54 +849,53 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Tournament/signup name")] string name)
         {
+            await context.DeferResponseAsync();
+
             await SafeExecute(context, async () =>
             {
-                // DeferResponseAsync is already called in SafeExecute
-                bool found = false;
-
-                // First try to delete tournament
-                var tournament = _tournamentManager.GetTournament(name);
+                // Try to find it as a tournament
+                var tournament = _tournamentService.GetTournament(name);
                 if (tournament != null)
                 {
-                    // Delete the tournament and its related messages
-                    await _tournamentManager.DeleteTournament(name, context.Client);
-                    await SafeResponse(context, $"Tournament '{name}' has been deleted.", null, true, 10);
-                    found = true;
+                    // Delete the tournament
+                    await _tournamentService.DeleteTournamentAsync(name, context.Client);
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"Tournament '{name}' has been deleted."));
+                    return;
                 }
 
-                // If not found as a tournament, try as a signup
-                if (!found)
+                // Try to find it as a signup
+                var signup = _signupService.GetSignup(name);
+                if (signup != null)
                 {
-                    var signup = _tournamentManager.GetSignup(name);
-                    if (signup != null)
-                    {
-                        // Delete the signup and its related messages
-                        await _tournamentManager.DeleteSignup(name, context.Client);
-                        await SafeResponse(context, $"Tournament signup '{name}' has been deleted.", null, true, 10);
-                        found = true;
-                    }
+                    // Delete the signup
+                    await _signupService.DeleteSignupAsync(name, context.Client);
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"Signup '{name}' has been deleted."));
+                    return;
                 }
 
-                // If neither tournament nor signup was found
-                if (!found)
+                // If we get here, nothing was found
+                var tournaments = _tournamentService.GetAllTournaments();
+                var signups = _signupService.GetAllSignups();
+
+                string availableOptions = "";
+                if (tournaments.Count > 0)
                 {
-                    // Get available tournaments and signups for a helpful message
-                    var tournaments = _tournamentManager.GetAllTournaments();
-                    var signups = _tournamentManager.GetAllSignups();
-
-                    string availableItems = "";
-                    if (tournaments.Any())
-                        availableItems += $"Available tournaments: {string.Join(", ", tournaments.Select(t => t.Name))}\n";
-
-                    if (signups.Any())
-                        availableItems += $"Available signups: {string.Join(", ", signups.Select(s => s.Name))}";
-
-                    if (string.IsNullOrEmpty(availableItems))
-                        availableItems = "No tournaments or signups found.";
-
-                    await SafeResponse(context, $"No tournament or signup named '{name}' was found to delete.\n\n{availableItems}", null, true, 10);
+                    availableOptions += "**Available Tournaments:**\n" + string.Join("\n", tournaments.Select(t => t.Name)) + "\n\n";
                 }
-            }, "Failed to delete tournament/signup");
+                if (signups.Count > 0)
+                {
+                    availableOptions += "**Available Signups:**\n" + string.Join("\n", signups.Select(s => s.Name));
+                }
+
+                if (string.IsNullOrEmpty(availableOptions))
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("No tournaments or signups found."));
+                }
+                else
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"No tournament or signup found with name '{name}'.\n\n{availableOptions}"));
+                }
+            }, "Failed to delete tournament or signup");
         }
 
         [Command("set_standings_channel")]
@@ -968,7 +948,7 @@ namespace Wabbit.BotClient.Commands
             await SafeExecute(context, async () =>
             {
                 // Find tournament
-                var tournament = _tournamentManager.GetTournament(tournamentName);
+                var tournament = _tournamentService.GetTournament(tournamentName);
                 if (tournament == null)
                 {
                     await context.EditResponseAsync($"Tournament '{tournamentName}' not found.");
@@ -976,7 +956,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Find active rounds for this tournament
-                var activeRounds = _tournamentManager.GetActiveRoundsForTournament(tournament.Name);
+                var activeRounds = _stateService.GetActiveRoundsForTournament(tournament.Name);
 
                 // Display status
                 var embed = new DiscordEmbedBuilder()
@@ -992,7 +972,8 @@ namespace Wabbit.BotClient.Commands
                     string roundsInfo = "";
                     foreach (var round in activeRounds)
                     {
-                        roundsInfo += $"• Round {round.Id}: {round.Status}, Cycle {round.Cycle + 1}/{round.Length}\n";
+                        string status = round.IsCompleted ? "Completed" : "In Progress";
+                        roundsInfo += $"• Round {round.Id}: {status}, Map {round.MapNum + 1}/{round.BestOf}\n";
                     }
                     embed.AddField("Round Details", roundsInfo);
                 }
@@ -1016,7 +997,7 @@ namespace Wabbit.BotClient.Commands
 
                 await context.EditResponseAsync("Repairing tournament data files...");
 
-                await _tournamentManager.RepairDataFiles(context.Client);
+                await _repositoryService.RepairDataFilesAsync(context.Client);
 
                 await context.EditResponseAsync("Tournament data files have been repaired.");
             }, "Failed to repair tournament data");
@@ -1042,7 +1023,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Get the signup
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                var signup = _signupService.GetSignup(tournamentName);
                 if (signup == null)
                 {
                     await SafeResponse(context, $"No signup found with name '{tournamentName}'", null, true);
@@ -1076,7 +1057,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Update the signup
-                _tournamentManager.UpdateSignup(signup);
+                _signupService.UpdateSignup(signup);
 
                 // Prepare the response message
                 string responseMessage = seed > 0
@@ -1110,7 +1091,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Get the tournament
-                var tournament = _tournamentManager.GetTournament(tournamentName);
+                var tournament = _tournamentService.GetTournament(tournamentName);
                 if (tournament == null)
                 {
                     await SafeResponse(context, $"No tournament found with name '{tournamentName}'", null, true);
@@ -1150,7 +1131,7 @@ namespace Wabbit.BotClient.Commands
                 await SafeResponse(context, responseMessage, null, true);
 
                 // Save the tournament state
-                await _tournamentManager.SaveTournamentState(context.Client);
+                await _stateService.SaveTournamentStateAsync(context.Client);
             }, "Failed to set tournament seed");
         }
 
@@ -1277,7 +1258,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Load participants if needed
-                await _tournamentManager.LoadParticipantsAsync(signup, (DSharpPlus.DiscordClient)client);
+                await _signupService.LoadParticipantsAsync(signup, (DSharpPlus.DiscordClient)client);
 
                 // Get the channel
                 var channel = await client.GetChannelAsync(signup.SignupChannelId);
@@ -1663,7 +1644,7 @@ namespace Wabbit.BotClient.Commands
             }
 
             // Save the tournament state
-            await _tournamentManager.SaveTournamentState(client);
+            await _tournamentService.SaveAllDataAsync();
         }
 
         // Method to handle match completion (delegate to service)
@@ -1676,6 +1657,43 @@ namespace Wabbit.BotClient.Commands
         public async Task HandleGameResultAsync(Round round, DiscordChannel thread, string winnerId, DiscordClient client)
         {
             await _tournamentGameService.HandleGameResultAsync(round, thread, winnerId, client);
+        }
+
+        [Command("save")]
+        [Description("Save tournament data")]
+        public async Task SaveTournamentData(CommandContext context)
+        {
+            await context.DeferResponseAsync();
+
+            await SafeExecute(context, async () =>
+            {
+                // Save all tournament data
+                await _tournamentService.SaveAllDataAsync();
+
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle("Tournament Data Saved")
+                    .WithDescription("All tournament data has been saved successfully.")
+                    .WithColor(DiscordColor.Green);
+
+                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            });
+        }
+
+        /// <summary>
+        /// Internal helper method to save the tournament state
+        /// </summary>
+        private async Task SaveTournamentStateAsync(BaseDiscordClient client)
+        {
+            // Save the tournament state using the appropriate client type
+            if (client is DiscordClient discordClient)
+            {
+                await _stateService.SaveTournamentStateAsync(discordClient);
+            }
+            else
+            {
+                // If the client is not a DiscordClient, pass null
+                await _stateService.SaveTournamentStateAsync(null);
+            }
         }
     }
 

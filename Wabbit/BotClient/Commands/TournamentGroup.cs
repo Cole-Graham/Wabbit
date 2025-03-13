@@ -6,20 +6,38 @@ using DSharpPlus;
 using Wabbit.Misc;
 using Wabbit.Data;
 using Wabbit.Models;
+using Wabbit.Services.Interfaces;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Wabbit.Services;
 
 namespace Wabbit.BotClient.Commands
 {
     [Command("Tournament")]
-    public class TournamentGroup(OngoingRounds ongoingRounds, TournamentManager tournamentManager, ILogger<TournamentGroup> logger)
+    public class TournamentGroup
     {
-        private readonly OngoingRounds _ongoingRounds = ongoingRounds;
-        private readonly TournamentManager _tournamentManager = tournamentManager;
-        private readonly ILogger<TournamentGroup> _logger = logger;
+        private readonly OngoingRounds _ongoingRounds;
+        private readonly ILogger<TournamentGroup> _logger;
+        private readonly ITournamentStateService _stateService;
+        private readonly ITournamentService _tournamentService;
+        private readonly ITournamentMatchService _tournamentMatchService;
+
+        public TournamentGroup(
+            OngoingRounds ongoingRounds,
+            ILogger<TournamentGroup> logger,
+            ITournamentStateService stateService,
+            ITournamentService tournamentService,
+            ITournamentMatchService tournamentMatchService)
+        {
+            _ongoingRounds = ongoingRounds;
+            _logger = logger;
+            _stateService = stateService;
+            _tournamentService = tournamentService;
+            _tournamentMatchService = tournamentMatchService;
+        }
 
         [Command("2v2")]
         [Description("Launch 2v2 tournament round")]
@@ -88,7 +106,7 @@ namespace Wabbit.BotClient.Commands
             _ongoingRounds.TourneyRounds.Add(round);
 
             // Save tournament state
-            await _tournamentManager.SaveTournamentState(context.Client);
+            await _stateService.SaveTournamentStateAsync(context.Client);
 
             string?[] maps2v2 = Maps.MapCollection?.Where(m => m.Size == "2v2").Select(m => m.Name).ToArray() ?? Array.Empty<string?>();
 
@@ -141,13 +159,27 @@ namespace Wabbit.BotClient.Commands
 
             foreach (var team in round.Teams)
             {
-                var thread = await channel.CreateThreadAsync(team.Name ?? "Team Thread", DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
-                team.Thread = thread;
+                var thread = await DiscordUtilities.CreateThreadAsync(
+                    channel,
+                    team.Name ?? "Team Thread",
+                    _logger,
+                    DiscordChannelType.PrivateThread,
+                    DiscordAutoArchiveDuration.Day);
 
-                await thread.SendMessageAsync(dropdownBuilder);
-                foreach (var participant in team.Participants)
-                    if (participant.Player is not null)
-                        await thread.AddThreadMemberAsync(participant.Player);
+                if (thread is not null)
+                {
+                    team.Thread = thread;
+                    await thread.SendMessageAsync(dropdownBuilder);
+
+                    foreach (var participant in team.Participants)
+                        if (participant.Player is not null)
+                            await thread.AddThreadMemberAsync(participant.Player);
+                }
+                else
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"Failed to create thread for team {team.Name}"));
+                    return;
+                }
             }
             await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round sequence commenced"));
         }
@@ -257,18 +289,32 @@ namespace Wabbit.BotClient.Commands
 
                 round.Teams.Add(team);
 
-                var thread = await channel.CreateThreadAsync(displayName, DiscordAutoArchiveDuration.Day, DiscordChannelType.PrivateThread);
-                team.Thread = thread;
+                var thread = await DiscordUtilities.CreateThreadAsync(
+                    channel,
+                    displayName,
+                    _logger,
+                    DiscordChannelType.PrivateThread,
+                    DiscordAutoArchiveDuration.Day);
 
-                await thread.SendMessageAsync(dropdownBuilder);
-                if (player is not null)
-                    await thread.AddThreadMemberAsync(player);
+                if (thread is not null)
+                {
+                    team.Thread = thread;
+                    await thread.SendMessageAsync(dropdownBuilder);
+
+                    if (player is not null)
+                        await thread.AddThreadMemberAsync(player);
+                }
+                else
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"Failed to create thread for player {displayName}"));
+                    return;
+                }
             }
 
             _ongoingRounds.TourneyRounds.Add(round);
 
             // Save tournament state
-            await _tournamentManager.SaveTournamentState(context.Client);
+            await _stateService.SaveTournamentStateAsync(context.Client);
 
             await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round sequence commenced"));
         }
@@ -302,7 +348,7 @@ namespace Wabbit.BotClient.Commands
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("Round was not found or something went wrong"));
 
             // Save tournament state
-            await _tournamentManager.SaveTournamentState(context.Client);
+            await _stateService.SaveTournamentStateAsync(context.Client);
         }
 
         [Command("submit_deck")]
@@ -394,7 +440,7 @@ namespace Wabbit.BotClient.Commands
                         .AddComponents(confirmBtn, reviseBtn));
 
                 // Save the tournament state
-                await _tournamentManager.SaveTournamentState(context.Client);
+                await _stateService.SaveTournamentStateAsync(context.Client);
                 _logger.LogInformation($"Tournament state saved after deck submission for user {context.User.Username} (ID: {context.User.Id})");
             }
             catch (Exception ex)

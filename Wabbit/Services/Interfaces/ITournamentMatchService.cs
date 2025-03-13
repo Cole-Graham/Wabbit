@@ -48,5 +48,16 @@ namespace Wabbit.Services.Interfaces
         /// Gets advancement criteria for playoff stage
         /// </summary>
         (int groupWinners, int bestThirdPlace) GetAdvancementCriteria(int playerCount, int groupCount);
+
+        /// <summary>
+        /// Updates the result of a match with the winner and score
+        /// </summary>
+        /// <param name="tournament">The tournament containing the match</param>
+        /// <param name="match">The match to update</param>
+        /// <param name="winner">The winning player</param>
+        /// <param name="winnerScore">The winner's score</param>
+        /// <param name="loserScore">The loser's score</param>
+        /// <returns>A task representing the asynchronous operation</returns>
+        Task UpdateMatchResultAsync(Tournament? tournament, Tournament.Match? match, DiscordMember? winner, int winnerScore, int loserScore);
     }
 }

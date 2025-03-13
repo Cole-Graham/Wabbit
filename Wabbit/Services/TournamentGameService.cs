@@ -16,20 +16,29 @@ namespace Wabbit.Services
     /// </summary>
     public class TournamentGameService : ITournamentGameService
     {
-        private readonly TournamentManager _tournamentManager;
         private readonly OngoingRounds _ongoingRounds;
+        private readonly ITournamentRepositoryService _repositoryService;
+        private readonly ITournamentStateService _stateService;
+        private readonly ITournamentPlayoffService _playoffService;
+        private readonly ITournamentMapService _mapService;
         private readonly ILogger<TournamentGameService> _logger;
 
         // Track matches being processed to prevent concurrent updates
         private readonly HashSet<string> _processingMatches = new HashSet<string>();
 
         public TournamentGameService(
-            TournamentManager tournamentManager,
             OngoingRounds ongoingRounds,
+            ITournamentRepositoryService repositoryService,
+            ITournamentStateService stateService,
+            ITournamentPlayoffService playoffService,
+            ITournamentMapService mapService,
             ILogger<TournamentGameService> logger)
         {
-            _tournamentManager = tournamentManager;
             _ongoingRounds = ongoingRounds;
+            _repositoryService = repositoryService;
+            _stateService = stateService;
+            _playoffService = playoffService;
+            _mapService = mapService;
             _logger = logger;
         }
 
@@ -277,10 +286,7 @@ namespace Wabbit.Services
                             match.Result = resultRecord;
 
                             // Save state
-                            await _tournamentManager.SaveTournamentState(client);
-
-                            // Update tournament visualization
-                            await _tournamentManager.PostTournamentVisualization(tournament, client);
+                            await _stateService.SaveTournamentStateAsync(client);
 
                             // Handle match completion (schedule next matches, etc.)
                             await HandleMatchCompletion(tournament, match, client);
@@ -309,6 +315,40 @@ namespace Wabbit.Services
                     // Match continues - move to next game
                     currentGame++;
                     round.CustomProperties["CurrentGame"] = currentGame;
+
+                    // Select a random map for the next game
+                    string? nextGameMap = GetRandomMapForNextGame(round);
+
+                    // If a map was found, track it in played maps
+                    if (!string.IsNullOrEmpty(nextGameMap))
+                    {
+                        _logger.LogInformation($"Selected map for game {currentGame}: {nextGameMap}");
+
+                        // Ensure PlayedMaps is initialized
+                        if (round.Maps == null)
+                        {
+                            round.Maps = new List<string>();
+                        }
+
+                        // Add to played maps
+                        round.Maps.Add(nextGameMap);
+
+                        // Announce the map
+                        foreach (var currentThread in threadsToUpdate)
+                        {
+                            await currentThread.SendMessageAsync($"🗺️ Map for Game {currentGame}: **{nextGameMap}**");
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning($"Could not select a map for game {currentGame}. All maps may be banned or played.");
+
+                        // Inform players of the issue
+                        foreach (var currentThread in threadsToUpdate)
+                        {
+                            await currentThread.SendMessageAsync("⚠️ Unable to select a map for the next game. Please contact an administrator.");
+                        }
+                    }
 
                     // Create winner dropdown for next game
                     var winnerOptions = new List<DiscordSelectComponentOption>
@@ -361,127 +401,217 @@ namespace Wabbit.Services
         {
             try
             {
-                // Create a unique key for this match to avoid concurrent processing
-                // Since Match doesn't have an ID field, use Name and participants as the key
-                string matchKey = $"{tournament.Name}_{match.Name}_{match.Participants.Count}";
+                string matchId = match.Name ?? Guid.NewGuid().ToString();
 
-                // If this match is already being processed, just return
-                if (_processingMatches.Contains(matchKey))
+                // Prevent concurrent processing of the same match
+                lock (_processingMatches)
                 {
-                    return;
+                    if (_processingMatches.Contains(matchId))
+                    {
+                        _logger.LogWarning($"Match {matchId} is already being processed. Skipping.");
+                        return;
+                    }
+                    _processingMatches.Add(matchId);
                 }
-
-                // Mark this match as being processed
-                _processingMatches.Add(matchKey);
 
                 try
                 {
-                    // Check if the match is a playoff match based on its type
-                    bool isPlayoffMatch = match.Type == TournamentMatchType.PlayoffStage ||
-                                         match.Type == TournamentMatchType.Final ||
-                                         match.Type == TournamentMatchType.ThirdPlace ||
-                                         match.Type == TournamentMatchType.ThirdPlaceTiebreaker;
+                    _logger.LogInformation($"Handling completion of match {match.Name} in tournament {tournament.Name}");
 
-                    // If this match is a playoff match, we need to update the bracket
-                    if (isPlayoffMatch)
+                    // Update next match if defined
+                    if (match.NextMatch is not null && match.Result?.Winner is not null)
                     {
-                        // Update next match if defined
-                        if (match.NextMatch is not null && match.Result?.Winner is not null)
+                        // Find the next match and add the winner to it
+                        var nextMatch = match.NextMatch;
+
+                        // Create a new participant for the next match
+                        var advancingParticipant = new Tournament.MatchParticipant
                         {
-                            // Find the next match and add the winner to it
-                            var nextMatch = match.NextMatch;
+                            Player = match.Result.Winner
+                        };
 
-                            // Create a new participant for the next match
-                            var advancingParticipant = new Tournament.MatchParticipant
-                            {
-                                Player = match.Result.Winner
-                            };
-
-                            // Add the advancing participant if they're not already there
-                            if (!nextMatch.Participants.Any(p => p.Player == match.Result.Winner))
-                            {
-                                nextMatch.Participants.Add(advancingParticipant);
-                            }
-                        }
-
-                        // Save state
-                        await _tournamentManager.SaveTournamentState(client);
-
-                        // Check if tournament is complete
-                        bool allPlayoffMatchesComplete = true;
-                        if (tournament.PlayoffMatches != null && tournament.PlayoffMatches.Any())
+                        // Add the advancing participant if they're not already there
+                        if (!nextMatch.Participants.Any(p => p.Player == match.Result.Winner))
                         {
-                            foreach (var playoffMatch in tournament.PlayoffMatches)
-                            {
-                                if (!playoffMatch.IsComplete)
-                                {
-                                    allPlayoffMatchesComplete = false;
-                                    break;
-                                }
-                            }
-
-                            if (allPlayoffMatchesComplete)
-                            {
-                                tournament.CurrentStage = TournamentStage.Complete;
-                                await _tournamentManager.SaveTournamentState(client);
-                                await _tournamentManager.PostTournamentVisualization(tournament, client);
-                            }
+                            nextMatch.Participants.Add(advancingParticipant);
                         }
-                        return;
                     }
 
-                    // Group stage match logic - check if group is complete, etc.
-                    var group = tournament.Groups.FirstOrDefault(g => g.Matches.Contains(match));
-                    if (group == null)
-                        return; // Not a group stage match
+                    // Save tournament state
+                    await _stateService.SaveTournamentStateAsync(client);
 
-                    // Check if the group is complete after this match
-                    _tournamentManager.UpdateTournamentFromRound(tournament);
-
-                    // If the group isn't complete, schedule new matches for these players if needed
-                    if (!group.IsComplete)
+                    // Check if tournament is complete
+                    bool allPlayoffMatchesComplete = true;
+                    if (tournament.PlayoffMatches != null && tournament.PlayoffMatches.Any())
                     {
-                        // This would be implemented based on your tournament logic
-                        // for creating new matches in the group stage
+                        allPlayoffMatchesComplete = tournament.PlayoffMatches.All(m => m.IsComplete);
                     }
-                    // If group is complete, check if all groups are complete to set up playoffs
-                    else if (tournament.Groups.All(g => g.IsComplete) && tournament.CurrentStage == TournamentStage.Groups)
+
+                    if (allPlayoffMatchesComplete && tournament.CurrentStage == TournamentStage.Playoffs)
                     {
-                        // Set up playoffs using TournamentManager
-                        _tournamentManager.SetupPlayoffs(tournament);
+                        // Find the final match to determine the winner
+                        var finalMatch = tournament.PlayoffMatches?
+                            .OrderByDescending(m => m.DisplayPosition)
+                            .FirstOrDefault();
 
-                        // Post updated standings
-                        await _tournamentManager.PostTournamentVisualization(tournament, client);
-
-                        // Start playoff matches if we're ready
-                        if (tournament.CurrentStage == TournamentStage.Playoffs)
+                        if (finalMatch?.Result?.Winner != null)
                         {
-                            await StartPlayoffMatches(tournament, client);
+                            tournament.IsComplete = true;
+                            // The Tournament class doesn't have CompletedAt or Winner properties
+                            // tournament.CompletedAt = DateTime.Now;
+                            // tournament.Winner = finalMatch.Result.Winner;
+
+                            _logger.LogInformation($"Tournament {tournament.Name} completed with winner: {finalMatch.Result.Winner}");
+                        }
+                    }
+
+                    // Save tournament data
+                    await _repositoryService.SaveTournamentsAsync();
+
+                    // If tournament is still ongoing, check for playoff start
+                    if (!tournament.IsComplete)
+                    {
+                        // If all groups are complete, set up playoffs (if not already in playoffs)
+                        bool allGroupsComplete = tournament.Groups.All(g => g.IsComplete);
+                        if (allGroupsComplete && tournament.CurrentStage == TournamentStage.Groups)
+                        {
+                            _playoffService.SetupPlayoffs(tournament);
+                            tournament.CurrentStage = TournamentStage.Playoffs;
+
+                            _logger.LogInformation($"Setting up playoffs for tournament {tournament.Name}");
+
+                            // Save changes after playoff setup
+                            await _repositoryService.SaveTournamentsAsync();
                         }
                     }
                 }
                 finally
                 {
-                    // Make sure we remove this match from processing, even if there's an error
-                    _processingMatches.Remove(matchKey);
+                    // Release the lock on this match
+                    lock (_processingMatches)
+                    {
+                        _processingMatches.Remove(matchId);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling match completion");
+                _logger.LogError(ex, $"Error handling match completion: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Starts playoff matches for a tournament
+        /// Gets available maps for the next game in a match
         /// </summary>
-        private Task StartPlayoffMatches(Tournament tournament, DiscordClient client)
+        /// <param name="round">The current round</param>
+        /// <returns>List of available map names</returns>
+        public List<string> GetAvailableMapsForNextGame(Round round)
         {
-            _logger.LogInformation($"Starting playoff matches for tournament {tournament.Name}");
+            if (round == null)
+            {
+                _logger.LogWarning("Cannot get available maps: round is null");
+                return new List<string>();
+            }
 
-            // Since we're not actually awaiting anything in this stub implementation,
-            // change the method to return a completed task instead of using async/await
-            return Task.CompletedTask;
+            try
+            {
+                _logger.LogInformation($"Getting available maps for next game in {round.Name}");
+
+                // Get the initial map pool based on game type (1v1 or team)
+                var initialMapPool = _mapService.GetTournamentMapPool(round.OneVOne);
+
+                // Get all banned maps from both teams
+                var bannedMaps = new HashSet<string>();
+
+                // Add maps from global bans stored in CustomProperties
+                if (round.CustomProperties.ContainsKey("BannedMaps") && round.CustomProperties["BannedMaps"] is List<string> globalBannedMaps)
+                {
+                    foreach (var map in globalBannedMaps)
+                    {
+                        bannedMaps.Add(map);
+                    }
+                }
+
+                // Add team-specific bans
+                if (round.Teams != null)
+                {
+                    foreach (var team in round.Teams)
+                    {
+                        if (team?.MapBans != null)
+                        {
+                            foreach (var map in team.MapBans)
+                            {
+                                bannedMaps.Add(map);
+                            }
+                        }
+                    }
+                }
+
+                // Filter out banned maps
+                var availableMaps = initialMapPool.Where(map => !bannedMaps.Contains(map)).ToList();
+
+                // For games after the first, also remove already played maps
+                if (round.Maps != null && round.Maps.Count > 0)
+                {
+                    availableMaps = availableMaps.Where(map => !round.Maps.Contains(map)).ToList();
+
+                    _logger.LogInformation($"Filtered out {round.Maps.Count} already played maps");
+                }
+
+                _logger.LogInformation($"Found {availableMaps.Count} available maps for next game");
+
+                // If no maps available (all banned or played), return the initial pool with a warning
+                if (availableMaps.Count == 0)
+                {
+                    _logger.LogWarning("No maps available after filtering. Using initial map pool.");
+                    return initialMapPool;
+                }
+
+                return availableMaps;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting available maps for next game");
+                return new List<string>();
+            }
+        }
+
+        /// <summary>
+        /// Gets a random map for the next game, considering banned and played maps
+        /// </summary>
+        /// <param name="round">The current round</param>
+        /// <returns>A random map name, or null if no maps are available</returns>
+        public string? GetRandomMapForNextGame(Round round)
+        {
+            if (round == null)
+            {
+                _logger.LogWarning("Cannot get random map: round is null");
+                return null;
+            }
+
+            try
+            {
+                var availableMaps = GetAvailableMapsForNextGame(round);
+
+                if (availableMaps.Count == 0)
+                {
+                    _logger.LogWarning("No maps available for random selection");
+                    return null;
+                }
+
+                // Select a random map
+                var random = new Random();
+                int index = random.Next(availableMaps.Count);
+                string selectedMap = availableMaps[index];
+
+                _logger.LogInformation($"Randomly selected map: {selectedMap}");
+                return selectedMap;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting random map for next game");
+                return null;
+            }
         }
     }
 }

@@ -22,26 +22,35 @@ namespace Wabbit.BotClient.Events
     public class Event_Button : IEventHandler<ComponentInteractionCreatedEventArgs>
     {
         private readonly OngoingRounds _roundsHolder;
-        private readonly TournamentManager _tournamentManager;
         private readonly ILogger<Event_Button> _logger;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ITournamentGameService _tournamentGameService;
         private readonly ITournamentMatchService _tournamentMatchService;
+        private readonly ITournamentSignupService _signupService;
+        private readonly ITournamentStateService _stateService;
+        private readonly ITournamentMapService _mapService;
+        private readonly ITournamentService _tournamentService;
 
         public Event_Button(
             OngoingRounds roundsHolder,
-            TournamentManager tournamentManager,
             ILogger<Event_Button> logger,
             IServiceScopeFactory scopeFactory,
             ITournamentGameService tournamentGameService,
-            ITournamentMatchService tournamentMatchService)
+            ITournamentMatchService tournamentMatchService,
+            ITournamentSignupService signupService,
+            ITournamentStateService stateService,
+            ITournamentMapService mapService,
+            ITournamentService tournamentService)
         {
             _roundsHolder = roundsHolder;
-            _tournamentManager = tournamentManager;
             _logger = logger;
             _scopeFactory = scopeFactory;
             _tournamentGameService = tournamentGameService;
             _tournamentMatchService = tournamentMatchService;
+            _signupService = signupService;
+            _stateService = stateService;
+            _mapService = mapService;
+            _tournamentService = tournamentService;
         }
 
         // Helper method to safely defer interactions
@@ -435,7 +444,7 @@ namespace Wabbit.BotClient.Events
                                 string currentMap = round.Maps[round.Cycle - 1];
 
                                 // Save tournament state to record the played map
-                                await _tournamentManager.SaveTournamentState(sender);
+                                await _stateService.SaveTournamentStateAsync(sender);
                                 break;
 
                             case "map_ban_dropdown":
@@ -579,7 +588,7 @@ namespace Wabbit.BotClient.Events
                                 }
 
                                 // Save tournament state
-                                await _tournamentManager.SaveTournamentState(sender);
+                                await _stateService.SaveTournamentStateAsync(sender);
                                 break;
 
                             case string s when s.StartsWith("revise_map_bans_"):
@@ -599,8 +608,8 @@ namespace Wabbit.BotClient.Events
 
                                 try
                                 {
-                                    // Get the map pool from the tournament manager
-                                    var mapPool = _tournamentManager.GetTournamentMapPool(round.OneVOne);
+                                    // Get the map pool from the map service
+                                    var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
 
                                     var mapSelectOptions = new List<DiscordSelectComponentOption>();
                                     foreach (var mapName in mapPool)
@@ -831,10 +840,10 @@ namespace Wabbit.BotClient.Events
                                     }
 
                                     // Update match result
-                                    _tournamentManager.UpdateMatchResult(tournament, match, winnerMember, winnerScore, loserScore);
+                                    await _tournamentMatchService.UpdateMatchResultAsync(tournament, match, winnerMember, winnerScore, loserScore);
 
                                     // Update tournament state
-                                    await _tournamentManager.SaveTournamentState(sender);
+                                    await _stateService.SaveTournamentStateAsync(sender);
 
                                     // Create a success message
                                     var embed = new DiscordEmbedBuilder()
@@ -1004,8 +1013,8 @@ namespace Wabbit.BotClient.Events
                 // Extract the tournament name from the button ID (format: signup_TournamentName)
                 string tournamentName = e.Id.Substring("signup_".Length);
 
-                // Find the signup using the TournamentManager and ensure participants are loaded
-                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, sender);
+                // Find the signup using the SignupService and ensure participants are loaded
+                var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, sender);
 
                 if (signup == null)
                 {
@@ -1081,7 +1090,8 @@ namespace Wabbit.BotClient.Events
                 _logger.LogInformation($"Added participant {member.Username} to signup '{signup.Name}' (now has {signup.Participants.Count} participants)");
 
                 // Save the updated signup
-                _tournamentManager.UpdateSignup(signup);
+                _signupService.UpdateSignup(signup);
+                await _signupService.SaveSignupsAsync();
 
                 // Update the signup message
                 await UpdateSignupMessage(sender, signup);
@@ -1187,8 +1197,8 @@ namespace Wabbit.BotClient.Events
                     return;
                 }
 
-                // Find the signup using the TournamentManager and ensure participants are loaded
-                var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, sender);
+                // Find the signup using the SignupService and ensure participants are loaded
+                var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, sender);
 
                 if (signup == null)
                 {
@@ -1217,7 +1227,8 @@ namespace Wabbit.BotClient.Events
                     signup.Participants = newParticipantsList;
 
                     // Save the updated signup
-                    _tournamentManager.UpdateSignup(signup);
+                    _signupService.UpdateSignup(signup);
+                    await _signupService.SaveSignupsAsync();
 
                     // Update the signup message
                     await UpdateSignupMessage(sender, signup);
@@ -1270,7 +1281,10 @@ namespace Wabbit.BotClient.Events
             {
                 try
                 {
-                    Console.WriteLine($"Updating signup message for '{signup.Name}' with {signup.Participants.Count} participants");
+                    // Make sure participants are loaded
+                    await _signupService.LoadParticipantsAsync(signup, sender);
+
+                    _logger.LogInformation($"Updating signup message for '{signup.Name}' with {signup.Participants.Count} participants");
 
                     // Get the channel and message
                     var channel = await sender.GetChannelAsync(signup.SignupChannelId);
@@ -1303,16 +1317,16 @@ namespace Wabbit.BotClient.Events
                         .AddComponents(components);
 
                     await message.ModifyAsync(builder);
-                    Console.WriteLine($"Successfully updated signup message for '{signup.Name}'");
+                    _logger.LogInformation($"Successfully updated signup message for '{signup.Name}'");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error updating signup message: {ex.Message}\n{ex.StackTrace}");
+                    _logger.LogError(ex, $"Error updating signup message for '{signup.Name}'");
                 }
             }
             else
             {
-                Console.WriteLine($"Cannot update signup message: Missing channel ID ({signup.SignupChannelId}) or message ID ({signup.MessageId})");
+                _logger.LogWarning($"Cannot update signup message: Missing channel ID ({signup.SignupChannelId}) or message ID ({signup.MessageId})");
             }
         }
 
@@ -1404,8 +1418,7 @@ namespace Wabbit.BotClient.Events
             string tournamentName = e.Id.Substring("withdraw_".Length);
 
             // Find the tournament and ensure participants are loaded
-            var signup = await _tournamentManager.GetSignupWithParticipants(tournamentName, sender);
-
+            var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, sender);
             if (signup == null)
             {
                 await e.Interaction.CreateFollowupMessageAsync(
@@ -1456,7 +1469,8 @@ namespace Wabbit.BotClient.Events
             signup.Participants = newParticipantsList;
 
             // Save the updated signup
-            _tournamentManager.UpdateSignup(signup);
+            _signupService.UpdateSignup(signup);
+            await _signupService.SaveSignupsAsync();
 
             // Update the signup message
             await UpdateSignupMessage(sender, signup);
@@ -1576,7 +1590,7 @@ namespace Wabbit.BotClient.Events
                 return null;
 
             // Search all tournaments
-            foreach (var tournament in _tournamentManager.GetAllTournaments())
+            foreach (var tournament in _tournamentService.GetAllTournaments())
             {
                 foreach (var group in tournament.Groups)
                 {
@@ -1609,8 +1623,8 @@ namespace Wabbit.BotClient.Events
                 // Extract tournament name from button ID
                 string tournamentName = e.Id.Replace("join_tournament_", "");
 
-                // Get the signup
-                var signup = _tournamentManager.GetSignup(tournamentName);
+                // Get the signup from the SignupService
+                var signup = _signupService.GetSignup(tournamentName);
                 if (signup == null)
                 {
                     await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
@@ -1618,6 +1632,9 @@ namespace Wabbit.BotClient.Events
                         .AsEphemeral());
                     return;
                 }
+
+                // Load participants to ensure they're available
+                await _signupService.LoadParticipantsAsync(signup, sender);
 
                 // Check if the player is already in the tournament
                 if (signup.Participants.Any(p => p.Id == e.User.Id))
@@ -1641,9 +1658,9 @@ namespace Wabbit.BotClient.Events
                 // Add the member to the tournament
                 signup.Participants.Add(member);
 
-                // Update the signup
-                _tournamentManager.UpdateSignup(signup);
-                await _tournamentManager.SaveAllData();
+                // Update the signup using the SignupService
+                _signupService.UpdateSignup(signup);
+                await _signupService.SaveSignupsAsync();
 
                 // Update the signup message
                 await UpdateSignupMessage(sender, signup);
@@ -1823,7 +1840,7 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Save tournament state
-                await _tournamentManager.SaveTournamentState(sender);
+                await _stateService.SaveTournamentStateAsync(sender);
 
                 // Check if all participants have submitted their decks
                 bool allSubmitted = round.Teams?.All(t =>
@@ -1845,7 +1862,7 @@ namespace Wabbit.BotClient.Events
                     }
 
                     // Save tournament state again
-                    await _tournamentManager.SaveTournamentState(sender);
+                    await _stateService.SaveTournamentStateAsync(sender);
                 }
             }
             catch (Exception ex)
@@ -2092,3 +2109,4 @@ namespace Wabbit.BotClient.Events
         }
     }
 }
+

@@ -16,14 +16,30 @@ namespace Wabbit.BotClient.Events
         private readonly OngoingRounds _roundsHolder;
         private readonly IRandomMapExt _randomMap;
         private readonly IMapBanExt _banMap;
-        private readonly TournamentManager _tournamentManager;
+        private readonly ITournamentManagerService _tournamentManagerService;
+        private readonly ITournamentSignupService _signupService;
+        private readonly ITournamentService _tournamentService;
+        private readonly ITournamentStateService _stateService;
+        private readonly ITournamentMapService _mapService;
 
-        public Event_Modal(OngoingRounds roundsHolder, IRandomMapExt randomMap, IMapBanExt banMap, TournamentManager tournamentManager)
+        public Event_Modal(
+            OngoingRounds roundsHolder,
+            IRandomMapExt randomMap,
+            IMapBanExt banMap,
+            ITournamentManagerService tournamentManagerService,
+            ITournamentSignupService signupService,
+            ITournamentService tournamentService,
+            ITournamentStateService stateService,
+            ITournamentMapService mapService)
         {
             _roundsHolder = roundsHolder;
             _randomMap = randomMap;
             _banMap = banMap;
-            _tournamentManager = tournamentManager;
+            _tournamentManagerService = tournamentManagerService;
+            _signupService = signupService;
+            _tournamentService = tournamentService;
+            _stateService = stateService;
+            _mapService = mapService;
         }
 
         public async Task HandleEventAsync(DiscordClient sender, ModalSubmittedEventArgs modal)
@@ -65,7 +81,7 @@ namespace Wabbit.BotClient.Events
                     round.Messages.Add(log);
 
                     // Save state after regular round deck submission
-                    await _tournamentManager.SaveTournamentState(sender);
+                    await _stateService.SaveTournamentStateAsync(sender);
 
                     if (!String.IsNullOrEmpty(round.Deck1) && !String.IsNullOrEmpty(round.Deck2))
                     {
@@ -164,6 +180,17 @@ namespace Wabbit.BotClient.Events
                             round.Messages.Add(await modal.Interaction.CreateFollowupMessageAsync(followup));
                         }
                     }
+
+                    // Validate round exists and is active
+                    // Regular rounds don't have tournament data, so only check for tournament rounds
+                    // Skip this section entirely for regular rounds
+                    /* Tournament-related code commented out for regular rounds
+                    if (round is Round tournamentRound && !string.IsNullOrEmpty(tournamentRound.TournamentId))
+                    {
+                        var activeRounds = _stateService.GetActiveRoundsForTournament(tournamentRound.TournamentId);
+                        // Process activeRounds as needed
+                    }
+                    */
                 }
             }
             else
@@ -249,7 +276,7 @@ namespace Wabbit.BotClient.Events
                 tourneyRound.MsgToDel.Add(await sender.SendMessageAsync(tChannel, response));
 
                 // Save tournament state immediately after deck submission
-                await _tournamentManager.SaveTournamentState(sender);
+                await _stateService.SaveTournamentStateAsync(sender);
 
                 if (teams is not null && teams.All(t => t is not null && t.Participants is not null &&
                     t.Participants.All(p => p is not null && !string.IsNullOrEmpty(p.Deck))))
@@ -260,14 +287,19 @@ namespace Wabbit.BotClient.Events
                     if (tourneyRound.Maps == null || !tourneyRound.Maps.Any())
                     {
                         // Get tournament map pool
-                        var tournamentMapPool = _tournamentManager.GetTournamentMapPool(tourneyRound.OneVOne);
+                        var tournamentMapPool = _mapService.GetTournamentMapPool(tourneyRound.OneVOne);
 
                         // Filter out maps that have already been played
                         var playedMaps = new List<string>();
-                        var activeRounds = _tournamentManager.ConvertRoundsToState(_roundsHolder.TourneyRounds);
+                        var activeRounds = !string.IsNullOrEmpty(tourneyRound.TournamentId)
+                            ? _stateService.GetActiveRoundsForTournament(tourneyRound.TournamentId)
+                            : new List<Wabbit.Services.ActiveRound>();
                         foreach (var activeRound in activeRounds)
                         {
-                            playedMaps.AddRange(activeRound.PlayedMaps);
+                            if (activeRound.Maps != null)
+                            {
+                                playedMaps.AddRange(activeRound.Maps);
+                            }
                         }
 
                         // Remove played maps from the pool
@@ -308,7 +340,7 @@ namespace Wabbit.BotClient.Events
                     }
 
                     // Save tournament state
-                    await _tournamentManager.SaveTournamentState(sender);
+                    await _stateService.SaveTournamentStateAsync(sender);
 
                     // Rest of the existing code...
                 }
@@ -319,7 +351,7 @@ namespace Wabbit.BotClient.Events
             }
 
             // Save state after deck submission
-            await _tournamentManager.SaveTournamentState(sender);
+            await _stateService.SaveTournamentStateAsync(sender);
         }
 
         private async Task HandleTournamentCreateModal(DiscordClient sender, ModalSubmittedEventArgs modal)
@@ -427,7 +459,7 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Create the tournament
-                var tournament = await _tournamentManager.CreateTournament(
+                var tournament = await _tournamentService.CreateTournamentAsync(
                     tournamentName,
                     players,
                     TournamentFormat.GroupStageWithPlayoffs,
@@ -439,7 +471,7 @@ namespace Wabbit.BotClient.Events
                 _roundsHolder.Tournaments.Add(tournament);
 
                 // Generate visualization for the response message
-                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender);
+                string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, sender, _stateService);
 
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"🏆 Tournament Created: {tournament.Name}")
@@ -466,7 +498,7 @@ namespace Wabbit.BotClient.Events
                 await modal.Interaction.CreateFollowupMessageAsync(messageBuilder);
 
                 // Also post to the standings channel if configured
-                await _tournamentManager.PostTournamentVisualization(tournament, sender);
+                await _tournamentService.PostTournamentVisualizationAsync(tournament, sender);
             }
             catch (Exception ex)
             {

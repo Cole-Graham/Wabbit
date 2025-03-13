@@ -3,11 +3,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Wabbit.Models;
 using Wabbit.BotClient.Config;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using TournamentMatchType = Wabbit.Models.TournamentMatchType;
+using Wabbit.Services.Interfaces;
 
 namespace Wabbit.Misc
 {
@@ -37,7 +39,7 @@ namespace Wabbit.Misc
         /// Generates a standings image for a tournament and sends it to the configured standings channel if available
         /// </summary>
         /// <returns>Path to the generated image file</returns>
-        public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient? client = null)
+        public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient? client = null, ITournamentStateService? stateService = null)
         {
             // Calculate sizes
             bool useDoubleColumn = tournament.Groups.Count >= 4; // Use two columns for 4+ groups
@@ -125,21 +127,17 @@ namespace Wabbit.Misc
 
                                 tournament.RelatedMessages.Add(relatedMessage);
 
-                                // If this is part of a TournamentManager operation, save the tournament state
-                                try
+                                // Save tournament state if state service is provided
+                                if (stateService != null && client != null)
                                 {
-                                    // Get tournament manager and save the state
-                                    var scope = client.GetType().Assembly.GetType("Wabbit.Services.ServiceLocator")?.GetMethod("GetService")?.Invoke(null, new[] { typeof(TournamentManager) });
-                                    if (scope != null && scope is TournamentManager tournamentManager)
+                                    try
                                     {
-                                        // NOTE: Tournament state should be saved in an async context
-                                        // If this method is made async in the future, use: await tournamentManager.SaveTournamentState();
-                                        // For now, we rely on the periodic state saves elsewhere in the code
+                                        await stateService.SaveTournamentStateAsync(client);
                                     }
-                                }
-                                catch (Exception savEx)
-                                {
-                                    Console.WriteLine($"Error saving tournament state: {savEx.Message}");
+                                    catch (Exception savEx)
+                                    {
+                                        Console.WriteLine($"Error saving tournament state: {savEx.Message}");
+                                    }
                                 }
                             }
                         }
