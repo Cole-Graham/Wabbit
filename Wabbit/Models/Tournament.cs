@@ -55,7 +55,7 @@ namespace Wabbit.Models
         public class Match
         {
             public string Name { get; set; } = "";
-            public MatchType Type { get; set; } = MatchType.GroupStage;
+            public TournamentMatchType Type { get; set; } = TournamentMatchType.GroupStage;
             public List<MatchParticipant> Participants { get; set; } = [];
             public MatchResult? Result { get; set; }
             public Round? LinkedRound { get; set; } // Reference to the actual round in the system
@@ -105,7 +105,7 @@ namespace Wabbit.Models
         RoundRobin
     }
 
-    public enum MatchType
+    public enum TournamentMatchType
     {
         GroupStage,
         PlayoffStage,

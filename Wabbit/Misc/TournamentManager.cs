@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Wabbit.Models;
 using DSharpPlus;
 using DSharpPlus.Entities;
-using MatchType = Wabbit.Models.MatchType;
 using Wabbit.Services;
 using Wabbit.Data;
 using Wabbit.BotClient.Config;
@@ -1089,7 +1088,7 @@ namespace Wabbit.Misc
                         var match = new Tournament.Match
                         {
                             Name = $"{GetPlayerDisplayName(group.Participants[i].Player)} vs {GetPlayerDisplayName(group.Participants[j].Player)}",
-                            Type = MatchType.GroupStage,
+                            Type = TournamentMatchType.GroupStage,
                             Participants = new List<Tournament.MatchParticipant>
                             {
                                 new() { Player = group.Participants[i].Player },
@@ -1269,7 +1268,7 @@ namespace Wabbit.Misc
             }
 
             // Update group standings if it's a group stage match
-            if (match.Type == MatchType.GroupStage && tournament.Groups != null)
+            if (match.Type == TournamentMatchType.GroupStage && tournament.Groups != null)
             {
                 // Store ID once
                 ulong? groupWinnerIdNullable = GetPlayerId(winner);
@@ -1575,7 +1574,7 @@ namespace Wabbit.Misc
                 var semi1 = new Tournament.Match
                 {
                     Name = "Semifinal 1",
-                    Type = MatchType.Semifinal,
+                    Type = TournamentMatchType.Semifinal,
                     DisplayPosition = "Semifinal 1",
                     BestOf = 3,
                     Participants = new List<Tournament.MatchParticipant>()
@@ -1635,7 +1634,7 @@ namespace Wabbit.Misc
                     var semi2 = new Tournament.Match
                     {
                         Name = "Semifinal 2",
-                        Type = MatchType.Semifinal,
+                        Type = TournamentMatchType.Semifinal,
                         DisplayPosition = "Semifinal 2",
                         BestOf = 3,
                         Participants = new List<Tournament.MatchParticipant>()
@@ -1682,7 +1681,7 @@ namespace Wabbit.Misc
                     var semi2 = new Tournament.Match
                     {
                         Name = "Semifinal 2",
-                        Type = MatchType.Semifinal,
+                        Type = TournamentMatchType.Semifinal,
                         DisplayPosition = "Semifinal 2",
                         BestOf = 3,
                         Participants = new List<Tournament.MatchParticipant>()
@@ -1725,7 +1724,7 @@ namespace Wabbit.Misc
                 var final = new Tournament.Match
                 {
                     Name = "Final",
-                    Type = MatchType.Final,
+                    Type = TournamentMatchType.Final,
                     DisplayPosition = "Final",
                     BestOf = 3,
                     Participants = new List<Tournament.MatchParticipant>()

@@ -7,7 +7,7 @@ using Wabbit.Models;
 using Wabbit.BotClient.Config;
 using DSharpPlus;
 using DSharpPlus.Entities;
-using MatchType = Wabbit.Models.MatchType;
+using TournamentMatchType = Wabbit.Models.TournamentMatchType;
 
 namespace Wabbit.Misc
 {
@@ -509,9 +509,9 @@ namespace Wabbit.Misc
             yOffset += RowHeight + 20;
 
             // Process tournament data with null checks
-            var semifinals = tournament.PlayoffMatches?.Where(m => m?.Type == MatchType.Semifinal).ToList() ?? [];
-            var finals = tournament.PlayoffMatches?.Where(m => m?.Type == MatchType.Final).ToList() ?? [];
-            var tiebreakers = tournament.PlayoffMatches?.Where(m => m?.Type == MatchType.ThirdPlaceTiebreaker).ToList() ?? [];
+            var semifinals = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.Semifinal).ToList() ?? [];
+            var finals = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.Final).ToList() ?? [];
+            var tiebreakers = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.ThirdPlaceTiebreaker).ToList() ?? [];
 
             // Draw tiebreakers if any exist
             if (tiebreakers.Any())

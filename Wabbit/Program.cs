@@ -53,6 +53,9 @@ namespace Wabbit
                     services.AddSingleton<IRandomProvider, RandomProvider>();
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
+                    services.AddSingleton<ITournamentGameService, TournamentGameService>();
+                    services.AddSingleton<ITournamentMatchService, TournamentMatchService>();
+                    services.AddSingleton<TournamentManagementGroup>();
                 });
 
                 builder.ConfigureEventHandlers(events =>
