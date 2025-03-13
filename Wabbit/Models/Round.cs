@@ -14,6 +14,7 @@ namespace Wabbit.Models
         public string? Pings { get; set; } // To not use LINQ each time
         public List<DiscordMessage> MsgToDel { get; set; } = [];
         public string? TournamentId { get; set; } // Add this property to link rounds to tournaments
+        public Dictionary<string, object> CustomProperties { get; set; } = new Dictionary<string, object>();
 
         public class Participant
         {

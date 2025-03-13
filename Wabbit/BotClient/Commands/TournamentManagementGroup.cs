@@ -1646,16 +1646,15 @@ namespace Wabbit.BotClient.Commands
         {
             Console.WriteLine($"Starting group stage matches for tournament '{tournament.Name}' with {tournament.Groups.Count} groups");
 
-            // Only process each group if there are matches to be played
+            // Track which players already have a match scheduled
+            var playersWithScheduledMatches = new HashSet<ulong>();
+
+            // Process each group
             foreach (var group in tournament.Groups)
             {
-                Console.WriteLine($"Processing group {group.Name} with {group.Participants.Count} participants");
+                Console.WriteLine($"Processing group {group.Name} with {group.Participants.Count} participants and {group.Matches.Count} matches");
 
-                // Schedule the first match for each pair of players
-                // Instead of creating all threads at once, we'll only create the first round of matches
-                var matches = new List<(DiscordMember, DiscordMember)>();
-
-                // First, we need to explicitly convert all players to DiscordMember
+                // First, convert all players to proper DiscordMember objects
                 Console.WriteLine("Converting all participants to DiscordMember objects");
                 foreach (var participant in group.Participants)
                 {
@@ -1679,10 +1678,10 @@ namespace Wabbit.BotClient.Commands
                                 if (idProperty != null)
                                 {
                                     var idValue = idProperty.GetValue(playerObj);
-                                    if (idValue != null && ulong.TryParse(idValue.ToString(), out ulong id))
+                                    if (idValue != null && ulong.TryParse(idValue.ToString(), out ulong playerId1))
                                     {
-                                        playerId = id;
-                                        Console.WriteLine($"Retrieved player ID {id} using reflection");
+                                        playerId = playerId1;
+                                        Console.WriteLine($"Retrieved player ID {playerId1} using reflection");
                                     }
                                 }
                                 else
@@ -1691,10 +1690,10 @@ namespace Wabbit.BotClient.Commands
                                     string playerString = playerObj.ToString() ?? "";
                                     Console.WriteLine($"Attempting to parse player ID from string: {playerString}");
                                     var idMatch = System.Text.RegularExpressions.Regex.Match(playerString, @"Id\s*=\s*(\d+)");
-                                    if (idMatch.Success && ulong.TryParse(idMatch.Groups[1].Value, out ulong id))
+                                    if (idMatch.Success && ulong.TryParse(idMatch.Groups[1].Value, out ulong playerId2))
                                     {
-                                        playerId = id;
-                                        Console.WriteLine($"Retrieved player ID {id} from string representation");
+                                        playerId = playerId2;
+                                        Console.WriteLine($"Retrieved player ID {playerId2} from string representation");
                                     }
                                 }
                             }
@@ -1748,68 +1747,86 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
-                // Now create the matches using the updated participant objects
-                Console.WriteLine("Creating matches between participants");
-                foreach (var p1 in group.Participants)
+                // Now create only the first round of matches (one match per player)
+                Console.WriteLine("Creating first round of matches - one match per player");
+
+                // Get valid participants (those that are DiscordMember objects)
+                var validParticipants = group.Participants
+                    .Where(p => p.Player is DiscordMember)
+                    .ToList();
+
+                // Randomize the order to create fair initial pairings
+                var shuffledParticipants = validParticipants
+                    .OrderBy(_ => Guid.NewGuid())
+                    .ToList();
+
+                // Create matches, ensuring each player only gets one match
+                for (int i = 0; i < shuffledParticipants.Count; i += 2)
                 {
-                    foreach (var p2 in group.Participants)
+                    // If we have an odd number of players and this is the last one, skip
+                    if (i + 1 >= shuffledParticipants.Count)
+                        break;
+
+                    var player1 = shuffledParticipants[i].Player as DiscordMember;
+                    var player2 = shuffledParticipants[i + 1].Player as DiscordMember;
+
+                    if (player1 is null || player2 is null)
+                        continue;
+
+                    // Check if either player already has a match scheduled
+                    if (playersWithScheduledMatches.Contains(player1.Id) ||
+                        playersWithScheduledMatches.Contains(player2.Id))
+                        continue;
+
+                    // Find if a match already exists between these players
+                    var existingMatch = group.Matches.FirstOrDefault(m =>
+                        m.Participants.Count == 2 &&
+                        m.Participants.Any(p => p.Player is DiscordMember member && member.Id == player1.Id) &&
+                        m.Participants.Any(p => p.Player is DiscordMember member && member.Id == player2.Id));
+
+                    // Create thread for this match
+                    Console.WriteLine($"Creating match thread for {player1.Username} vs {player2.Username}");
+
+                    try
                     {
-                        // Skip if same player or if a match between these players already exists
-                        if (p1 == p2 ||
-                            group.Matches.Any(m => m.Participants.Count == 2 &&
-                                ((m.Participants[0].Player == p1.Player && m.Participants[1].Player == p2.Player) ||
-                                 (m.Participants[0].Player == p2.Player && m.Participants[1].Player == p1.Player))))
+                        // Use the existing match or create a new one if needed
+                        if (existingMatch == null)
                         {
-                            continue;
+                            existingMatch = new Tournament.Match
+                            {
+                                Name = $"{player1.DisplayName} vs {player2.DisplayName}",
+                                Type = MatchType.GroupStage,
+                                BestOf = 3, // Use Bo3 for group stages
+                                Participants = new List<Tournament.MatchParticipant>
+                                {
+                                    new Tournament.MatchParticipant { Player = player1 },
+                                    new Tournament.MatchParticipant { Player = player2 }
+                                }
+                            };
+
+                            // Add the match to the group
+                            group.Matches.Add(existingMatch);
                         }
 
-                        // Convert players to DiscordMember
-                        var member1 = p1.Player as DiscordMember;
-                        var member2 = p2.Player as DiscordMember;
+                        // Create the thread and set up the match
+                        await CreateAndStart1v1Match(tournament, group, player1, player2, client, 3, existingMatch);
 
-                        if (member1 is not null && member2 is not null)
-                        {
-                            Console.WriteLine($"Adding potential match: {member1.Username} vs {member2.Username}");
-                            matches.Add((member1, member2));
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Failed to convert players to DiscordMember: {p1.Player?.ToString() ?? "null"} vs {p2.Player?.ToString() ?? "null"}");
-                        }
+                        // Mark these players as having a scheduled match
+                        playersWithScheduledMatches.Add(player1.Id);
+                        playersWithScheduledMatches.Add(player2.Id);
+
                     }
-                }
-
-                // Only create half of the matches now - the other half will be created as these complete
-                // This way each player plays against each other player once
-                var uniqueMatches = new HashSet<(ulong, ulong)>();
-                var matchesToCreate = new List<(DiscordMember, DiscordMember)>();
-
-                Console.WriteLine($"Initial match count: {matches.Count}, filtering to unique matches");
-                foreach (var match in matches)
-                {
-                    var sortedIds = new[] { match.Item1.Id, match.Item2.Id }.OrderBy(id => id).ToArray();
-                    var matchKey = (sortedIds[0], sortedIds[1]);
-
-                    if (uniqueMatches.Add(matchKey))
+                    catch (Exception ex)
                     {
-                        matchesToCreate.Add(match);
+                        Console.WriteLine($"Error creating match for {player1.Username} vs {player2.Username}: {ex.Message}");
                     }
-                }
-
-                Console.WriteLine($"Creating {matchesToCreate.Count} unique matches");
-                // Create the first round of matches
-                foreach (var match in matchesToCreate)
-                {
-                    int matchLength = 3; // Change to Bo3 for group stages
-                    Console.WriteLine($"Creating match: {match.Item1.Username} vs {match.Item2.Username} (Bo{matchLength})");
-                    await CreateAndStart1v1Match(tournament, group, match.Item1, match.Item2, client, matchLength);
 
                     // Add a slight delay to avoid rate limiting
                     await Task.Delay(1000);
                 }
             }
 
-            Console.WriteLine("Saving tournament state after creating all matches");
+            Console.WriteLine("Saving tournament state after creating initial matches");
             // Update tournament state
             await _tournamentManager.SaveTournamentState(client);
 
@@ -1818,7 +1835,61 @@ namespace Wabbit.BotClient.Commands
             await _tournamentManager.PostTournamentVisualization(tournament, client);
         }
 
-        private async Task CreateAndStart1v1Match(Tournament tournament, Tournament.Group group, DiscordMember player1, DiscordMember player2, DiscordClient client, int matchLength)
+        // Helper method to extract player ID from an object
+        private ulong? GetPlayerIdFromObject(object playerObj)
+        {
+            if (playerObj == null)
+                return null;
+
+            if (playerObj is DiscordMember member)
+                return member.Id;
+
+            // Try to get ID using reflection
+            var idProperty = playerObj.GetType().GetProperty("Id");
+            if (idProperty != null)
+            {
+                var idValue = idProperty.GetValue(playerObj);
+                if (idValue != null && ulong.TryParse(idValue.ToString(), out ulong reflectionId))
+                    return reflectionId;
+            }
+
+            // Parse from string representation as last resort
+            string playerString = playerObj.ToString() ?? "";
+            var idMatch = System.Text.RegularExpressions.Regex.Match(playerString, @"Id\s*=\s*(\d+)");
+            if (idMatch.Success && ulong.TryParse(idMatch.Groups[1].Value, out ulong stringId))
+                return stringId;
+
+            return null;
+        }
+
+        // Helper method to get DiscordMember from ID
+        private async Task<DiscordMember?> GetDiscordMemberFromId(ulong id, DiscordClient client)
+        {
+            foreach (var guild in client.Guilds.Values)
+            {
+                try
+                {
+                    var member = await guild.GetMemberAsync(id);
+                    if (member is not null)
+                        return member;
+                }
+                catch
+                {
+                    // Member not in this guild, continue to next
+                    continue;
+                }
+            }
+            return null;
+        }
+
+        private async Task CreateAndStart1v1Match(
+            Tournament tournament,
+            Tournament.Group group,
+            DiscordMember player1,
+            DiscordMember player2,
+            DiscordClient client,
+            int matchLength,
+            Tournament.Match? existingMatch = null)
         {
             Console.WriteLine($"Starting CreateAndStart1v1Match for {player1.Username} vs {player2.Username} in tournament '{tournament.Name}'");
             try
@@ -1878,23 +1949,38 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
-                // Create a new match
-                Console.WriteLine("Creating new tournament match object");
-                var match = new Tournament.Match
+                // Use existing match or create a new one
+                Tournament.Match? match = existingMatch;
+                if (match == null)
                 {
-                    Name = $"{player1.DisplayName} vs {player2.DisplayName}",
-                    Type = MatchType.GroupStage,
-                    BestOf = matchLength,
-                    Participants = new List<Tournament.MatchParticipant>
-                            {
-                                new Tournament.MatchParticipant { Player = player1 },
-                                new Tournament.MatchParticipant { Player = player2 }
-                            }
-                };
+                    // Create a new match
+                    Console.WriteLine("Creating new tournament match object");
+                    match = new Tournament.Match
+                    {
+                        Name = $"{player1.DisplayName} vs {player2.DisplayName}",
+                        Type = MatchType.GroupStage,
+                        BestOf = matchLength,
+                        Participants = new List<Tournament.MatchParticipant>
+                        {
+                            new Tournament.MatchParticipant { Player = player1 },
+                            new Tournament.MatchParticipant { Player = player2 }
+                        }
+                    };
 
-                // Add match to the group
-                group.Matches.Add(match);
-                Console.WriteLine($"Added match to group {group.Name}");
+                    // Add match to the group
+                    group.Matches.Add(match);
+                    Console.WriteLine($"Added match to group {group.Name}");
+                }
+                else
+                {
+                    Console.WriteLine($"Using existing match object: {match.Name}");
+                    // Ensure players in the match are set correctly to DiscordMember objects
+                    if (match.Participants.Count == 2)
+                    {
+                        match.Participants[0].Player = player1;
+                        match.Participants[1].Player = player2;
+                    }
+                }
 
                 // Create and start a round for this match
                 Console.WriteLine("Creating Round object for the match");
@@ -1993,91 +2079,44 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Create winner selection dropdown
-                Console.WriteLine("Creating winner selection dropdown");
+                Console.WriteLine("Creating game winner selection dropdown for the first game");
                 var winnerOptions = new List<DiscordSelectComponentOption>
                 {
                     new DiscordSelectComponentOption(
-                        $"{player1.DisplayName} wins 2-0",
-                        $"{player1.Id}:2:0",
-                        $"{player1.DisplayName} won 2-0"
+                        $"{player1.DisplayName} wins",
+                        $"game_winner:{player1.Id}",
+                        $"{player1.DisplayName} wins this game"
                     ),
                     new DiscordSelectComponentOption(
-                        $"{player1.DisplayName} wins 2-1",
-                        $"{player1.Id}:2:1",
-                        $"{player1.DisplayName} won 2-1"
+                        $"{player2.DisplayName} wins",
+                        $"game_winner:{player2.Id}",
+                        $"{player2.DisplayName} wins this game"
                     ),
                     new DiscordSelectComponentOption(
-                        $"{player2.DisplayName} wins 2-0",
-                        $"{player2.Id}:2:0",
-                        $"{player2.DisplayName} won 2-0"
-                    ),
-                    new DiscordSelectComponentOption(
-                        $"{player2.DisplayName} wins 2-1",
-                        $"{player2.Id}:2:1",
-                        $"{player2.DisplayName} won 2-1"
+                        "Draw",
+                        "game_winner:draw",
+                        "This game ended in a draw"
                     )
                 };
 
-                // Adjust winner options based on match length
-                if (matchLength == 1)
-                {
-                    winnerOptions = new List<DiscordSelectComponentOption>
-                    {
-                        new DiscordSelectComponentOption(
-                            $"{player1.DisplayName} wins",
-                            $"{player1.Id}:1:0",
-                            $"{player1.DisplayName} won"
-                        ),
-                        new DiscordSelectComponentOption(
-                            $"{player2.DisplayName} wins",
-                            $"{player2.Id}:1:0",
-                            $"{player2.DisplayName} won"
-                        )
-                    };
-                }
-                else if (matchLength == 5)
-                {
-                    winnerOptions = new List<DiscordSelectComponentOption>
-                    {
-                        new DiscordSelectComponentOption(
-                            $"{player1.DisplayName} wins 3-0",
-                            $"{player1.Id}:3:0",
-                            $"{player1.DisplayName} won 3-0"
-                        ),
-                        new DiscordSelectComponentOption(
-                            $"{player1.DisplayName} wins 3-1",
-                            $"{player1.Id}:3:1",
-                            $"{player1.DisplayName} won 3-1"
-                        ),
-                        new DiscordSelectComponentOption(
-                            $"{player1.DisplayName} wins 3-2",
-                            $"{player1.Id}:3:2",
-                            $"{player1.DisplayName} won 3-2"
-                        ),
-                        new DiscordSelectComponentOption(
-                            $"{player2.DisplayName} wins 3-0",
-                            $"{player2.Id}:3:0",
-                            $"{player2.DisplayName} won 3-0"
-                        ),
-                        new DiscordSelectComponentOption(
-                            $"{player2.DisplayName} wins 3-1",
-                            $"{player2.Id}:3:1",
-                            $"{player2.DisplayName} won 3-1"
-                        ),
-                        new DiscordSelectComponentOption(
-                            $"{player2.DisplayName} wins 3-2",
-                            $"{player2.Id}:3:2",
-                            $"{player2.DisplayName} won 3-2"
-                        )
-                    };
-                }
-
                 var winnerDropdown = new DiscordSelectComponent(
-                    "tournament_match_winner_dropdown",
-                    "Select the match winner and score",
+                    "tournament_game_winner_dropdown",
+                    "Select the winner of this game",
                     winnerOptions,
                     false, 1, 1
                 );
+
+                // Create a custom property in the round to track match series state
+                round.CustomProperties = new Dictionary<string, object>
+                {
+                    ["CurrentGame"] = 1,
+                    ["Player1Wins"] = 0,
+                    ["Player2Wins"] = 0,
+                    ["Draws"] = 0,
+                    ["MatchLength"] = matchLength,
+                    ["Player1Id"] = player1.Id,
+                    ["Player2Id"] = player2.Id
+                };
 
                 // Send messages to thread if it was created successfully
                 if (team1.Thread is not null)
@@ -2092,9 +2131,19 @@ namespace Wabbit.BotClient.Commands
 
                         await team1.Thread.SendMessageAsync(dropdownBuilder);
 
-                        // Send match winner dropdown
+                        // Send match overview
+                        var matchOverview = new DiscordEmbedBuilder()
+                            .WithTitle($"Match: {player1.DisplayName} vs {player2.DisplayName}")
+                            .WithDescription($"Best of {matchLength} series")
+                            .AddField("Current Score", "0 - 0", true)
+                            .AddField("Game", "1/" + (matchLength > 1 ? matchLength.ToString() : "1"), true)
+                            .WithColor(DiscordColor.Blurple);
+
+                        await team1.Thread.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(matchOverview));
+
+                        // Send game winner dropdown
                         var winnerBuilder = new DiscordMessageBuilder()
-                            .WithContent("**When the match is complete, select the winner and score:**")
+                            .WithContent("**When this game is complete, select the winner:**")
                             .AddComponents(winnerDropdown);
 
                         await team1.Thread.SendMessageAsync(winnerBuilder);
@@ -2318,6 +2367,278 @@ namespace Wabbit.BotClient.Commands
 
         // Add a new field to track matches being processed
         private readonly HashSet<string> _processingMatches = new HashSet<string>();
+
+        // Method to handle game result selection and advance the match series
+        public async Task HandleGameResultAsync(Round round, DiscordChannel thread, string winnerId, DiscordClient client)
+        {
+            if (thread is DiscordThreadChannel threadChannel)
+            {
+                await HandleGameResult(round, threadChannel, winnerId, client);
+            }
+            else
+            {
+                Console.WriteLine("Cannot handle game result: Channel is not a thread channel");
+            }
+        }
+
+        // Method to handle game result selection and advance the match series
+        private async Task HandleGameResult(Round round, DiscordThreadChannel thread, string winnerId, DiscordClient client)
+        {
+            try
+            {
+                // Extract match information from round's custom properties
+                var currentGame = (int)round.CustomProperties["CurrentGame"];
+                var player1Wins = (int)round.CustomProperties["Player1Wins"];
+                var player2Wins = (int)round.CustomProperties["Player2Wins"];
+                var draws = (int)round.CustomProperties["Draws"];
+                var matchLength = (int)round.CustomProperties["MatchLength"];
+                var player1Id = (ulong)round.CustomProperties["Player1Id"];
+                var player2Id = (ulong)round.CustomProperties["Player2Id"];
+
+                // Get player objects
+                DiscordMember? player1 = null;
+                DiscordMember? player2 = null;
+
+                if (round.Teams != null)
+                {
+                    foreach (var team in round.Teams)
+                    {
+                        if (team?.Participants != null)
+                        {
+                            foreach (var participant in team.Participants)
+                            {
+                                if (participant?.Player is DiscordMember member)
+                                {
+                                    if (member.Id == player1Id)
+                                        player1 = member;
+                                    else if (member.Id == player2Id)
+                                        player2 = member;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (player1 is null || player2 is null)
+                {
+                    await thread.SendMessageAsync("⚠️ Error: Could not find player information.");
+                    return;
+                }
+
+                // Update scores based on winner
+                bool isDraw = winnerId == "draw";
+                if (isDraw)
+                {
+                    draws++;
+                    round.CustomProperties["Draws"] = draws;
+                    await thread.SendMessageAsync($"Game {currentGame} ended in a draw!");
+                }
+                else if (winnerId == player1Id.ToString())
+                {
+                    player1Wins++;
+                    round.CustomProperties["Player1Wins"] = player1Wins;
+                    await thread.SendMessageAsync($"Game {currentGame}: {player1.DisplayName} wins!");
+                }
+                else if (winnerId == player2Id.ToString())
+                {
+                    player2Wins++;
+                    round.CustomProperties["Player2Wins"] = player2Wins;
+                    await thread.SendMessageAsync($"Game {currentGame}: {player2.DisplayName} wins!");
+                }
+
+                // Check if match is complete
+                bool isMatchComplete = false;
+                string matchResult = "";
+
+                // For Bo1, match is complete after 1 game
+                if (matchLength == 1)
+                {
+                    isMatchComplete = true;
+                    if (isDraw)
+                        matchResult = "Match ended in a draw!";
+                    else if (player1Wins > 0)
+                        matchResult = $"{player1.DisplayName} wins the match!";
+                    else
+                        matchResult = $"{player2.DisplayName} wins the match!";
+                }
+                // For Bo3, match is complete if:
+                else if (matchLength == 3)
+                {
+                    // Player has 2 wins
+                    if (player1Wins >= 2)
+                    {
+                        isMatchComplete = true;
+                        matchResult = $"{player1.DisplayName} wins the match {player1Wins}-{player2Wins}!";
+                    }
+                    else if (player2Wins >= 2)
+                    {
+                        isMatchComplete = true;
+                        matchResult = $"{player2.DisplayName} wins the match {player2Wins}-{player1Wins}!";
+                    }
+                    // Mathematical draw (1-1-1)
+                    else if (player1Wins == 1 && player2Wins == 1 && draws == 1)
+                    {
+                        isMatchComplete = true;
+                        matchResult = "Match ended in a draw!";
+                    }
+                    // Max games played without a winner
+                    else if (currentGame >= matchLength)
+                    {
+                        isMatchComplete = true;
+                        if (player1Wins > player2Wins)
+                            matchResult = $"{player1.DisplayName} wins the match {player1Wins}-{player2Wins}!";
+                        else if (player2Wins > player1Wins)
+                            matchResult = $"{player2.DisplayName} wins the match {player2Wins}-{player1Wins}!";
+                        else
+                            matchResult = "Match ended in a draw!";
+                    }
+                }
+                // For Bo5, match is complete if:
+                else if (matchLength == 5)
+                {
+                    // Player has 3 wins
+                    if (player1Wins >= 3)
+                    {
+                        isMatchComplete = true;
+                        matchResult = $"{player1.DisplayName} wins the match {player1Wins}-{player2Wins}!";
+                    }
+                    else if (player2Wins >= 3)
+                    {
+                        isMatchComplete = true;
+                        matchResult = $"{player2.DisplayName} wins the match {player2Wins}-{player1Wins}!";
+                    }
+                    // Mathematical draw (various scenarios where no one can reach 3 wins)
+                    else if (player1Wins == 2 && player2Wins == 2 && draws == 1)
+                    {
+                        isMatchComplete = true;
+                        matchResult = "Match ended in a draw!";
+                    }
+                    // Max games played without a winner
+                    else if (currentGame >= matchLength)
+                    {
+                        isMatchComplete = true;
+                        if (player1Wins > player2Wins)
+                            matchResult = $"{player1.DisplayName} wins the match {player1Wins}-{player2Wins}!";
+                        else if (player2Wins > player1Wins)
+                            matchResult = $"{player2.DisplayName} wins the match {player2Wins}-{player1Wins}!";
+                        else
+                            matchResult = "Match ended in a draw!";
+                    }
+                }
+
+                // Update match overview
+                var matchOverview = new DiscordEmbedBuilder()
+                    .WithTitle($"Match: {player1.DisplayName} vs {player2.DisplayName}")
+                    .WithDescription($"Best of {matchLength} series")
+                    .AddField("Current Score", $"{player1Wins} - {player2Wins}" + (draws > 0 ? $" (Draws: {draws})" : ""), true)
+                    .AddField("Game", $"{currentGame}/{(matchLength > 1 ? matchLength.ToString() : "1")}", true)
+                    .WithColor(isMatchComplete ? DiscordColor.Green : DiscordColor.Blurple);
+
+                await thread.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(matchOverview));
+
+                if (isMatchComplete)
+                {
+                    // Match is complete - announce winner and update tournament
+                    await thread.SendMessageAsync($"🏆 **{matchResult}**");
+
+                    // Find the tournament this match belongs to
+                    var tournament = _ongoingRounds.Tournaments.FirstOrDefault(t =>
+                        t.Groups.Any(g => g.Matches.Any(m => m.LinkedRound == round)));
+
+                    if (tournament != null)
+                    {
+                        var match = tournament.Groups
+                            .SelectMany(g => g.Matches)
+                            .FirstOrDefault(m => m.LinkedRound == round);
+
+                        if (match != null)
+                        {
+                            // Update match with the result
+                            // IsComplete is a read-only property based on Result != null
+                            var resultRecord = new Tournament.MatchResult();
+
+                            // Set winner
+                            if (!isDraw && player1Wins != player2Wins)
+                            {
+                                var winningPlayerId = player1Wins > player2Wins ? player1Id : player2Id;
+                                resultRecord.Winner = match.Participants.FirstOrDefault(p =>
+                                    p.Player is DiscordMember member && member.Id == winningPlayerId)?.Player;
+                            }
+
+                            // Set the result which implicitly sets IsComplete to true
+                            match.Result = resultRecord;
+
+                            // Save state
+                            await _tournamentManager.SaveTournamentState(client);
+
+                            // Update tournament visualization
+                            await _tournamentManager.PostTournamentVisualization(tournament, client);
+
+                            // Handle match completion (schedule next matches, etc.)
+                            await HandleMatchCompletion(tournament, match, client);
+                        }
+                    }
+
+                    // Archive the thread
+                    try
+                    {
+                        await thread.ModifyAsync(t =>
+                        {
+                            t.IsArchived = true;
+                            t.AutoArchiveDuration = DiscordAutoArchiveDuration.Hour;
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error archiving thread: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    // Match continues - move to next game
+                    currentGame++;
+                    round.CustomProperties["CurrentGame"] = currentGame;
+
+                    // Create winner dropdown for next game
+                    var winnerOptions = new List<DiscordSelectComponentOption>
+                    {
+                        new DiscordSelectComponentOption(
+                            $"{player1.DisplayName} wins",
+                            $"game_winner:{player1.Id}",
+                            $"{player1.DisplayName} wins this game"
+                        ),
+                        new DiscordSelectComponentOption(
+                            $"{player2.DisplayName} wins",
+                            $"game_winner:{player2.Id}",
+                            $"{player2.DisplayName} wins this game"
+                        ),
+                        new DiscordSelectComponentOption(
+                            "Draw",
+                            "game_winner:draw",
+                            "This game ended in a draw"
+                        )
+                    };
+
+                    var winnerDropdown = new DiscordSelectComponent(
+                        "tournament_game_winner_dropdown",
+                        "Select the winner of this game",
+                        winnerOptions,
+                        false, 1, 1
+                    );
+
+                    await thread.SendMessageAsync(
+                        new DiscordMessageBuilder()
+                            .WithContent($"**Game {currentGame} starting - When this game is complete, select the winner:**")
+                            .AddComponents(winnerDropdown)
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling game result: {ex.Message}");
+                await thread.SendMessageAsync($"⚠️ Error handling game result: {ex.Message}");
+            }
+        }
 
         // New method to start playoff matches
         private Task StartPlayoffMatches(Tournament tournament, DiscordClient client)

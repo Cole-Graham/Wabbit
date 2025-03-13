@@ -2,6 +2,7 @@
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Wabbit.BotClient.Config;
+using Wabbit.BotClient.Commands;
 using Wabbit.Misc;
 using Wabbit.Models;
 using Microsoft.Extensions.Logging;
@@ -1010,7 +1011,7 @@ namespace Wabbit.BotClient.Events
                                     // Handle match completion to create new matches or advance to playoffs
                                     using (var scope = _scopeFactory.CreateScope())
                                     {
-                                        var tournamentManagementGroup = scope.ServiceProvider.GetRequiredService<Wabbit.BotClient.Commands.TournamentManagementGroup>();
+                                        var tournamentManagementGroup = scope.ServiceProvider.GetRequiredService<TournamentManagementGroup>();
                                         await tournamentManagementGroup.HandleMatchCompletion(tournament, match, sender);
                                     }
                                 }
@@ -1021,6 +1022,72 @@ namespace Wabbit.BotClient.Events
                                         .WithContent($"Error processing match result: {ex.Message}"));
                                 }
                                 break;
+
+                            case "tournament_game_winner_dropdown":
+                                // First identify the thread/channel and associated round
+                                if (e.Channel is not null && e.Channel.Type == DiscordChannelType.PrivateThread)
+                                {
+                                    // This is specifically for tournament matches in private threads
+                                    try
+                                    {
+                                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        // Interaction might already be acknowledged
+                                        Console.WriteLine($"Could not defer interaction: {ex.Message}");
+                                    }
+
+                                    // Find the tournament round associated with this thread
+                                    var tournamentRound = _roundsHolder.TourneyRounds.FirstOrDefault(r =>
+                                        r.Teams != null && r.Teams.Any(t => t.Thread is not null && t.Thread.Id == e.Channel.Id));
+
+                                    if (tournamentRound != null && e.Values != null && e.Values.Count() > 0)
+                                    {
+                                        // Process game result
+                                        string selectedValue = e.Values[0];
+
+                                        // Parse the winner ID from the value format "game_winner:userId" or "game_winner:draw"
+                                        if (selectedValue.StartsWith("game_winner:"))
+                                        {
+                                            string winnerId = selectedValue.Substring("game_winner:".Length);
+
+                                            // Get the TournamentManagementGroup using the service scope factory
+                                            using (var scope = _scopeFactory.CreateScope())
+                                            {
+                                                try
+                                                {
+                                                    var tournamentManager = scope.ServiceProvider.GetRequiredService<TournamentManagementGroup>();
+                                                    if (tournamentManager != null)
+                                                    {
+                                                        // Call the HandleGameResult method
+                                                        await tournamentManager.HandleGameResultAsync(tournamentRound, e.Channel, winnerId, sender);
+                                                    }
+                                                    else
+                                                    {
+                                                        await e.Channel.SendMessageAsync("⚠️ Could not process game result: Tournament manager not available");
+                                                    }
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    await e.Channel.SendMessageAsync($"⚠️ Error processing game result: {ex.Message}");
+                                                    _logger.LogError(ex, "Error getting TournamentManagementGroup service");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        if (e.Channel is not null)
+                                        {
+                                            await e.Channel.SendMessageAsync("⚠️ Could not process game result: Tournament round not found");
+                                        }
+                                    }
+                                }
+                                break;
+
+                            default:
+                                return;
                         }
                     }
                     else
