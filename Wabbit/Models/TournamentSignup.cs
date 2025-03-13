@@ -42,17 +42,26 @@ namespace Wabbit.Models
         public List<(ulong Id, string Username)> ParticipantInfo { get; set; } = [];
 
         // Used to store seeding info from JSON until we can convert to DiscordMembers
-        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<(ulong Id, int Seed)> SeedInfo { get; set; } = [];
     }
 
     public class ParticipantSeed
     {
+        [System.Text.Json.Serialization.JsonIgnore]
         public DiscordMember Player { get; set; } = null!;
+
         public int Seed { get; set; } = 0; // 0 = unseeded, 1 = first seed, 2 = second seed, etc.
 
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
         public ulong PlayerId { get; set; }
+
+        // This method ensures PlayerId is always populated with Player.Id when Player is set
+        public void SetPlayer(DiscordMember player)
+        {
+            Player = player;
+            PlayerId = player?.Id ?? 0;
+        }
     }
 
     public class RelatedMessage

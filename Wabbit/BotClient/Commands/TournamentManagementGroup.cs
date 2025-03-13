@@ -1225,12 +1225,9 @@ namespace Wabbit.BotClient.Commands
                 // If seed is not 0, add the new seed
                 if (seed > 0)
                 {
-                    var participantSeed = new ParticipantSeed
-                    {
-                        Player = player,
-                        PlayerId = player.Id,
-                        Seed = seed
-                    };
+                    var participantSeed = new ParticipantSeed();
+                    participantSeed.SetPlayer(player);
+                    participantSeed.Seed = seed;
                     signup.Seeds.Add(participantSeed);
                 }
 
@@ -1392,7 +1389,9 @@ namespace Wabbit.BotClient.Commands
                 foreach (var p in sortedParticipants)
                 {
                     string seedDisplay = p.Seed > 0 ? $" [Seed #{p.Seed}]" : "";
-                    participantsList.Add($"• {p.Player.Mention}{seedDisplay}");
+                    // Always use explicit mention format for consistency
+                    string mention = $"<@{p.Player.Id}>";
+                    participantsList.Add($"• {mention}{seedDisplay}");
                 }
 
                 string participantsText = string.Join("\n", participantsList);
@@ -1652,6 +1651,76 @@ namespace Wabbit.BotClient.Commands
                 // Instead of creating all threads at once, we'll only create the first round of matches
                 var matches = new List<(DiscordMember, DiscordMember)>();
 
+                // First, we need to explicitly convert all players to DiscordMember
+                foreach (var participant in group.Participants)
+                {
+                    if (participant.Player != null)
+                    {
+                        // Get the player ID
+                        ulong? playerId = null;
+                        if (participant.Player is DiscordMember member)
+                        {
+                            playerId = member.Id;
+                        }
+                        else
+                        {
+                            // Try to get ID using reflection or ToString parsing
+                            var playerObj = participant.Player;
+                            var idProperty = playerObj.GetType().GetProperty("Id");
+                            if (idProperty != null)
+                            {
+                                var idValue = idProperty.GetValue(playerObj);
+                                if (idValue != null && ulong.TryParse(idValue.ToString(), out ulong id))
+                                {
+                                    playerId = id;
+                                }
+                            }
+                            else
+                            {
+                                // Parse from string representation as last resort
+                                string playerString = playerObj.ToString() ?? "";
+                                var idMatch = System.Text.RegularExpressions.Regex.Match(playerString, @"Id\s*=\s*(\d+)");
+                                if (idMatch.Success && ulong.TryParse(idMatch.Groups[1].Value, out ulong id))
+                                {
+                                    playerId = id;
+                                }
+                            }
+                        }
+
+                        // If we have a valid ID, fetch the DiscordMember
+                        if (playerId.HasValue)
+                        {
+                            try
+                            {
+                                // Find all guilds this client is in
+                                foreach (var guild in client.Guilds.Values)
+                                {
+                                    try
+                                    {
+                                        var memberObj = await guild.GetMemberAsync(playerId.Value);
+                                        if (memberObj is not null)
+                                        {
+                                            // Successfully found the member, update the object
+                                            participant.Player = memberObj;
+                                            break;
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        // Member not in this guild, continue to next
+                                        continue;
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Failed to convert player ID {playerId} to DiscordMember: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+
+                // Now create the matches using the updated participant objects
                 foreach (var p1 in group.Participants)
                 {
                     foreach (var p2 in group.Participants)
@@ -1672,6 +1741,10 @@ namespace Wabbit.BotClient.Commands
                         if (member1 is not null && member2 is not null)
                         {
                             matches.Add((member1, member2));
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Warning: Failed to convert players to DiscordMember: {p1.Player?.ToString() ?? "null"} vs {p2.Player?.ToString() ?? "null"}");
                         }
                     }
                 }
@@ -1705,6 +1778,9 @@ namespace Wabbit.BotClient.Commands
 
             // Update tournament state
             await _tournamentManager.SaveTournamentState(client);
+
+            // Post the tournament visualization after matches are created
+            await _tournamentManager.PostTournamentVisualization(tournament, client);
         }
 
         private async Task CreateAndStart1v1Match(Tournament tournament, Tournament.Group group, DiscordMember player1, DiscordMember player2, DiscordClient client, int matchLength)

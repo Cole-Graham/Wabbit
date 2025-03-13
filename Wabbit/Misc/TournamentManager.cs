@@ -231,165 +231,140 @@ namespace Wabbit.Misc
                                         signup.IsOpen = isOpenElem.GetBoolean();
                                     }
 
-                                    // Try to extract Format (string)
-                                    if (element.TryGetProperty("Format", out var formatElem) && formatElem.ValueKind == JsonValueKind.String)
+                                    // Try to extract Format (enum as number or string)
+                                    if (element.TryGetProperty("Format", out var formatElem))
                                     {
-                                        string formatStr = formatElem.GetString() ?? "GroupStageWithPlayoffs";
-                                        if (Enum.TryParse<TournamentFormat>(formatStr, out var format))
+                                        if (formatElem.ValueKind == JsonValueKind.Number)
                                         {
-                                            signup.Format = format;
+                                            int formatValue = formatElem.GetInt32();
+                                            if (Enum.IsDefined(typeof(TournamentFormat), formatValue))
+                                            {
+                                                signup.Format = (TournamentFormat)formatValue;
+                                            }
+                                        }
+                                        else if (formatElem.ValueKind == JsonValueKind.String)
+                                        {
+                                            if (Enum.TryParse<TournamentFormat>(formatElem.GetString(), out var format))
+                                            {
+                                                signup.Format = format;
+                                            }
                                         }
                                     }
 
-                                    // Try to extract CreatedAt (datetime)
-                                    if (element.TryGetProperty("CreatedAt", out var createdAtElem) &&
-                                        (createdAtElem.ValueKind == JsonValueKind.String || createdAtElem.ValueKind == JsonValueKind.Number))
+                                    // Try to extract Type (GameType enum as number or string)
+                                    if (element.TryGetProperty("Type", out var typeElem))
                                     {
-                                        try
+                                        if (typeElem.ValueKind == JsonValueKind.Number)
                                         {
-                                            signup.CreatedAt = createdAtElem.GetDateTime();
+                                            int typeValue = typeElem.GetInt32();
+                                            if (Enum.IsDefined(typeof(GameType), typeValue))
+                                            {
+                                                signup.Type = (GameType)typeValue;
+                                            }
                                         }
-                                        catch
+                                        else if (typeElem.ValueKind == JsonValueKind.String)
                                         {
-                                            // Use default if parsing fails
-                                            Console.WriteLine($"Failed to parse CreatedAt for signup '{signup.Name}'");
+                                            if (Enum.TryParse<GameType>(typeElem.GetString(), out var gameType))
+                                            {
+                                                signup.Type = gameType;
+                                            }
                                         }
                                     }
 
-                                    // Try to extract ScheduledStartTime (datetime)
-                                    if (element.TryGetProperty("ScheduledStartTime", out var startTimeElem) &&
-                                        startTimeElem.ValueKind != JsonValueKind.Null &&
-                                        (startTimeElem.ValueKind == JsonValueKind.String || startTimeElem.ValueKind == JsonValueKind.Number))
+                                    // Try to extract CreatedAt (DateTime)
+                                    if (element.TryGetProperty("CreatedAt", out var createdAtElem) && createdAtElem.ValueKind == JsonValueKind.String)
                                     {
-                                        try
+                                        if (DateTime.TryParse(createdAtElem.GetString(), out var createdAt))
                                         {
-                                            signup.ScheduledStartTime = startTimeElem.GetDateTime();
+                                            signup.CreatedAt = createdAt;
                                         }
-                                        catch
+                                    }
+
+                                    // Try to extract ScheduledStartTime (DateTime)
+                                    if (element.TryGetProperty("ScheduledStartTime", out var scheduledStartTimeElem) && scheduledStartTimeElem.ValueKind == JsonValueKind.String)
+                                    {
+                                        if (DateTime.TryParse(scheduledStartTimeElem.GetString(), out var scheduledStartTime))
                                         {
-                                            // Leave as null if parsing fails
-                                            Console.WriteLine($"Failed to parse ScheduledStartTime for signup '{signup.Name}'");
+                                            signup.ScheduledStartTime = scheduledStartTime;
                                         }
                                     }
 
                                     // Try to extract SignupChannelId (ulong)
-                                    if (element.TryGetProperty("SignupChannelId", out var channelIdElem))
+                                    if (element.TryGetProperty("SignupChannelId", out var signupChannelIdElem) && signupChannelIdElem.ValueKind == JsonValueKind.Number)
                                     {
-                                        try
-                                        {
-                                            if (channelIdElem.ValueKind == JsonValueKind.Number)
-                                            {
-                                                signup.SignupChannelId = channelIdElem.GetUInt64();
-                                            }
-                                            else if (channelIdElem.ValueKind == JsonValueKind.String)
-                                            {
-                                                string channelIdStr = channelIdElem.GetString() ?? "0";
-                                                if (ulong.TryParse(channelIdStr, out ulong channelId))
-                                                {
-                                                    signup.SignupChannelId = channelId;
-                                                }
-                                            }
-                                        }
-                                        catch
-                                        {
-                                            Console.WriteLine($"Failed to parse SignupChannelId for signup '{signup.Name}'");
-                                        }
+                                        signup.SignupChannelId = signupChannelIdElem.GetUInt64();
                                     }
 
                                     // Try to extract MessageId (ulong)
-                                    if (element.TryGetProperty("MessageId", out var messageIdElem))
+                                    if (element.TryGetProperty("MessageId", out var messageIdElem) && messageIdElem.ValueKind == JsonValueKind.Number)
                                     {
-                                        try
-                                        {
-                                            if (messageIdElem.ValueKind == JsonValueKind.Number)
-                                            {
-                                                signup.MessageId = messageIdElem.GetUInt64();
-                                            }
-                                            else if (messageIdElem.ValueKind == JsonValueKind.String)
-                                            {
-                                                string messageIdStr = messageIdElem.GetString() ?? "0";
-                                                if (ulong.TryParse(messageIdStr, out ulong messageId))
-                                                {
-                                                    signup.MessageId = messageId;
-                                                }
-                                            }
-                                        }
-                                        catch
-                                        {
-                                            Console.WriteLine($"Failed to parse MessageId for signup '{signup.Name}'");
-                                        }
+                                        signup.MessageId = messageIdElem.GetUInt64();
                                     }
 
-                                    // Try to extract Creator info
-                                    if (element.TryGetProperty("CreatedById", out var createdByIdElem))
+                                    // Try to extract CreatedById/CreatorId (ulong)
+                                    if (element.TryGetProperty("CreatedById", out var createdByIdElem) && createdByIdElem.ValueKind == JsonValueKind.Number)
                                     {
-                                        try
-                                        {
-                                            if (createdByIdElem.ValueKind == JsonValueKind.Number)
-                                            {
-                                                signup.CreatorId = createdByIdElem.GetUInt64();
-                                            }
-                                            else if (createdByIdElem.ValueKind == JsonValueKind.String)
-                                            {
-                                                string creatorIdStr = createdByIdElem.GetString() ?? "0";
-                                                if (ulong.TryParse(creatorIdStr, out ulong creatorId))
-                                                {
-                                                    signup.CreatorId = creatorId;
-                                                }
-                                            }
-                                        }
-                                        catch
-                                        {
-                                            Console.WriteLine($"Failed to parse CreatedById for signup '{signup.Name}'");
-                                        }
+                                        signup.CreatorId = createdByIdElem.GetUInt64();
                                     }
 
-                                    if (element.TryGetProperty("CreatedByUsername", out var createdByUsernameElem) &&
-                                        createdByUsernameElem.ValueKind == JsonValueKind.String)
+                                    // Try to extract CreatedByUsername/CreatorUsername (string)
+                                    if (element.TryGetProperty("CreatedByUsername", out var createdByUsernameElem) && createdByUsernameElem.ValueKind == JsonValueKind.String)
                                     {
-                                        signup.CreatorUsername = createdByUsernameElem.GetString() ?? "Unknown";
+                                        signup.CreatorUsername = createdByUsernameElem.GetString() ?? string.Empty;
                                     }
 
-                                    // Handle participants - use normal arrays now
-                                    if (element.TryGetProperty("Participants", out var participantsElement) &&
-                                        participantsElement.ValueKind == JsonValueKind.Array)
+                                    // Try to extract RelatedMessages (array of objects)
+                                    if (element.TryGetProperty("RelatedMessages", out var relatedMessagesElem) && relatedMessagesElem.ValueKind == JsonValueKind.Array)
                                     {
-                                        // Create a list to store participant info until we can convert them to DiscordMembers
-                                        var participantInfos = new List<(ulong Id, string Username)>();
-
-                                        foreach (var participant in participantsElement.EnumerateArray())
+                                        foreach (var messageElem in relatedMessagesElem.EnumerateArray())
                                         {
                                             try
                                             {
-                                                ulong id = 0;
-                                                string username = "Unknown";
+                                                var relatedMessage = new RelatedMessage();
 
-                                                // Get ID - can be number or string
-                                                if (participant.TryGetProperty("Id", out var idElement))
+                                                if (messageElem.TryGetProperty("ChannelId", out var channelIdElem) && channelIdElem.ValueKind == JsonValueKind.Number)
                                                 {
-                                                    if (idElement.ValueKind == JsonValueKind.Number)
-                                                    {
-                                                        id = idElement.GetUInt64();
-                                                    }
-                                                    else if (idElement.ValueKind == JsonValueKind.String)
-                                                    {
-                                                        string idStr = idElement.GetString() ?? "0";
-                                                        if (!ulong.TryParse(idStr, out id))
-                                                        {
-                                                            Console.WriteLine($"Failed to parse participant ID '{idStr}' for signup '{signup.Name}'");
-                                                        }
-                                                    }
+                                                    relatedMessage.ChannelId = channelIdElem.GetUInt64();
                                                 }
 
-                                                // Get Username - should be string
-                                                if (participant.TryGetProperty("Username", out var usernameElement) &&
-                                                    usernameElement.ValueKind == JsonValueKind.String)
+                                                if (messageElem.TryGetProperty("MessageId", out var relatedMessageIdElem) && relatedMessageIdElem.ValueKind == JsonValueKind.Number)
                                                 {
-                                                    username = usernameElement.GetString() ?? "Unknown";
+                                                    relatedMessage.MessageId = relatedMessageIdElem.GetUInt64();
                                                 }
 
-                                                if (id > 0)
+                                                if (messageElem.TryGetProperty("Type", out var relatedMessageTypeElem) && relatedMessageTypeElem.ValueKind == JsonValueKind.String)
                                                 {
+                                                    relatedMessage.Type = relatedMessageTypeElem.GetString() ?? "Announcement";
+                                                }
+
+                                                signup.RelatedMessages.Add(relatedMessage);
+                                            }
+                                            catch (Exception msgEx)
+                                            {
+                                                Console.WriteLine($"Error parsing related message: {msgEx.Message}");
+                                            }
+                                        }
+                                    }
+
+                                    // Try to extract Participants (array of objects)
+                                    if (element.TryGetProperty("Participants", out var participantsElem) && participantsElem.ValueKind == JsonValueKind.Array)
+                                    {
+                                        var participantInfos = new List<(ulong Id, string Username)>();
+
+                                        foreach (var partElem in participantsElem.EnumerateArray())
+                                        {
+                                            try
+                                            {
+                                                if (partElem.TryGetProperty("Id", out var idElem) && idElem.ValueKind == JsonValueKind.Number)
+                                                {
+                                                    ulong id = idElem.GetUInt64();
+                                                    string username = "Unknown";
+
+                                                    if (partElem.TryGetProperty("Username", out var usernameElem) && usernameElem.ValueKind == JsonValueKind.String)
+                                                    {
+                                                        username = usernameElem.GetString() ?? "Unknown";
+                                                    }
+
                                                     participantInfos.Add((id, username));
                                                 }
                                             }
@@ -402,6 +377,53 @@ namespace Wabbit.Misc
                                         // Store the participant info for later conversion
                                         signup.ParticipantInfo = participantInfos;
                                         Console.WriteLine($"Loaded {participantInfos.Count} participant infos for signup '{signup.Name}'");
+                                    }
+
+                                    // Try to extract Seeds (array of tuples or objects)
+                                    if (element.TryGetProperty("Seeds", out var seedsElem) && seedsElem.ValueKind == JsonValueKind.Array)
+                                    {
+                                        var seedInfoList = new List<(ulong Id, int Seed)>();
+
+                                        foreach (var seedElem in seedsElem.EnumerateArray())
+                                        {
+                                            try
+                                            {
+                                                // Handle both array of objects with Item1/Item2 and array of objects with PlayerId/Seed
+                                                if (seedElem.ValueKind == JsonValueKind.Object)
+                                                {
+                                                    ulong playerId = 0;
+                                                    int seedValue = 0;
+
+                                                    // Try the regular property names first
+                                                    if (seedElem.TryGetProperty("PlayerId", out var playerIdElem) && playerIdElem.ValueKind == JsonValueKind.Number)
+                                                    {
+                                                        playerId = playerIdElem.GetUInt64();
+                                                    }
+                                                    else if (seedElem.TryGetProperty("Id", out var idElem) && idElem.ValueKind == JsonValueKind.Number)
+                                                    {
+                                                        playerId = idElem.GetUInt64();
+                                                    }
+
+                                                    if (seedElem.TryGetProperty("Seed", out var seedValueElem) && seedValueElem.ValueKind == JsonValueKind.Number)
+                                                    {
+                                                        seedValue = seedValueElem.GetInt32();
+                                                    }
+
+                                                    if (playerId != 0 && seedValue > 0)
+                                                    {
+                                                        seedInfoList.Add((playerId, seedValue));
+                                                    }
+                                                }
+                                            }
+                                            catch (Exception seedEx)
+                                            {
+                                                Console.WriteLine($"Error parsing seed: {seedEx.Message}");
+                                            }
+                                        }
+
+                                        // Store the seed info for later conversion
+                                        signup.SeedInfo = seedInfoList;
+                                        Console.WriteLine($"Loaded {seedInfoList.Count} seed infos for signup '{signup.Name}'");
                                     }
 
                                     signups.Add(signup);
@@ -691,27 +713,32 @@ namespace Wabbit.Misc
                     }).ToList();
 
                     // Prepare seed information for serialization
-                    var seedList = new List<(ulong Id, int Seed)>();
+                    var seedList = new List<object>();
                     if (signup.Seeds != null && signup.Seeds.Any())
                     {
                         foreach (var seed in signup.Seeds)
                         {
+                            // Only include valid seeds with both player ID and seed value
                             ulong playerId = seed.PlayerId != 0 ? seed.PlayerId : seed.Player?.Id ?? 0;
-                            if (playerId != 0)
+                            if (playerId != 0 && seed.Seed > 0)
                             {
-                                seedList.Add((playerId, seed.Seed));
+                                seedList.Add(new
+                                {
+                                    PlayerId = playerId,
+                                    Seed = seed.Seed
+                                });
                             }
                         }
                     }
 
-                    // Create a simplified object for serialization
+                    // Create a simplified object for serialization with enum names instead of integer values
                     var signupData = new
                     {
                         signup.Name,
                         signup.IsOpen,
                         signup.CreatedAt,
-                        signup.Format,
-                        signup.Type,
+                        Format = signup.Format.ToString(),
+                        Type = signup.Type.ToString(),
                         signup.ScheduledStartTime,
                         signup.SignupChannelId,
                         signup.MessageId,
@@ -726,6 +753,19 @@ namespace Wabbit.Misc
 
                     // Update the participant info for when we load
                     signup.ParticipantInfo = participantsList.Select(p => (p.Id, p.Username)).ToList();
+
+                    // Update the seed info for when we load
+                    signup.SeedInfo = seedList.Count > 0
+                        ? seedList.Select(s =>
+                        {
+                            var prop = s.GetType().GetProperty("PlayerId");
+                            var seedProp = s.GetType().GetProperty("Seed");
+                            var playerId = prop?.GetValue(s);
+                            var seedValue = seedProp?.GetValue(s);
+                            return (playerId != null ? Convert.ToUInt64(playerId) : 0UL,
+                                   seedValue != null ? Convert.ToInt32(seedValue) : 0);
+                        }).ToList()
+                        : new List<(ulong Id, int Seed)>();
                 }
 
                 // Serialize the list directly
@@ -2811,10 +2851,11 @@ namespace Wabbit.Misc
                 if (signup.SeedInfo == null || !signup.SeedInfo.Any())
                 {
                     // No seed information to load
+                    Console.WriteLine($"No seed information found for signup '{signup.Name}'");
                     return;
                 }
 
-                Console.WriteLine($"Loading seed information for '{signup.Name}'...");
+                Console.WriteLine($"Loading seed information for '{signup.Name}'... ({signup.SeedInfo.Count} seeds found)");
                 int successCount = 0;
                 int failCount = 0;
 
@@ -2839,15 +2880,13 @@ namespace Wabbit.Misc
                         if (participant is not null)
                         {
                             // Create and add the seed information
-                            var participantSeed = new ParticipantSeed
-                            {
-                                Player = participant,
-                                PlayerId = id,
-                                Seed = seedValue
-                            };
+                            var participantSeed = new ParticipantSeed();
+                            participantSeed.SetPlayer(participant);
+                            participantSeed.Seed = seedValue;
 
                             signup.Seeds.Add(participantSeed);
                             successCount++;
+                            Console.WriteLine($"Loaded seed {seedValue} for participant {participant.Username} (ID: {id})");
                         }
                         else
                         {
