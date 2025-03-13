@@ -21,8 +21,7 @@ namespace Wabbit.BotClient.Commands
             [Description("Map name")] string mapName,
             [Description("Map ID")] string id,
             [Description("Size")][SlashChoiceProvider<MapSizeChoiceProvider>] string size,
-            [Description("Include into random map pool?")] bool inRandom,
-            [Description("Map image URL or local path (Data/images/maps/filename.png)")] string thumbnail = "")
+            [Description("Include into random map pool?")] bool inRandom)
         {
             await context.DeferResponseAsync();
 
@@ -37,18 +36,9 @@ namespace Wabbit.BotClient.Commands
                 Name = mapName,
                 Id = id,
                 Size = size,
-                IsInRandomPool = inRandom
+                IsInRandomPool = inRandom,
+                Thumbnail = "Data/images/maps/default.jpg"
             };
-
-            if (!string.IsNullOrEmpty(thumbnail))
-            {
-                // Check if it's a local path and not a URL
-                if (!thumbnail.StartsWith("http") && !File.Exists(thumbnail))
-                {
-                    await context.EditResponseAsync($"Warning: Local file path '{thumbnail}' does not exist. The map will be added, but the thumbnail may not display correctly.");
-                }
-                map.Thumbnail = thumbnail;
-            }
 
             if (Maps.MapCollection is null)
             {
@@ -59,7 +49,7 @@ namespace Wabbit.BotClient.Commands
             (bool saved, string? error) = await Maps.SaveMaps();
 
             if (saved == true)
-                await context.EditResponseAsync("Map has been added");
+                await context.EditResponseAsync("Map has been added with default thumbnail. Administrators can manually update the thumbnail in the Maps.json configuration file if needed.");
             else
             {
                 await context.EditResponseAsync($"Operation failed: {error}");

@@ -21,6 +21,9 @@ namespace Wabbit.Models
         // Related message IDs for deletion when tournament is removed
         public List<RelatedMessage> RelatedMessages { get; set; } = [];
 
+        // Custom properties for storing dynamic configuration
+        public Dictionary<string, object>? CustomProperties { get; set; }
+
         public class Group
         {
             public string Name { get; set; } = "";
@@ -44,6 +47,9 @@ namespace Wabbit.Models
             // For tiebreakers if needed
             public int GamesWon { get; set; } = 0;
             public int GamesLost { get; set; } = 0;
+
+            // Qualification information for visualization
+            public string? QualificationInfo { get; set; }
         }
 
         public class Match
@@ -102,9 +108,11 @@ namespace Wabbit.Models
     public enum MatchType
     {
         GroupStage,
+        PlayoffStage,
         Quarterfinal,
         Semifinal,
         Final,
-        ThirdPlace
+        ThirdPlace,
+        ThirdPlaceTiebreaker
     }
 }

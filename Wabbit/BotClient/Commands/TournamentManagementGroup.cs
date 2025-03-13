@@ -22,6 +22,7 @@ using System.Dynamic;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using MatchType = Wabbit.Models.MatchType;
+using System.Text;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -144,7 +145,126 @@ namespace Wabbit.BotClient.Commands
             }, "Failed to create tournament from signup");
         }
 
-        // New method to create tournament with seeding
+        // Replace the existing DetermineGroupCount method with a new implementation
+        private int DetermineGroupCount(int playerCount, TournamentFormat format)
+        {
+            // For non-group formats, return 1
+            if (format == TournamentFormat.SingleElimination || format == TournamentFormat.DoubleElimination)
+            {
+                return 1; // No groups for elimination formats
+            }
+            else if (format == TournamentFormat.RoundRobin)
+            {
+                return 1; // Single group for round robin
+            }
+            else // GroupStageWithPlayoffs
+            {
+                // Return group count according to the GroupStageFormat specifications
+                return playerCount switch
+                {
+                    < 7 => 1,    // Small tournaments: 1 group
+                    7 => 1,      // 1 group of 7
+                    8 => 2,      // 2 groups of 4
+                    9 => 3,      // 3 groups of 3
+                    10 => 2,     // 2 groups of 5
+                    11 => 3,     // 3 groups (4, 4, 3)
+                    12 => 3,     // 3 groups of 4
+                    13 => 3,     // 3 groups (4, 4, 5)
+                    14 => 2,     // 2 groups of 7
+                    15 => 3,     // 3 groups of 5
+                    16 => 4,     // 4 groups of 4
+                    17 => 3,     // 3 groups (6, 6, 5)
+                    18 => 3,     // 3 groups of 6
+                    _ => 4       // Large tournaments: use 4 groups
+                };
+            }
+        }
+
+        // Add new method to get the optimal group sizes for a tournament
+        private List<int> GetOptimalGroupSizes(int playerCount, int groupCount)
+        {
+            // Given the player count and group count, determine the optimal size for each group
+            List<int> groupSizes = new List<int>();
+
+            switch (playerCount)
+            {
+                case 7:
+                    groupSizes.Add(7); // 1 group of 7
+                    break;
+                case 8:
+                    groupSizes.Add(4); groupSizes.Add(4); // 2 groups of 4
+                    break;
+                case 9:
+                    groupSizes.Add(3); groupSizes.Add(3); groupSizes.Add(3); // 3 groups of 3
+                    break;
+                case 10:
+                    groupSizes.Add(5); groupSizes.Add(5); // 2 groups of 5
+                    break;
+                case 11:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(3); // 3 groups (4, 4, 3)
+                    break;
+                case 12:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); // 3 groups of 4
+                    break;
+                case 13:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(5); // 3 groups (4, 4, 5)
+                    break;
+                case 14:
+                    groupSizes.Add(7); groupSizes.Add(7); // 2 groups of 7
+                    break;
+                case 15:
+                    groupSizes.Add(5); groupSizes.Add(5); groupSizes.Add(5); // 3 groups of 5
+                    break;
+                case 16:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); // 4 groups of 4
+                    break;
+                case 17:
+                    groupSizes.Add(6); groupSizes.Add(6); groupSizes.Add(5); // 3 groups (6, 6, 5)
+                    break;
+                case 18:
+                    groupSizes.Add(6); groupSizes.Add(6); groupSizes.Add(6); // 3 groups of 6
+                    break;
+                default:
+                    // For player counts not explicitly defined, distribute players evenly
+                    int baseSize = playerCount / groupCount;
+                    int remainder = playerCount % groupCount;
+
+                    for (int i = 0; i < groupCount; i++)
+                    {
+                        // Give the first 'remainder' groups one extra player
+                        groupSizes.Add(baseSize + (i < remainder ? 1 : 0));
+                    }
+                    break;
+            }
+
+            return groupSizes;
+        }
+
+        // Add new method to determine advancement criteria based on player count and group count
+        private (int groupWinners, int bestThirdPlace) GetAdvancementCriteria(int playerCount, int groupCount)
+        {
+            // Return a tuple (groupWinners, bestThirdPlace) that specifies how many top players
+            // from each group advance, and how many best third-place players advance
+
+            return playerCount switch
+            {
+                7 => (4, 0),      // Top 4 advance to playoffs
+                8 => (2, 0),      // Top 2 from each group
+                9 => (2, 2),      // Top 2 from each group + 2 best third-place
+                10 => (2, 0),     // Top 2 from each group
+                11 => (2, 2),     // Top 2 from each group + 2 best third-place
+                12 => (2, 2),     // Top 2 from each group + 2 best third-place
+                13 => (2, 2),     // Top 2 from each group + 2 best third-place
+                14 => (4, 0),     // Top 4 from each group
+                15 => (2, 2),     // Top 2 from each group + 2 best third-place
+                16 => (2, 0),     // Top 2 from each group
+                17 => (2, 2),     // Top 2 from each group + 2 best third-place
+                18 => (2, 2),     // Top 2 from each group + 2 best third-place
+                _ => groupCount < 3 ? (2, 0) : (2, 2) // Default based on group count
+            };
+        }
+
+        // Modify the CreateTournamentWithSeeding method to use these new functions
         private async Task<Tournament> CreateTournamentWithSeeding(TournamentSignup signup, DiscordChannel channel)
         {
             // Create initial tournament structure
@@ -161,7 +281,20 @@ namespace Wabbit.BotClient.Commands
             int playerCount = signup.Participants.Count;
             int groupCount = DetermineGroupCount(playerCount, signup.Format);
 
-            // Create the groups
+            // Get optimal group sizes
+            List<int> groupSizes = GetOptimalGroupSizes(playerCount, groupCount);
+
+            // Get advancement criteria
+            var advancementCriteria = GetAdvancementCriteria(playerCount, groupCount);
+
+            // Store advancement criteria in tournament's custom properties
+            if (tournament.CustomProperties == null)
+                tournament.CustomProperties = new Dictionary<string, object>();
+
+            tournament.CustomProperties["GroupWinnersAdvance"] = advancementCriteria.groupWinners;
+            tournament.CustomProperties["BestThirdPlaceAdvance"] = advancementCriteria.bestThirdPlace;
+
+            // Create the groups with the determined sizes
             for (int i = 0; i < groupCount; i++)
             {
                 var group = new Tournament.Group { Name = $"Group {(char)('A' + i)}" };
@@ -181,7 +314,6 @@ namespace Wabbit.BotClient.Commands
                 .ToList();
 
             // Distribute seeded players first using snake draft
-            // (1st seed to Group A, 2nd to Group B, ..., last group to last+1, last group-1 to last+2, etc.)
             bool reverseDirection = false;
             int currentGroup = 0;
 
@@ -220,17 +352,26 @@ namespace Wabbit.BotClient.Commands
                 }
             }
 
-            // Distribute remaining unseeded players evenly
+            // Distribute remaining unseeded players according to the optimal group sizes
             for (int i = 0; i < unseededPlayers.Count; i++)
             {
-                // Find the group with the fewest players
-                var group = tournament.Groups.OrderBy(g => g.Participants.Count).First();
+                // Find the group that needs more players (has fewer than its target size)
+                var groupsToFill = tournament.Groups
+                    .Select((g, index) => new { Group = g, TargetSize = groupSizes[index] })
+                    .Where(g => g.Group.Participants.Count < g.TargetSize)
+                    .OrderBy(g => g.Group.Participants.Count) // Fill smallest groups first for balance
+                    .ToList();
+
+                if (!groupsToFill.Any())
+                    break; // All groups are filled to their target sizes
+
+                var groupToFill = groupsToFill.First().Group;
 
                 // Get any potential seed value (should be 0 in most cases, but checking just in case)
                 int seedValue = signup.Seeds
                     .FirstOrDefault(s => s.Player == unseededPlayers[i] || (s.Player?.Id == unseededPlayers[i].Id))?.Seed ?? 0;
 
-                group.Participants.Add(new Tournament.GroupParticipant
+                groupToFill.Participants.Add(new Tournament.GroupParticipant
                 {
                     Player = unseededPlayers[i],
                     Seed = seedValue  // Transfer any seed value that might exist
@@ -265,6 +406,11 @@ namespace Wabbit.BotClient.Commands
 
             // Save state
             await _tournamentManager.SaveAllData();
+
+            // Log creation details for debugging
+            var participantCounts = string.Join(", ", tournament.Groups.Select(g => g.Participants.Count));
+            _logger.LogInformation($"Created tournament with {groupCount} groups. Group sizes: {participantCounts}");
+            _logger.LogInformation($"Advancement criteria: Top {advancementCriteria.groupWinners} from each group + {advancementCriteria.bestThirdPlace} best third-place players");
 
             return tournament;
         }
@@ -1117,29 +1263,6 @@ namespace Wabbit.BotClient.Commands
             }, "Failed to set tournament seed");
         }
 
-        // Add the DetermineGroupCount method
-        private int DetermineGroupCount(int playerCount, TournamentFormat format)
-        {
-            // Based on the player count and format, determine how many groups to create
-            if (format == TournamentFormat.SingleElimination || format == TournamentFormat.DoubleElimination)
-            {
-                return 1; // No groups for elimination formats
-            }
-            else if (format == TournamentFormat.RoundRobin)
-            {
-                return 1; // Single group for round robin
-            }
-            else // GroupStageWithPlayoffs
-            {
-                if (playerCount < 9)
-                    return 2;
-                else if (playerCount < 17)
-                    return 4;
-                else
-                    return 8;
-            }
-        }
-
         private ulong? GetSignupChannelId(CommandContext context)
         {
             if (ConfigManager.Config?.Servers == null) return null;
@@ -1192,24 +1315,47 @@ namespace Wabbit.BotClient.Commands
             // Add participants field
             if (sortedParticipants.Any())
             {
-                var participantsList = new List<string>();
-                foreach (var p in sortedParticipants)
+                StringBuilder participantsText = new StringBuilder();
+                int totalParticipants = sortedParticipants.Count;
+
+                // Calculate the number of rows needed
+                int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
+
+                for (int i = 0; i < rowsNeeded; i++)
                 {
-                    string seedDisplay = p.Seed > 0 ? $" [Seed #{p.Seed}]" : "";
-                    // Always use explicit mention format for consistency
-                    string mention = $"<@{p.Player.Id}>";
-                    participantsList.Add($"• {mention}{seedDisplay}");
+                    // Left column
+                    int leftIndex = i * 2;
+                    if (leftIndex < totalParticipants)
+                    {
+                        var leftPlayer = sortedParticipants[leftIndex];
+                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
+                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
+
+                        // Add padding between columns
+                        participantsText.Append("    ");
+
+                        // Right column
+                        int rightIndex = leftIndex + 1;
+                        if (rightIndex < totalParticipants)
+                        {
+                            var rightPlayer = sortedParticipants[rightIndex];
+                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
+                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
+                        }
+
+                        participantsText.AppendLine();
+                    }
                 }
 
-                string participantsText = string.Join("\n", participantsList);
+                string finalText = participantsText.ToString();
 
                 // If the text is too long, truncate it
-                if (participantsText.Length > 1024)
+                if (finalText.Length > 1024)
                 {
-                    participantsText = participantsText.Substring(0, 1020) + "...";
+                    finalText = finalText.Substring(0, 1020) + "...";
                 }
 
-                embedBuilder.AddField($"Participants ({sortedParticipants.Count})", participantsText);
+                embedBuilder.AddField($"Participants ({sortedParticipants.Count})", finalText);
             }
             else
             {
@@ -1691,7 +1837,7 @@ namespace Wabbit.BotClient.Commands
 
         private async Task CreateAndStart1v1Match(
             Tournament tournament,
-            Tournament.Group group,
+            Tournament.Group? group,
             DiscordMember player1,
             DiscordMember player2,
             DiscordClient client,
@@ -1702,6 +1848,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Find or create a channel to use for the match
+                // BotChannelId is used as AnnouncementChannel, but maybe add an option to configure an AnnouncementChannelId in the server config file.
                 DiscordChannel? channel = tournament.AnnouncementChannel;
                 Console.WriteLine($"Initial channel: {(channel is not null ? $"{channel.Name} (ID: {channel.Id})" : "null")}");
 
@@ -1775,8 +1922,8 @@ namespace Wabbit.BotClient.Commands
                     };
 
                     // Add match to the group
-                    group.Matches.Add(match);
-                    Console.WriteLine($"Added match to group {group.Name}");
+                    group?.Matches.Add(match);
+                    Console.WriteLine($"Added match to group {group?.Name}");
                 }
                 else
                 {
@@ -1851,13 +1998,6 @@ namespace Wabbit.BotClient.Commands
                     await thread2.AddThreadMemberAsync(player2);
 
                     Console.WriteLine("Successfully added players to their respective threads");
-
-                    // Add tournament admins/staff to both threads if needed
-                    if (player1.Guild is not null)
-                    {
-                        await AddStaffToThread(player1.Guild, thread1);
-                        await AddStaffToThread(player1.Guild, thread2);
-                    }
                 }
                 catch (Exception threadEx)
                 {
@@ -2028,7 +2168,7 @@ namespace Wabbit.BotClient.Commands
                 {
                     var embed = new DiscordEmbedBuilder()
                         .WithTitle($"🎮 Match Started: {player1.DisplayName} vs {player2.DisplayName}")
-                        .WithDescription($"A new Bo{matchLength} match has started in Group {group.Name}.")
+                        .WithDescription($"A new Bo{matchLength} match has started in Group {group?.Name}.")
                         .AddField("Players", $"{player1.Mention} vs {player2.Mention}", false)
                         .WithColor(DiscordColor.Blue)
                         .WithTimestamp(DateTime.Now);
@@ -2050,7 +2190,7 @@ namespace Wabbit.BotClient.Commands
                 Console.WriteLine("Saving tournament state");
                 await _tournamentManager.SaveTournamentState(client);
 
-                Console.WriteLine($"Successfully started match {match.Name} in Group {group.Name}");
+                Console.WriteLine($"Successfully started match {match.Name} in Group {group?.Name}");
             }
             catch (Exception ex)
             {
@@ -2059,166 +2199,197 @@ namespace Wabbit.BotClient.Commands
             }
         }
 
-        /// <summary>
-        /// Adds all admins and moderators from the server to the thread
-        /// </summary>
-        private async Task AddStaffToThread(DiscordGuild guild, DiscordThreadChannel thread)
-        {
-            if (guild is null || thread is null)
-                return;
-
-            try
-            {
-                // Get all members with their roles
-                var membersAsync = guild.GetAllMembersAsync();
-                var members = new List<DiscordMember>();
-
-                // Manually collect members from the async enumerable
-                await foreach (var member in membersAsync)
-                {
-                    members.Add(member);
-                }
-
-                // Filter for members with admin or moderator roles
-                foreach (var member in members)
-                {
-                    // Check for admin/mod role names
-                    bool hasStaffRole = member.Roles.Any(r =>
-                        r.Name.Contains("Admin", StringComparison.OrdinalIgnoreCase) ||
-                        r.Name.Contains("Mod", StringComparison.OrdinalIgnoreCase) ||
-                        r.Name.Contains("Staff", StringComparison.OrdinalIgnoreCase) ||
-                        r.Name.Contains("Owner", StringComparison.OrdinalIgnoreCase));
-
-                    if (hasStaffRole)
-                    {
-                        try
-                        {
-                            await thread.AddThreadMemberAsync(member);
-                            Console.WriteLine($"Added staff member {member.Username} to thread {thread.Name}");
-                        }
-                        catch (Exception ex)
-                        {
-                            // Log but continue if we can't add a specific member
-                            Console.WriteLine($"Failed to add staff member {member.Username} to thread: {ex.Message}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error adding staff to thread: {ex.Message}");
-            }
-        }
-
         // New method to handle match completion and schedule next matches as needed
         public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
         {
-            if (tournament == null || match == null || !match.IsComplete)
-                return;
-
             try
             {
-                // Find the group this match belongs to
-                var group = tournament.Groups.FirstOrDefault(g => g.Matches.Contains(match));
-                if (group == null)
-                    return; // Not a group stage match
-
-                // Check if the group is complete after this match
-                _tournamentManager.UpdateTournamentFromRound(tournament);
-
-                // If the group isn't complete, schedule new matches for these players if needed
-                if (!group.IsComplete)
+                // Check if this is a tiebreaker match
+                if (match.Type == MatchType.ThirdPlaceTiebreaker && tournament.CustomProperties != null &&
+                    tournament.CustomProperties.ContainsKey("NeedsTiebreakerMatches") &&
+                    tournament.CustomProperties.ContainsKey("TiebreakerMatches"))
                 {
-                    foreach (var participant in match.Participants)
+                    _logger.LogInformation($"Tiebreaker match completed: {match.Name}");
+
+                    // Check if all tiebreaker matches are complete
+                    var allTiebreakerMatchesComplete = true;
+
+                    if (tournament.CustomProperties["TiebreakerMatches"] is List<Tournament.Match> tiebreakerMatches)
                     {
-                        if (participant?.Player is not DiscordMember player)
-                            continue;
-
-                        // Find all participants this player hasn't played against yet
-                        var opponentsToPlay = group.Participants
-                            .Where(p => p.Player is DiscordMember && p.Player != participant.Player)
-                            .Select(p => p.Player as DiscordMember)
-                            .Where(opponent => opponent is not null && !group.Matches.Any(m =>
-                                m.Participants.Count == 2 &&
-                                m.Participants.Any(mp => mp.Player is DiscordMember playerMember && playerMember.Id == player.Id) &&
-                                m.Participants.Any(mp => mp.Player is DiscordMember opponentMember && opponentMember.Id == opponent.Id)))
-                            .ToList();
-
-                        // If this player has opponents they haven't played, create one new match
-                        if (opponentsToPlay.Any())
+                        foreach (var tiebreakerMatch in tiebreakerMatches)
                         {
-                            // Schedule only one new match for this player
-                            var opponent = opponentsToPlay.First();
-
-                            // Guard against null opponent (shouldn't happen due to filtering, but compiler doesn't know that)
-                            if (opponent is null)
+                            if (!tiebreakerMatch.IsComplete)
                             {
-                                _logger.LogError("Opponent was null when attempting to create a match. Skipping.");
-                                continue;
+                                allTiebreakerMatchesComplete = false;
+                                break;
                             }
+                        }
 
-                            // Check if this match is already being created by the other player's loop
-                            var key = new[] { player.Id, opponent.Id }.OrderBy(id => id).ToArray();
-                            var matchKey = $"{key[0]}_{key[1]}";
+                        if (allTiebreakerMatchesComplete)
+                        {
+                            _logger.LogInformation("All tiebreaker matches are complete. Resolving third-place qualification.");
 
-                            // Use a simple locking mechanism to avoid duplicate match creation
-                            if (!_processingMatches.Contains(matchKey))
+                            // Get the tied participants and available spots
+                            if (tournament.CustomProperties["TiedParticipants"] is List<Tournament.GroupParticipant> tiedParticipants &&
+                                tournament.CustomProperties["BestThirdPlaceSpots"] is int availableSpots)
                             {
-                                try
-                                {
-                                    _processingMatches.Add(matchKey);
+                                // Calculate points from tiebreaker matches
+                                Dictionary<object, int> tiebreakerPoints = new Dictionary<object, int>();
 
-                                    // First close the current match thread if it exists
-                                    if (match.LinkedRound?.Teams != null)
+                                foreach (var tiebreakerMatch in tiebreakerMatches)
+                                {
+                                    if (tiebreakerMatch.Result?.Winner != null)
                                     {
-                                        foreach (var team in match.LinkedRound.Teams)
-                                        {
-                                            if (team.Thread is not null)
-                                            {
-                                                try
-                                                {
-                                                    await team.Thread.ModifyAsync(t =>
-                                                    {
-                                                        t.IsArchived = true;
-                                                        t.Locked = true;
-                                                    });
-                                                }
-                                                catch
-                                                {
-                                                    // Thread might already be deleted or archived
-                                                }
-                                            }
-                                        }
+                                        // Award 3 points for a win in the tiebreaker match
+                                        if (!tiebreakerPoints.ContainsKey(tiebreakerMatch.Result.Winner))
+                                            tiebreakerPoints[tiebreakerMatch.Result.Winner] = 0;
+
+                                        tiebreakerPoints[tiebreakerMatch.Result.Winner] += 3;
                                     }
-
-                                    // Create a new match
-                                    _logger.LogInformation($"Creating new match for {player.DisplayName} vs {opponent.DisplayName} in group {group.Name}");
-                                    await CreateAndStart1v1Match(tournament, group, player, opponent, client, 3);
                                 }
-                                finally
+
+                                // Rank tied participants by tiebreaker points
+                                var resolvedParticipants = tiedParticipants
+                                    .OrderByDescending(p =>
+                                        p.Player is not null && tiebreakerPoints.ContainsKey(p.Player) ? tiebreakerPoints[p.Player] : 0)
+                                    .ToList();
+
+                                // Select the top participants for promotion
+                                var qualifyingParticipants = resolvedParticipants.Take(availableSpots).ToList();
+
+                                // Mark qualifying participants as advanced
+                                foreach (var participant in qualifyingParticipants)
                                 {
-                                    _processingMatches.Remove(matchKey);
-                                }
-                            }
+                                    participant.AdvancedToPlayoffs = true;
+                                    participant.QualificationInfo = "Best Third Place (Tiebreaker)";
 
-                            // Only schedule one new match per player to avoid flooding
-                            break;
+                                    _logger.LogInformation($"Player {GetPlayerDisplayName(participant.Player)} qualified after tiebreakers");
+                                }
+
+                                // Clean up tiebreaker-related properties
+                                tournament.CustomProperties.Remove("NeedsTiebreakerMatches");
+                                tournament.CustomProperties.Remove("TiebreakerMatches");
+                                tournament.CustomProperties.Remove("TiedParticipants");
+                                tournament.CustomProperties.Remove("BestThirdPlaceSpots");
+                                tournament.CustomProperties.Remove("TiebreakerPlayersCount");
+
+                                // Now we can proceed with playoff setup
+                                _logger.LogInformation("Tiebreaker resolution complete. Setting up playoffs.");
+                                tournament.CurrentStage = TournamentStage.Playoffs;
+
+                                await _tournamentManager.SaveTournamentState(client);
+                                await StartPlayoffMatches(tournament, client);
+                                return;
+                            }
                         }
                     }
                 }
-                // If group is complete, check if all groups are complete to set up playoffs
-                else if (tournament.Groups.All(g => g.IsComplete) && tournament.CurrentStage == TournamentStage.Groups)
+
+                // Original code for handling regular match completion
+                if (match.LinkedRound is not null && match.Result is not null)
                 {
-                    // Set up playoffs
-                    _tournamentManager.SetupPlayoffs(tournament);
+                    // Find the group this match belongs to
+                    var group = tournament.Groups.FirstOrDefault(g => g.Matches.Contains(match));
+                    if (group == null)
+                        return; // Not a group stage match
 
-                    // Post updated standings
-                    await _tournamentManager.PostTournamentVisualization(tournament, client);
+                    // Check if the group is complete after this match
+                    _tournamentManager.UpdateTournamentFromRound(tournament);
 
-                    // Start playoff matches if we're ready
-                    if (tournament.CurrentStage == TournamentStage.Playoffs)
+                    // If the group isn't complete, schedule new matches for these players if needed
+                    if (!group.IsComplete)
                     {
-                        await StartPlayoffMatches(tournament, client);
+                        foreach (var participant in match.Participants)
+                        {
+                            if (participant?.Player is not DiscordMember player)
+                                continue;
+
+                            // Find all participants this player hasn't played against yet
+                            var opponentsToPlay = group.Participants
+                                .Where(p => p.Player is DiscordMember && p.Player != participant.Player)
+                                .Select(p => p.Player as DiscordMember)
+                                .Where(opponent => opponent is not null && !group.Matches.Any(m =>
+                                    m.Participants.Count == 2 &&
+                                    m.Participants.Any(mp => mp.Player is DiscordMember playerMember && playerMember.Id == player.Id) &&
+                                    m.Participants.Any(mp => mp.Player is DiscordMember opponentMember && opponentMember.Id == opponent.Id)))
+                                .ToList();
+
+                            // If this player has opponents they haven't played, create one new match
+                            if (opponentsToPlay.Any())
+                            {
+                                // Schedule only one new match for this player
+                                var opponent = opponentsToPlay.First();
+
+                                // Guard against null opponent (shouldn't happen due to filtering, but compiler doesn't know that)
+                                if (opponent is null)
+                                {
+                                    _logger.LogError("Opponent was null when attempting to create a match. Skipping.");
+                                    continue;
+                                }
+
+                                // Check if this match is already being created by the other player's loop
+                                var key = new[] { player.Id, opponent.Id }.OrderBy(id => id).ToArray();
+                                var matchKey = $"{key[0]}_{key[1]}";
+
+                                // Use a simple locking mechanism to avoid duplicate match creation
+                                if (!_processingMatches.Contains(matchKey))
+                                {
+                                    try
+                                    {
+                                        _processingMatches.Add(matchKey);
+
+                                        // First close the current match thread if it exists
+                                        if (match.LinkedRound?.Teams != null)
+                                        {
+                                            foreach (var team in match.LinkedRound.Teams)
+                                            {
+                                                if (team.Thread is not null)
+                                                {
+                                                    try
+                                                    {
+                                                        await team.Thread.ModifyAsync(t =>
+                                                        {
+                                                            t.IsArchived = true;
+                                                            t.Locked = true;
+                                                        });
+                                                    }
+                                                    catch
+                                                    {
+                                                        // Thread might already be deleted or archived
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Create a new match
+                                        _logger.LogInformation($"Creating new match for {player.DisplayName} vs {opponent.DisplayName} in group {group.Name}");
+                                        await CreateAndStart1v1Match(tournament, group, player, opponent, client, 3);
+                                    }
+                                    finally
+                                    {
+                                        _processingMatches.Remove(matchKey);
+                                    }
+                                }
+
+                                // Only schedule one new match per player to avoid flooding
+                                break;
+                            }
+                        }
+                    }
+                    // If group is complete, check if all groups are complete to set up playoffs
+                    else if (tournament.Groups.All(g => g.IsComplete) && tournament.CurrentStage == TournamentStage.Groups)
+                    {
+                        // Set up playoffs
+                        _tournamentManager.SetupPlayoffs(tournament);
+
+                        // Post updated standings
+                        await _tournamentManager.PostTournamentVisualization(tournament, client);
+
+                        // Start playoff matches if we're ready
+                        if (tournament.CurrentStage == TournamentStage.Playoffs)
+                        {
+                            await StartPlayoffMatches(tournament, client);
+                        }
                     }
                 }
             }
@@ -2549,16 +2720,280 @@ namespace Wabbit.BotClient.Commands
             }
         }
 
-        // New method to start playoff matches
-        private Task StartPlayoffMatches(Tournament tournament, DiscordClient client)
+        // Update the StartPlayoffMatches method to handle dynamic playoff structures
+        private async Task StartPlayoffMatches(Tournament tournament, DiscordClient client)
         {
-            // For now, just log that playoffs are starting
+            // Log that playoffs are starting
             _logger.LogInformation($"Starting playoff matches for tournament {tournament.Name}");
 
-            // We would implement the playoff bracket matches here
-            // Similar to group stage matches but with elimination rules
+            try
+            {
+                // Get the advancement criteria from tournament's custom properties
+                int groupWinnersAdvance = 2; // Default: top 2 from each group
+                int bestThirdPlaceAdvance = 0; // Default: no third-place players
 
-            return Task.CompletedTask;
+                if (tournament.CustomProperties != null)
+                {
+                    if (tournament.CustomProperties.TryGetValue("GroupWinnersAdvance", out var winnersObj) && winnersObj is int winners)
+                        groupWinnersAdvance = winners;
+
+                    if (tournament.CustomProperties.TryGetValue("BestThirdPlaceAdvance", out var thirdPlaceObj) && thirdPlaceObj is int thirdPlace)
+                        bestThirdPlaceAdvance = thirdPlace;
+                }
+
+                _logger.LogInformation($"Playoff advancement criteria: Top {groupWinnersAdvance} from each group + {bestThirdPlaceAdvance} best third-place players");
+
+                // Collect qualified players
+                List<Tournament.GroupParticipant> qualifiedParticipants = new List<Tournament.GroupParticipant>();
+
+                // Get group winners according to criteria
+                foreach (var group in tournament.Groups)
+                {
+                    // Sort participants by points (wins - losses)
+                    var sortedParticipants = group.Participants
+                        .OrderByDescending(p => p.Wins - p.Losses)
+                        .ThenByDescending(p => p.Wins)
+                        .ToList();
+
+                    // Add the top X players from each group
+                    for (int i = 0; i < Math.Min(groupWinnersAdvance, sortedParticipants.Count); i++)
+                    {
+                        sortedParticipants[i].QualificationInfo = $"Group {group.Name} - Position {i + 1}";
+                        qualifiedParticipants.Add(sortedParticipants[i]);
+                    }
+                }
+
+                // If we need to add best third-place finishers
+                if (bestThirdPlaceAdvance > 0)
+                {
+                    // Collect all third-place finishers from all groups
+                    var thirdPlaceParticipants = new List<Tournament.GroupParticipant>();
+
+                    foreach (var group in tournament.Groups)
+                    {
+                        // Sort participants by points
+                        var sortedParticipants = group.Participants
+                            .OrderByDescending(p => p.Wins - p.Losses)
+                            .ThenByDescending(p => p.Wins)
+                            .ToList();
+
+                        // Add the third-place player if the group has enough participants
+                        if (sortedParticipants.Count >= 3)
+                        {
+                            sortedParticipants[2].QualificationInfo = $"Group {group.Name} - 3rd Place";
+                            thirdPlaceParticipants.Add(sortedParticipants[2]);
+                        }
+                    }
+
+                    // Sort third-place finishers by points and add the best ones, detecting ties
+                    var thirdPlaceSorted = thirdPlaceParticipants
+                        .OrderByDescending(p => p.Points)
+                        .ThenByDescending(p => p.Wins)
+                        .ThenBy(p => p.Losses)
+                        .ThenByDescending(p => p.GamesWon - p.GamesLost) // Game differential
+                        .ThenByDescending(p => p.GamesWon) // Total games won as final tiebreaker
+                        .ToList();
+
+                    // If we have more third place candidates than spots available, check for ties
+                    if (thirdPlaceSorted.Count > bestThirdPlaceAdvance)
+                    {
+                        // Get the participant at the cutoff position
+                        var cutoffParticipant = thirdPlaceSorted[bestThirdPlaceAdvance - 1];
+
+                        // Find any participants tied with the cutoff participant
+                        var tiedParticipants = thirdPlaceSorted
+                            .Skip(bestThirdPlaceAdvance - 1) // Start from the cutoff position
+                            .TakeWhile(p =>
+                                p.Points == cutoffParticipant.Points &&
+                                p.Wins == cutoffParticipant.Wins &&
+                                p.Losses == cutoffParticipant.Losses &&
+                                (p.GamesWon - p.GamesLost) == (cutoffParticipant.GamesWon - cutoffParticipant.GamesLost) &&
+                                p.GamesWon == cutoffParticipant.GamesWon)
+                            .ToList();
+
+                        // If we have ties at the cutoff position
+                        if (tiedParticipants.Count > 1)
+                        {
+                            _logger.LogInformation($"Detected {tiedParticipants.Count} players tied for the final best third-place spot(s). Creating tiebreaker matches.");
+
+                            // Store information that tiebreaker matches are needed
+                            if (tournament.CustomProperties == null)
+                                tournament.CustomProperties = new Dictionary<string, object>();
+
+                            tournament.CustomProperties["NeedsTiebreakerMatches"] = true;
+                            tournament.CustomProperties["TiebreakerPlayersCount"] = tiedParticipants.Count;
+
+                            // Create a list to store tiebreaker match data
+                            var tiebreakerMatches = new List<Tournament.Match>();
+
+                            // Create tiebreaker matches between tied players
+                            for (int i = 0; i < tiedParticipants.Count; i++)
+                            {
+                                for (int j = i + 1; j < tiedParticipants.Count; j++)
+                                {
+                                    // Get the players
+                                    var player1 = tiedParticipants[i].Player;
+                                    var player2 = tiedParticipants[j].Player;
+
+                                    _logger.LogInformation($"Creating tiebreaker match between {GetPlayerDisplayName(player1)} and {GetPlayerDisplayName(player2)}");
+
+                                    // Create a special tiebreaker match
+                                    var tiebreakerMatch = new Tournament.Match
+                                    {
+                                        Name = $"Tiebreaker: {GetPlayerDisplayName(player1)} vs {GetPlayerDisplayName(player2)}",
+                                        Type = MatchType.ThirdPlaceTiebreaker, // Using ThirdPlace for now, could add a dedicated type
+                                        BestOf = 1, // Single game tiebreaker
+                                        Participants = new List<Tournament.MatchParticipant>
+                                        {
+                                            new Tournament.MatchParticipant { Player = player1 },
+                                            new Tournament.MatchParticipant { Player = player2 }
+                                        }
+                                    };
+
+                                    // Add to the list of tiebreaker matches
+                                    tiebreakerMatches.Add(tiebreakerMatch);
+                                    tournament.PlayoffMatches.Add(tiebreakerMatch);
+
+                                    // Start the match if players are DiscordMembers
+                                    if (player1 is DiscordMember member1 && player2 is DiscordMember member2)
+                                    {
+                                        // Start the match with a special indicator that it's a tiebreaker
+                                        await CreateAndStart1v1Match(tournament, null, member1, member2, client, 1, tiebreakerMatch);
+
+                                        // Add a slight delay to avoid rate limiting
+                                        await Task.Delay(1000);
+                                    }
+                                }
+                            }
+
+                            // Store tiebreaker matches and participants for later reference
+                            tournament.CustomProperties["TiebreakerMatches"] = tiebreakerMatches;
+                            tournament.CustomProperties["TiedParticipants"] = tiedParticipants;
+                            tournament.CustomProperties["BestThirdPlaceSpots"] = bestThirdPlaceAdvance;
+
+                            // Store current state and display message
+                            await _tournamentManager.SaveTournamentState(client);
+
+                            _logger.LogInformation("Tiebreaker matches have been created. Playoffs will be set up once all tiebreaker matches are complete.");
+
+                            // Exit early - playoffs will be set up once tiebreakers are complete
+                            return;
+                        }
+                    }
+
+                    // No ties detected, or ties don't affect qualification, proceed normally
+                    var bestThirdPlace = thirdPlaceSorted.Take(bestThirdPlaceAdvance).ToList();
+
+                    // Mark the selected players as advanced and update their qualification info
+                    foreach (var participant in bestThirdPlace)
+                    {
+                        participant.AdvancedToPlayoffs = true;
+                        participant.QualificationInfo = "Best Third Place";
+                    }
+
+                    qualifiedParticipants.AddRange(bestThirdPlace);
+                }
+
+                // Log qualified participants
+                _logger.LogInformation($"Total qualified participants for playoffs: {qualifiedParticipants.Count}");
+
+                // Create playoff bracket
+                _logger.LogInformation("Creating playoff matches...");
+
+                // Shuffle or seed the participants
+                qualifiedParticipants = qualifiedParticipants
+                    .OrderBy(_ => Guid.NewGuid()) // Random seeding for now
+                    .ToList();
+
+                // Create playoff matches based on the total number of qualified participants
+                // For a proper bracket, we need a power of 2 (8, 16, etc.)
+                int bracketSize = 1;
+                while (bracketSize < qualifiedParticipants.Count)
+                    bracketSize *= 2;
+
+                _logger.LogInformation($"Creating a {bracketSize}-player bracket for {qualifiedParticipants.Count} participants");
+
+                // Create matches with byes as needed
+                for (int i = 0; i < bracketSize / 2; i++)
+                {
+                    // In a standard bracket, match i plays against (bracketSize-1-i)
+                    int player1Index = i;
+                    int player2Index = bracketSize - 1 - i;
+
+                    // Check if both indices are valid
+                    bool hasPlayer1 = player1Index < qualifiedParticipants.Count;
+                    bool hasPlayer2 = player2Index < qualifiedParticipants.Count;
+
+                    if (!hasPlayer1 && !hasPlayer2)
+                        continue; // Skip this match if both players would be byes
+
+                    var player1 = hasPlayer1 ? qualifiedParticipants[player1Index].Player : null;
+                    var player2 = hasPlayer2 ? qualifiedParticipants[player2Index].Player : null;
+
+                    // If one player is a bye, the other automatically advances
+                    if (!hasPlayer1 || !hasPlayer2)
+                    {
+                        var advancingPlayer = hasPlayer1 ? player1 : player2;
+
+                        // Create a placeholder match that's already complete
+                        var byeMatch = new Tournament.Match
+                        {
+                            Name = $"{GetPlayerDisplayName(advancingPlayer)} advances (bye)",
+                            Type = MatchType.PlayoffStage,
+                            BestOf = 3,
+                            Result = new Tournament.MatchResult
+                            {
+                                Winner = advancingPlayer
+                            },
+                            Participants = new List<Tournament.MatchParticipant>
+                            {
+                                new Tournament.MatchParticipant { Player = advancingPlayer }
+                            }
+                        };
+
+                        tournament.PlayoffMatches.Add(byeMatch);
+                        _logger.LogInformation($"Created bye match: {byeMatch.Name}");
+                    }
+                    else
+                    {
+                        // Create a normal match with both players
+                        var match = new Tournament.Match
+                        {
+                            Name = $"{GetPlayerDisplayName(player1)} vs {GetPlayerDisplayName(player2)}",
+                            Type = MatchType.PlayoffStage,
+                            BestOf = 3,
+                            Participants = new List<Tournament.MatchParticipant>
+                            {
+                                new Tournament.MatchParticipant { Player = player1 },
+                                new Tournament.MatchParticipant { Player = player2 }
+                            }
+                        };
+
+                        tournament.PlayoffMatches.Add(match);
+                        _logger.LogInformation($"Created playoff match: {match.Name}");
+
+                        // Start the match
+                        if (player1 is DiscordMember member1 && player2 is DiscordMember member2)
+                        {
+                            await CreateAndStart1v1Match(tournament, null, member1, member2, client, 3, match);
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"Could not start match because one or both players are not valid DiscordMembers");
+                        }
+                    }
+                }
+
+                // Update tournament state
+                await _tournamentManager.SaveTournamentState(client);
+
+                // Update tournament visualization
+                await _tournamentManager.PostTournamentVisualization(tournament, client);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting up playoff matches");
+            }
         }
     }
 

@@ -40,9 +40,10 @@ namespace Wabbit.Misc
         public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient? client = null)
         {
             // Calculate sizes
-            int width = 900; // Increase width to accommodate standings
+            bool useDoubleColumn = tournament.Groups.Count >= 4; // Use two columns for 4+ groups
+            int width = useDoubleColumn ? 1800 : 900; // Double width for two columns
 
-            int groupSectionHeight = CalculateGroupSectionHeight(tournament);
+            int groupSectionHeight = CalculateGroupSectionHeight(tournament, useDoubleColumn);
             int playoffsSectionHeight = CalculatePlayoffsSectionHeight(tournament);
 
             int height = HeaderHeight + groupSectionHeight + playoffsSectionHeight + FooterHeight;
@@ -153,26 +154,51 @@ namespace Wabbit.Misc
             return fileName;
         }
 
-        private static int CalculateGroupSectionHeight(Tournament tournament)
+        private static int CalculateGroupSectionHeight(Tournament tournament, bool useDoubleColumn = false)
         {
-            int totalHeight = 0;
-
-            foreach (var group in tournament.Groups)
+            if (!useDoubleColumn)
             {
-                // Group header
-                totalHeight += RowHeight;
-
-                // Column headers
-                totalHeight += RowHeight;
-
-                // Rows for each participant
-                totalHeight += group.Participants.Count * RowHeight;
-
-                // Spacing after group
-                totalHeight += GroupSpacing;
+                // Single column layout - sum all group heights
+                int totalHeight = 0;
+                foreach (var group in tournament.Groups)
+                {
+                    // Group header
+                    totalHeight += RowHeight;
+                    // Column headers
+                    totalHeight += RowHeight;
+                    // Rows for each participant
+                    totalHeight += group.Participants.Count * RowHeight;
+                    // Spacing after group
+                    totalHeight += GroupSpacing;
+                }
+                return totalHeight;
             }
+            else
+            {
+                // Double column layout - calculate the height of the tallest column
+                var leftGroups = tournament.Groups.Take((tournament.Groups.Count + 1) / 2).ToList();
+                var rightGroups = tournament.Groups.Skip((tournament.Groups.Count + 1) / 2).ToList();
 
-            return totalHeight;
+                int leftHeight = 0, rightHeight = 0;
+
+                foreach (var group in leftGroups)
+                {
+                    leftHeight += RowHeight; // Group header
+                    leftHeight += RowHeight; // Column headers
+                    leftHeight += group.Participants.Count * RowHeight; // Participants
+                    leftHeight += GroupSpacing; // Spacing
+                }
+
+                foreach (var group in rightGroups)
+                {
+                    rightHeight += RowHeight; // Group header
+                    rightHeight += RowHeight; // Column headers
+                    rightHeight += group.Participants.Count * RowHeight; // Participants
+                    rightHeight += GroupSpacing; // Spacing
+                }
+
+                return Math.Max(leftHeight, rightHeight);
+            }
         }
 
         private static int CalculatePlayoffsSectionHeight(Tournament tournament)
@@ -252,179 +278,204 @@ namespace Wabbit.Misc
             // Debug information
             Console.WriteLine($"Drawing group standings for {tournament.Groups.Count} groups");
 
-            foreach (var group in tournament.Groups)
+            bool useDoubleColumn = tournament.Groups.Count >= 4;
+            int columnWidth = useDoubleColumn ? (width - (Padding * 3)) / 2 : width - (Padding * 2);
+            int startYOffset = yOffset; // Remember starting Y position
+
+            // Split groups for two-column layout
+            if (useDoubleColumn)
             {
-                // Draw group header
-                canvas.DrawRect(Padding, yOffset, tableWidth, RowHeight, headerPaint);
-                textPaint.TextSize = 18; // Set consistent header text size
-                textPaint.TextAlign = SKTextAlign.Center;
-                canvas.DrawText(group.Name, width / 2, yOffset + RowHeight - CellPadding, textPaint);
-                yOffset += RowHeight;
+                int leftColYOffset = yOffset;
+                int rightColYOffset = yOffset;
+                var leftGroups = tournament.Groups.Take((tournament.Groups.Count + 1) / 2).ToList();
+                var rightGroups = tournament.Groups.Skip((tournament.Groups.Count + 1) / 2).ToList();
 
-                // Calculate column widths
-                int nameWidth = (int)(tableWidth * 0.35); // Width for player names
-                int seedWidth = (int)(tableWidth * 0.10); // New dedicated seed column
-                int statsWidth = (int)(tableWidth * 0.09); // Slightly smaller stats columns
-                int statusWidth = tableWidth - nameWidth - seedWidth - (statsWidth * 4); // Ensure exact fit
-
-                // Draw header row
-                int xPos = Padding;
-
-                // Player column header
-                canvas.DrawRect(xPos, yOffset, nameWidth, RowHeight, borderPaint);
-                textPaint.TextAlign = SKTextAlign.Center;
-                textPaint.TextSize = 14;
-                canvas.DrawText("Player", xPos + (nameWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                xPos += nameWidth;
-
-                // Seed column header
-                canvas.DrawRect(xPos, yOffset, seedWidth, RowHeight, borderPaint);
-                canvas.DrawText("Seed", xPos + (seedWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                xPos += seedWidth;
-
-                // Participant stats
-                // W column
-                canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                canvas.DrawText("W", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                xPos += statsWidth;
-
-                // D column
-                canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                canvas.DrawText("D", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                xPos += statsWidth;
-
-                // L column
-                canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                canvas.DrawText("L", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                xPos += statsWidth;
-
-                // P column
-                canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                canvas.DrawText("P", xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                xPos += statsWidth;
-
-                // Status column header
-                canvas.DrawRect(xPos, yOffset, statusWidth, RowHeight, borderPaint);
-                textPaint.TextSize = 12;
-                canvas.DrawText("Status", xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                yOffset += RowHeight;
-
-                // Sort participants by points
-                var sortedParticipants = group.Participants
-                    .OrderByDescending(p => p.Points)
-                    .ThenByDescending(p => p.GamesWon)
-                    .ThenBy(p => p.GamesLost)
-                    .ToList();
-
-                Console.WriteLine($"Group {group.Name} has {sortedParticipants.Count} participants");
-
-                // Draw each participant row
-                foreach (var participant in sortedParticipants)
+                // Draw left column groups
+                foreach (var group in leftGroups)
                 {
-                    xPos = Padding;
-
-                    // Player name
-                    canvas.DrawRect(xPos, yOffset, nameWidth, RowHeight, borderPaint);
-                    textPaint.TextAlign = SKTextAlign.Left;
-                    textPaint.TextSize = 16;
-                    textPaint.Color = TextColor;
-
-                    // Get the display name with detailed fallback logging
-                    string displayName = "Unknown Player";
-
-                    if (participant.Player is not null)
-                    {
-                        // Check if it's a DiscordMember
-                        if (participant.Player is DSharpPlus.Entities.DiscordMember discordMember)
-                        {
-                            displayName = discordMember.DisplayName;
-                            Console.WriteLine($"Using DiscordMember DisplayName: {displayName}");
-                        }
-                        // For any other type, use ToString()
-                        else
-                        {
-                            string toStringValue = participant.Player?.ToString() ?? string.Empty;
-                            if (!string.IsNullOrEmpty(toStringValue) && toStringValue != "null")
-                            {
-                                displayName = toStringValue;
-                                Console.WriteLine($"Using ToString: {displayName}");
-                            }
-                            else
-                            {
-                                // Last resort, try to get type information
-                                Console.WriteLine($"Player ToString returned null or empty, player type: {participant.Player?.GetType()?.Name ?? "unknown"}");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("Player reference is null");
-                    }
-
-                    // Log stats for debugging
-                    Console.WriteLine($"Player: {displayName}, W: {participant.Wins}, D: {participant.Draws}, L: {participant.Losses}, P: {participant.Points}");
-
-                    canvas.DrawText(displayName, xPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
-                    xPos += nameWidth;
-
-                    // Seed column
-                    canvas.DrawRect(xPos, yOffset, seedWidth, RowHeight, borderPaint);
-                    textPaint.TextAlign = SKTextAlign.Center;
-
-                    // Show seed value if available, otherwise show a dash
-                    string seedText = participant.Seed > 0 ? participant.Seed.ToString() : "-";
-                    canvas.DrawText(seedText, xPos + (seedWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                    xPos += seedWidth;
-
-                    // Participant stats
-                    // W column
-                    canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                    canvas.DrawText(participant.Wins.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                    xPos += statsWidth;
-
-                    // D column
-                    canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                    canvas.DrawText(participant.Draws.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                    xPos += statsWidth;
-
-                    // L column
-                    canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                    canvas.DrawText(participant.Losses.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                    xPos += statsWidth;
-
-                    // P column
-                    canvas.DrawRect(xPos, yOffset, statsWidth, RowHeight, borderPaint);
-                    canvas.DrawText(participant.Points.ToString(), xPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                    xPos += statsWidth;
-
-                    // Status column
-                    canvas.DrawRect(xPos, yOffset, statusWidth, RowHeight, borderPaint);
-                    textPaint.TextAlign = SKTextAlign.Center;
-                    textPaint.TextSize = 14;
-
-                    // Draw status text with appropriate color
-                    string statusText = "Pending";
-                    if (participant.AdvancedToPlayoffs)
-                    {
-                        statusText = "Advanced";
-                        textPaint.Color = WinColor;
-                    }
-                    else if (group.IsComplete)
-                    {
-                        statusText = "Eliminated";
-                        textPaint.Color = LossColor;
-                    }
-                    else
-                    {
-                        textPaint.Color = DrawColor;
-                    }
-
-                    canvas.DrawText(statusText, xPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
-                    textPaint.Color = TextColor;
-                    yOffset += RowHeight;
+                    DrawGroupTable(canvas, group, Padding, leftColYOffset, columnWidth, borderPaint, headerPaint, textPaint);
+                    leftColYOffset += (2 + group.Participants.Count) * RowHeight + GroupSpacing;
                 }
 
-                yOffset += GroupSpacing;
+                // Draw right column groups
+                foreach (var group in rightGroups)
+                {
+                    DrawGroupTable(canvas, group, Padding * 2 + columnWidth, rightColYOffset, columnWidth, borderPaint, headerPaint, textPaint);
+                    rightColYOffset += (2 + group.Participants.Count) * RowHeight + GroupSpacing;
+                }
+
+                // Set new yOffset to the tallest column
+                yOffset = Math.Max(leftColYOffset, rightColYOffset);
+            }
+            else
+            {
+                // Single column layout - original behavior
+                foreach (var group in tournament.Groups)
+                {
+                    DrawGroupTable(canvas, group, Padding, yOffset, columnWidth, borderPaint, headerPaint, textPaint);
+                    yOffset += (2 + group.Participants.Count) * RowHeight + GroupSpacing;
+                }
+            }
+        }
+
+        private static void DrawGroupTable(SKCanvas canvas, Tournament.Group group, int xPos, int yOffset, int tableWidth, SKPaint borderPaint, SKPaint headerPaint, SKPaint textPaint)
+        {
+            // Draw group header
+            canvas.DrawRect(xPos, yOffset, tableWidth, RowHeight, headerPaint);
+            textPaint.TextSize = 18; // Set consistent header text size
+            textPaint.TextAlign = SKTextAlign.Center;
+            canvas.DrawText(group.Name, xPos + tableWidth / 2, yOffset + RowHeight - CellPadding, textPaint);
+            yOffset += RowHeight;
+
+            // Calculate column widths
+            int nameWidth = (int)(tableWidth * 0.35); // Width for player names
+            int seedWidth = (int)(tableWidth * 0.10); // New dedicated seed column
+            int statsWidth = (int)(tableWidth * 0.09); // Slightly smaller stats columns
+            int statusWidth = tableWidth - nameWidth - seedWidth - (statsWidth * 4); // Ensure exact fit
+
+            // Draw header row
+            int colPos = xPos;
+
+            // Player column header
+            canvas.DrawRect(colPos, yOffset, nameWidth, RowHeight, borderPaint);
+            textPaint.TextAlign = SKTextAlign.Center;
+            textPaint.TextSize = 14;
+            canvas.DrawText("Player", colPos + (nameWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            colPos += nameWidth;
+
+            // Seed column header
+            canvas.DrawRect(colPos, yOffset, seedWidth, RowHeight, borderPaint);
+            canvas.DrawText("Seed", colPos + (seedWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            colPos += seedWidth;
+
+            // Participant stats
+            // W column
+            canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+            canvas.DrawText("W", colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            colPos += statsWidth;
+
+            // D column
+            canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+            canvas.DrawText("D", colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            colPos += statsWidth;
+
+            // L column
+            canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+            canvas.DrawText("L", colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            colPos += statsWidth;
+
+            // P column
+            canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+            canvas.DrawText("P", colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            colPos += statsWidth;
+
+            // Status column header
+            canvas.DrawRect(colPos, yOffset, statusWidth, RowHeight, borderPaint);
+            textPaint.TextSize = 12;
+            canvas.DrawText("Status", colPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+            yOffset += RowHeight;
+
+            // Sort participants by points
+            var sortedParticipants = group.Participants
+                .OrderByDescending(p => p.Points)
+                .ThenByDescending(p => p.GamesWon)
+                .ThenBy(p => p.GamesLost)
+                .ToList();
+
+            Console.WriteLine($"Group {group.Name} has {sortedParticipants.Count} participants");
+
+            // Draw each participant row
+            foreach (var participant in sortedParticipants)
+            {
+                colPos = xPos;
+
+                // Player name
+                canvas.DrawRect(colPos, yOffset, nameWidth, RowHeight, borderPaint);
+                textPaint.TextAlign = SKTextAlign.Left;
+                textPaint.TextSize = 16;
+                textPaint.Color = TextColor;
+
+                // Get the display name with detailed fallback logging
+                string displayName = "Unknown Player";
+
+                if (participant.Player is not null)
+                {
+                    // Try to get a meaningful name
+                    if (participant.Player is DiscordMember member)
+                    {
+                        displayName = member.DisplayName ?? member.Username;
+                    }
+                    else if (participant.Player is DiscordUser user)
+                    {
+                        displayName = user.Username;
+                    }
+                    else
+                    {
+                        displayName = participant.Player.ToString() ?? "Unknown";
+                    }
+                }
+
+                // Truncate if too long
+                if (displayName.Length > 20)
+                {
+                    displayName = displayName.Substring(0, 17) + "...";
+                }
+
+                canvas.DrawText(displayName, colPos + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
+                colPos += nameWidth;
+
+                // Seed
+                canvas.DrawRect(colPos, yOffset, seedWidth, RowHeight, borderPaint);
+                textPaint.TextAlign = SKTextAlign.Center;
+                string seedText = participant.Seed > 0 ? participant.Seed.ToString() : "-";
+                canvas.DrawText(seedText, colPos + (seedWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                colPos += seedWidth;
+
+                // Wins cell
+                canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+                canvas.DrawText(participant.Wins.ToString(), colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                colPos += statsWidth;
+
+                // Draws cell
+                canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+                canvas.DrawText(participant.Draws.ToString(), colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                colPos += statsWidth;
+
+                // Losses cell
+                canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+                canvas.DrawText(participant.Losses.ToString(), colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                colPos += statsWidth;
+
+                // Points cell
+                canvas.DrawRect(colPos, yOffset, statsWidth, RowHeight, borderPaint);
+                canvas.DrawText(participant.Points.ToString(), colPos + (statsWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                colPos += statsWidth;
+
+                // Status cell
+                canvas.DrawRect(colPos, yOffset, statusWidth, RowHeight, borderPaint);
+
+                // Set status text and color based on advancement
+                textPaint.TextAlign = SKTextAlign.Center;
+                string statusText = participant.QualificationInfo ?? "";
+
+                if (participant.AdvancedToPlayoffs)
+                {
+                    statusText = participant.QualificationInfo ?? "Advanced";
+                    textPaint.Color = WinColor;
+                }
+                else if (group.IsComplete)
+                {
+                    statusText = "Eliminated";
+                    textPaint.Color = LossColor;
+                }
+                else
+                {
+                    textPaint.Color = DrawColor;
+                }
+
+                canvas.DrawText(statusText, colPos + (statusWidth / 2), yOffset + RowHeight - CellPadding, textPaint);
+                textPaint.Color = TextColor;
+                yOffset += RowHeight;
             }
         }
 
@@ -460,6 +511,46 @@ namespace Wabbit.Misc
             // Process tournament data with null checks
             var semifinals = tournament.PlayoffMatches?.Where(m => m?.Type == MatchType.Semifinal).ToList() ?? [];
             var finals = tournament.PlayoffMatches?.Where(m => m?.Type == MatchType.Final).ToList() ?? [];
+            var tiebreakers = tournament.PlayoffMatches?.Where(m => m?.Type == MatchType.ThirdPlaceTiebreaker).ToList() ?? [];
+
+            // Draw tiebreakers if any exist
+            if (tiebreakers.Any())
+            {
+                // Show a tiebreaker section
+                textPaint.TextSize = 16;
+                textPaint.TextAlign = SKTextAlign.Center;
+                canvas.DrawText("Third Place Tiebreakers", width / 2, yOffset, textPaint);
+                yOffset += 30;
+
+                // Determine layout - arrange in grid if many matches
+                int matchesPerRow = Math.Min(tiebreakers.Count, 2); // Max 2 per row
+                int rowCount = (int)Math.Ceiling(tiebreakers.Count / (double)matchesPerRow);
+
+                int matchHeight = 80;
+                int matchWidth = (width - ((matchesPerRow + 1) * Padding)) / matchesPerRow;
+
+                for (int row = 0; row < rowCount; row++)
+                {
+                    for (int col = 0; col < matchesPerRow; col++)
+                    {
+                        int index = row * matchesPerRow + col;
+                        if (index >= tiebreakers.Count)
+                            break;
+
+                        int xPos = Padding + col * (matchWidth + Padding);
+                        int yPos = yOffset + row * (matchHeight + 20);
+
+                        // Set display position if not already set
+                        if (string.IsNullOrEmpty(tiebreakers[index].DisplayPosition))
+                            tiebreakers[index].DisplayPosition = "Tiebreaker";
+
+                        DrawMatch(canvas, tiebreakers[index], xPos, yPos, matchWidth, matchHeight);
+                    }
+                }
+
+                // Move yOffset down to account for all tiebreaker rows
+                yOffset += rowCount * (matchHeight + 20) + 10;
+            }
 
             // Draw semifinals
             if (semifinals.Any())

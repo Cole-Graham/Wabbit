@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using System.IO;
 using Wabbit.Services.Interfaces;
+using System.Text;
 
 namespace Wabbit.BotClient.Events
 {
@@ -1531,59 +1532,66 @@ namespace Wabbit.BotClient.Events
 
             if (signup.ScheduledStartTime.HasValue)
             {
-                // Convert DateTime to PST correctly
-                // First convert to UTC to ensure we're working from a common reference point
-                DateTime utcTime = signup.ScheduledStartTime.Value.ToUniversalTime();
-
-                // Pacific Standard Time is UTC-8 (or UTC-7 during daylight saving)
-                TimeZoneInfo pstZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
-                DateTime pstTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, pstZone);
-
-                // Format with proper AM/PM indicator
-                string pstFormatted = pstTime.ToString("MMM d, yyyy h:mm tt") + " PST";
-
-                // Create Discord timestamp using the original UTC time to ensure accuracy
-                long unixTimestamp = ((DateTimeOffset)utcTime).ToUnixTimeSeconds();
-                string discordTimestampFull = $"<t:{unixTimestamp}:F>";
-                string discordTimestampFriendly = $"<t:{unixTimestamp}:f>";
-
-                builder.AddField("Scheduled Start (PST)", pstFormatted, false);
-                builder.AddField("Scheduled Start (Local Time)", discordTimestampFriendly, false);
+                string formattedTime = $"<t:{((DateTimeOffset)signup.ScheduledStartTime).ToUnixTimeSeconds()}:F>";
+                builder.AddField("Scheduled Start Time", formattedTime);
             }
 
-            // Log the number of participants for debugging
-            Console.WriteLine($"Creating embed for signup '{signup.Name}' with {signup.Participants.Count} participants");
-
-            if (signup.Participants != null && signup.Participants.Count > 0)
+            if (signup.Participants?.Count > 0)
             {
-                // Create a list of participant mentions
-                var participantEntries = new List<string>();
-                foreach (var participant in signup.Participants)
+                // Sort participants by any seeds
+                var sortedParticipants = signup.Participants
+                    .Select(p => new
+                    {
+                        Player = p,
+                        Seed = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == p.Id || s.PlayerId == p.Id)?.Seed ?? 0,
+                        DisplayName = p.DisplayName
+                    })
+                    .OrderBy(p => p.Seed == 0) // Seeded players first
+                    .ThenBy(p => p.Seed)
+                    .ThenBy(p => p.DisplayName)
+                    .ToList();
+
+                StringBuilder participantsText = new StringBuilder();
+                int totalParticipants = sortedParticipants.Count;
+
+                // Calculate the number of rows needed
+                int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
+
+                for (int i = 0; i < rowsNeeded; i++)
                 {
-                    try
+                    // Left column
+                    int leftIndex = i * 2;
+                    if (leftIndex < totalParticipants)
                     {
-                        // Use explicit mention format with Discord user ID
-                        string mention = $"<@{participant.Id}>";
-                        participantEntries.Add($"{participantEntries.Count + 1}. {mention}");
-                        Console.WriteLine($"  - Adding participant to embed: {participant.Username} (ID: {participant.Id})");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error adding participant to embed: {ex.Message}");
+                        var leftPlayer = sortedParticipants[leftIndex];
+                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
+                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
+
+                        // Add padding between columns
+                        participantsText.Append("    ");
+
+                        // Right column
+                        int rightIndex = leftIndex + 1;
+                        if (rightIndex < totalParticipants)
+                        {
+                            var rightPlayer = sortedParticipants[rightIndex];
+                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
+                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
+                        }
+
+                        participantsText.AppendLine();
                     }
                 }
 
-                // Join the entries with newlines
-                string participants = string.Join("\n", participantEntries);
+                string finalText = participantsText.ToString();
 
                 // If the text is too long, truncate it
-                if (participants.Length > 1024)
+                if (finalText.Length > 1024)
                 {
-                    participants = participants.Substring(0, 1020) + "...";
+                    finalText = finalText.Substring(0, 1020) + "...";
                 }
 
-                // Add the field with all participants
-                builder.AddField($"Participants ({signup.Participants.Count})", participants, false);
+                builder.AddField($"Participants ({sortedParticipants.Count})", finalText);
             }
             else
             {
