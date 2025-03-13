@@ -1501,13 +1501,15 @@ namespace Wabbit.BotClient.Events
 
             if (signup.Participants != null && signup.Participants.Count > 0)
             {
-                // Create a list of participant usernames
-                var participantNames = new List<string>();
+                // Create a list of participant mentions
+                var participantEntries = new List<string>();
                 foreach (var participant in signup.Participants)
                 {
                     try
                     {
-                        participantNames.Add($"{participantNames.Count + 1}. {participant.Username}");
+                        // Use explicit mention format with Discord user ID
+                        string mention = $"<@{participant.Id}>";
+                        participantEntries.Add($"{participantEntries.Count + 1}. {mention}");
                         Console.WriteLine($"  - Adding participant to embed: {participant.Username} (ID: {participant.Id})");
                     }
                     catch (Exception ex)
@@ -1516,8 +1518,14 @@ namespace Wabbit.BotClient.Events
                     }
                 }
 
-                // Join the names with newlines
-                string participants = string.Join("\n", participantNames);
+                // Join the entries with newlines
+                string participants = string.Join("\n", participantEntries);
+
+                // If the text is too long, truncate it
+                if (participants.Length > 1024)
+                {
+                    participants = participants.Substring(0, 1020) + "...";
+                }
 
                 // Add the field with all participants
                 builder.AddField($"Participants ({signup.Participants.Count})", participants, false);

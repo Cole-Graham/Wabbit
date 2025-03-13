@@ -1644,14 +1644,19 @@ namespace Wabbit.BotClient.Commands
 
         private async Task StartGroupStageMatches(Tournament tournament, DiscordClient client, GameType gameType)
         {
+            _logger.LogInformation($"Starting group stage matches for tournament '{tournament.Name}' with {tournament.Groups.Count} groups");
+
             // Only process each group if there are matches to be played
             foreach (var group in tournament.Groups)
             {
+                _logger.LogInformation($"Processing group {group.Name} with {group.Participants.Count} participants");
+
                 // Schedule the first match for each pair of players
                 // Instead of creating all threads at once, we'll only create the first round of matches
                 var matches = new List<(DiscordMember, DiscordMember)>();
 
                 // First, we need to explicitly convert all players to DiscordMember
+                _logger.LogInformation("Converting all participants to DiscordMember objects");
                 foreach (var participant in group.Participants)
                 {
                     if (participant.Player != null)
@@ -1661,29 +1666,41 @@ namespace Wabbit.BotClient.Commands
                         if (participant.Player is DiscordMember member)
                         {
                             playerId = member.Id;
+                            _logger.LogInformation($"Player {member.Username} (ID: {member.Id}) is already a DiscordMember");
                         }
                         else
                         {
+                            _logger.LogWarning($"Player object is not a DiscordMember: {participant.Player?.GetType().Name ?? "null"}, attempting conversion");
                             // Try to get ID using reflection or ToString parsing
                             var playerObj = participant.Player;
-                            var idProperty = playerObj.GetType().GetProperty("Id");
-                            if (idProperty != null)
+                            if (playerObj != null)
                             {
-                                var idValue = idProperty.GetValue(playerObj);
-                                if (idValue != null && ulong.TryParse(idValue.ToString(), out ulong id))
+                                var idProperty = playerObj.GetType().GetProperty("Id");
+                                if (idProperty != null)
                                 {
-                                    playerId = id;
+                                    var idValue = idProperty.GetValue(playerObj);
+                                    if (idValue != null && ulong.TryParse(idValue.ToString(), out ulong id))
+                                    {
+                                        playerId = id;
+                                        _logger.LogInformation($"Retrieved player ID {id} using reflection");
+                                    }
+                                }
+                                else
+                                {
+                                    // Parse from string representation as last resort
+                                    string playerString = playerObj.ToString() ?? "";
+                                    _logger.LogInformation($"Attempting to parse player ID from string: {playerString}");
+                                    var idMatch = System.Text.RegularExpressions.Regex.Match(playerString, @"Id\s*=\s*(\d+)");
+                                    if (idMatch.Success && ulong.TryParse(idMatch.Groups[1].Value, out ulong id))
+                                    {
+                                        playerId = id;
+                                        _logger.LogInformation($"Retrieved player ID {id} from string representation");
+                                    }
                                 }
                             }
                             else
                             {
-                                // Parse from string representation as last resort
-                                string playerString = playerObj.ToString() ?? "";
-                                var idMatch = System.Text.RegularExpressions.Regex.Match(playerString, @"Id\s*=\s*(\d+)");
-                                if (idMatch.Success && ulong.TryParse(idMatch.Groups[1].Value, out ulong id))
-                                {
-                                    playerId = id;
-                                }
+                                _logger.LogError("Player object is null, cannot determine ID");
                             }
                         }
 
@@ -1692,6 +1709,7 @@ namespace Wabbit.BotClient.Commands
                         {
                             try
                             {
+                                _logger.LogInformation($"Fetching DiscordMember for player with ID {playerId}");
                                 // Find all guilds this client is in
                                 foreach (var guild in client.Guilds.Values)
                                 {
@@ -1702,25 +1720,36 @@ namespace Wabbit.BotClient.Commands
                                         {
                                             // Successfully found the member, update the object
                                             participant.Player = memberObj;
+                                            _logger.LogInformation($"Successfully converted player to DiscordMember: {memberObj.Username} (ID: {memberObj.Id})");
                                             break;
                                         }
                                     }
-                                    catch
+                                    catch (Exception guildEx)
                                     {
                                         // Member not in this guild, continue to next
+                                        _logger.LogWarning($"Player with ID {playerId} not found in guild {guild.Name}: {guildEx.Message}");
                                         continue;
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Failed to convert player ID {playerId} to DiscordMember: {ex.Message}");
+                                _logger.LogError(ex, $"Failed to convert player ID {playerId} to DiscordMember");
                             }
                         }
+                        else
+                        {
+                            _logger.LogError($"Could not determine player ID for conversion: {participant.Player}");
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogError("Found a participant with null Player property");
                     }
                 }
 
                 // Now create the matches using the updated participant objects
+                _logger.LogInformation("Creating matches between participants");
                 foreach (var p1 in group.Participants)
                 {
                     foreach (var p2 in group.Participants)
@@ -1740,11 +1769,12 @@ namespace Wabbit.BotClient.Commands
 
                         if (member1 is not null && member2 is not null)
                         {
+                            _logger.LogInformation($"Adding potential match: {member1.Username} vs {member2.Username}");
                             matches.Add((member1, member2));
                         }
                         else
                         {
-                            Console.WriteLine($"Warning: Failed to convert players to DiscordMember: {p1.Player?.ToString() ?? "null"} vs {p2.Player?.ToString() ?? "null"}");
+                            _logger.LogError($"Failed to convert players to DiscordMember: {p1.Player?.ToString() ?? "null"} vs {p2.Player?.ToString() ?? "null"}");
                         }
                     }
                 }
@@ -1754,6 +1784,7 @@ namespace Wabbit.BotClient.Commands
                 var uniqueMatches = new HashSet<(ulong, ulong)>();
                 var matchesToCreate = new List<(DiscordMember, DiscordMember)>();
 
+                _logger.LogInformation($"Initial match count: {matches.Count}, filtering to unique matches");
                 foreach (var match in matches)
                 {
                     var sortedIds = new[] { match.Item1.Id, match.Item2.Id }.OrderBy(id => id).ToArray();
@@ -1765,10 +1796,12 @@ namespace Wabbit.BotClient.Commands
                     }
                 }
 
+                _logger.LogInformation($"Creating {matchesToCreate.Count} unique matches");
                 // Create the first round of matches
                 foreach (var match in matchesToCreate)
                 {
-                    int matchLength = 1; // Default Bo1 for group stages
+                    int matchLength = 3; // Change to Bo3 for group stages
+                    _logger.LogInformation($"Creating match: {match.Item1.Username} vs {match.Item2.Username} (Bo{matchLength})");
                     await CreateAndStart1v1Match(tournament, group, match.Item1, match.Item2, client, matchLength);
 
                     // Add a slight delay to avoid rate limiting
@@ -1776,22 +1809,28 @@ namespace Wabbit.BotClient.Commands
                 }
             }
 
+            _logger.LogInformation("Saving tournament state after creating all matches");
             // Update tournament state
             await _tournamentManager.SaveTournamentState(client);
 
+            _logger.LogInformation("Posting tournament visualization");
             // Post the tournament visualization after matches are created
             await _tournamentManager.PostTournamentVisualization(tournament, client);
         }
 
         private async Task CreateAndStart1v1Match(Tournament tournament, Tournament.Group group, DiscordMember player1, DiscordMember player2, DiscordClient client, int matchLength)
         {
+            _logger.LogInformation($"Starting CreateAndStart1v1Match for {player1.Username} vs {player2.Username} in tournament '{tournament.Name}'");
             try
             {
                 // Find or create a channel to use for the match
                 DiscordChannel? channel = tournament.AnnouncementChannel;
+                _logger.LogInformation($"Initial channel: {(channel is not null ? $"{channel.Name} (ID: {channel.Id})" : "null")}");
+
                 if (channel is null)
                 {
                     var guild = player1.Guild;
+                    _logger.LogInformation($"Looking for a channel in guild {guild.Name} (ID: {guild.Id})");
 
                     // Get the server config to find the bot channel ID
                     var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == guild.Id);
@@ -1799,7 +1838,9 @@ namespace Wabbit.BotClient.Commands
                     {
                         try
                         {
+                            _logger.LogInformation($"Attempting to use configured bot channel ID: {server.BotChannelId.Value}");
                             channel = await guild.GetChannelAsync(server.BotChannelId.Value);
+                            _logger.LogInformation($"Found configured bot channel: {channel.Name}");
                         }
                         catch (Exception ex)
                         {
@@ -1810,6 +1851,7 @@ namespace Wabbit.BotClient.Commands
                     // Fallback if bot channel ID is not configured or channel not found
                     if (channel is null)
                     {
+                        _logger.LogInformation("Fallback: Searching for a general or chat channel");
                         var channels = await guild.GetChannelsAsync();
                         channel = channels.FirstOrDefault(c =>
                             c.Type == DiscordChannelType.Text &&
@@ -1820,11 +1862,16 @@ namespace Wabbit.BotClient.Commands
                         // If no suitable channel found, use the first text channel
                         if (channel is null)
                         {
+                            _logger.LogInformation("No general/chat channel found, using first text channel");
                             channel = channels.FirstOrDefault(c => c.Type == DiscordChannelType.Text);
                         }
                     }
 
-                    if (channel is null)
+                    if (channel is not null)
+                    {
+                        _logger.LogInformation($"Using channel: {channel.Name} (ID: {channel.Id})");
+                    }
+                    else
                     {
                         _logger.LogError($"Could not find a suitable channel for tournament match in guild {guild.Name}");
                         return;
@@ -1832,6 +1879,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Create a new match
+                _logger.LogInformation("Creating new tournament match object");
                 var match = new Tournament.Match
                 {
                     Name = $"{player1.DisplayName} vs {player2.DisplayName}",
@@ -1846,8 +1894,10 @@ namespace Wabbit.BotClient.Commands
 
                 // Add match to the group
                 group.Matches.Add(match);
+                _logger.LogInformation($"Added match to group {group.Name}");
 
                 // Create and start a round for this match
+                _logger.LogInformation("Creating Round object for the match");
                 var round = new Round
                 {
                     Name = match.Name,
@@ -1874,20 +1924,34 @@ namespace Wabbit.BotClient.Commands
                 round.Teams.Add(team2);
 
                 // Create a private thread for each player
-                var thread1 = await channel.CreateThreadAsync(
-                    $"Match: {player1.DisplayName} vs {player2.DisplayName}",
-                    DiscordAutoArchiveDuration.Day,
-                    DiscordChannelType.PrivateThread,
-                    $"Tournament match thread for {player1.DisplayName}"
-                );
+                _logger.LogInformation($"Attempting to create private thread in channel {channel.Name} (ID: {channel.Id})");
+                try
+                {
+                    var thread1 = await channel.CreateThreadAsync(
+                        $"Match: {player1.DisplayName} vs {player2.DisplayName}",
+                        DiscordAutoArchiveDuration.Day,
+                        DiscordChannelType.PrivateThread,
+                        $"Tournament match thread for {player1.DisplayName}"
+                    );
 
-                team1.Thread = thread1;
+                    _logger.LogInformation($"Successfully created thread: {thread1.Name} (ID: {thread1.Id})");
+                    team1.Thread = thread1;
 
-                // Add players to threads
-                await thread1.AddThreadMemberAsync(player1);
-                await thread1.AddThreadMemberAsync(player2);
+                    // Add players to threads
+                    _logger.LogInformation($"Adding players to thread: {player1.Username}, {player2.Username}");
+                    await thread1.AddThreadMemberAsync(player1);
+                    await thread1.AddThreadMemberAsync(player2);
+                    _logger.LogInformation("Successfully added players to thread");
+                }
+                catch (Exception threadEx)
+                {
+                    _logger.LogError(threadEx, "Failed to create or setup private thread");
+                    // We still want to continue to create the match even if thread creation fails
+                    // so we'll just log the error and continue
+                }
 
                 // Create map ban dropdown options
+                _logger.LogInformation("Getting map pool for match");
                 string?[] maps1v1 = _tournamentManager.GetTournamentMapPool(true).ToArray();
 
                 var options = new List<DiscordSelectComponentOption>();
@@ -1899,6 +1963,7 @@ namespace Wabbit.BotClient.Commands
                         options.Add(option);
                     }
                 }
+                _logger.LogInformation($"Created {options.Count} map options");
 
                 // Create map ban dropdown
                 DiscordSelectComponent mapBanDropdown;
@@ -1927,6 +1992,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Create winner selection dropdown
+                _logger.LogInformation("Creating winner selection dropdown");
                 var winnerOptions = new List<DiscordSelectComponentOption>
                 {
                     new DiscordSelectComponentOption(
@@ -2012,38 +2078,66 @@ namespace Wabbit.BotClient.Commands
                     false, 1, 1
                 );
 
-                // Send map bans and instructions
-                var dropdownBuilder = new DiscordMessageBuilder()
-                    .WithContent(message)
-                    .AddComponents(mapBanDropdown);
+                // Send messages to thread if it was created successfully
+                if (team1.Thread is not null)
+                {
+                    _logger.LogInformation("Sending map bans and instructions to thread");
+                    try
+                    {
+                        // Send map bans and instructions
+                        var dropdownBuilder = new DiscordMessageBuilder()
+                            .WithContent(message)
+                            .AddComponents(mapBanDropdown);
 
-                await thread1.SendMessageAsync(dropdownBuilder);
+                        await team1.Thread.SendMessageAsync(dropdownBuilder);
 
-                // Send match winner dropdown
-                var winnerBuilder = new DiscordMessageBuilder()
-                    .WithContent("**When the match is complete, select the winner and score:**")
-                    .AddComponents(winnerDropdown);
+                        // Send match winner dropdown
+                        var winnerBuilder = new DiscordMessageBuilder()
+                            .WithContent("**When the match is complete, select the winner and score:**")
+                            .AddComponents(winnerDropdown);
 
-                await thread1.SendMessageAsync(winnerBuilder);
+                        await team1.Thread.SendMessageAsync(winnerBuilder);
+                        _logger.LogInformation("Successfully sent components to thread");
+                    }
+                    catch (Exception msgEx)
+                    {
+                        _logger.LogError(msgEx, "Failed to send messages to thread");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Thread was not created successfully, skipping sending messages");
+                }
 
                 // Send announcement message to the channel
-                var embed = new DiscordEmbedBuilder()
-                    .WithTitle($"🎮 Match Started: {player1.DisplayName} vs {player2.DisplayName}")
-                    .WithDescription($"A new Bo{matchLength} match has started in Group {group.Name}.")
-                    .AddField("Players", $"{player1.Mention} vs {player2.Mention}", false)
-                    .WithColor(DiscordColor.Blue)
-                    .WithTimestamp(DateTime.Now);
+                _logger.LogInformation("Sending match announcement to channel");
+                try
+                {
+                    var embed = new DiscordEmbedBuilder()
+                        .WithTitle($"🎮 Match Started: {player1.DisplayName} vs {player2.DisplayName}")
+                        .WithDescription($"A new Bo{matchLength} match has started in Group {group.Name}.")
+                        .AddField("Players", $"{player1.Mention} vs {player2.Mention}", false)
+                        .WithColor(DiscordColor.Blue)
+                        .WithTimestamp(DateTime.Now);
 
-                await channel.SendMessageAsync(embed);
+                    await channel.SendMessageAsync(embed);
+                    _logger.LogInformation("Successfully sent match announcement");
+                }
+                catch (Exception announceEx)
+                {
+                    _logger.LogError(announceEx, "Failed to send match announcement");
+                }
 
                 // Add to ongoing rounds and link to tournament match
+                _logger.LogInformation("Adding round to ongoing rounds and linking to tournament match");
                 _ongoingRounds.TourneyRounds.Add(round);
                 match.LinkedRound = round;
 
                 // Save tournament state
+                _logger.LogInformation("Saving tournament state");
                 await _tournamentManager.SaveTournamentState(client);
 
-                _logger.LogInformation($"Started match {match.Name} in Group {group.Name}");
+                _logger.LogInformation($"Successfully started match {match.Name} in Group {group.Name}");
             }
             catch (Exception ex)
             {

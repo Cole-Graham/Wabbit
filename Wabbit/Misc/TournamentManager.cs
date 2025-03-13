@@ -12,6 +12,7 @@ using MatchType = Wabbit.Models.MatchType;
 using Wabbit.Services;
 using Wabbit.Data;
 using Wabbit.BotClient.Config;
+using Microsoft.Extensions.Logging;
 
 namespace Wabbit.Misc
 {
@@ -22,11 +23,13 @@ namespace Wabbit.Misc
         private readonly string _tournamentsFilePath;
         private readonly string _signupsFilePath;
         private readonly string _tournamentStateFilePath;
+        private readonly ILogger<TournamentManager> _logger;
 
         // Constructor
-        public TournamentManager(OngoingRounds ongoingRounds)
+        public TournamentManager(OngoingRounds ongoingRounds, ILogger<TournamentManager> logger)
         {
             _ongoingRounds = ongoingRounds;
+            _logger = logger;
 
             // Setup data directory
             _dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Data");
@@ -849,61 +852,131 @@ namespace Wabbit.Misc
         // Add a new method to generate and post standings visualization
         public async Task PostTournamentVisualization(Tournament tournament, DiscordClient client)
         {
-            if (client == null || tournament == null || tournament.AnnouncementChannel is null || tournament.AnnouncementChannel.Guild is null)
-                return;
-
             try
             {
+                _logger.LogInformation($"Attempting to post tournament visualization for '{tournament?.Name ?? "null"}'");
+
+                if (client == null)
+                {
+                    _logger.LogError("Failed to post tournament visualization: client is null");
+                    return;
+                }
+
+                if (tournament == null)
+                {
+                    _logger.LogError("Failed to post tournament visualization: tournament is null");
+                    return;
+                }
+
+                if (tournament.AnnouncementChannel is null)
+                {
+                    _logger.LogError($"Failed to post tournament visualization for '{tournament.Name}': AnnouncementChannel is null");
+                    return;
+                }
+
+                if (tournament.AnnouncementChannel.Guild is null)
+                {
+                    _logger.LogError($"Failed to post tournament visualization for '{tournament.Name}': Guild is null");
+                    return;
+                }
+
                 // Find the standings channel in the server config
                 var serverId = tournament.AnnouncementChannel.Guild.Id;
+                _logger.LogInformation($"Looking for standings channel in server with ID: {serverId}");
+
                 var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s?.ServerId == serverId);
 
                 if (server != null && server.StandingsChannelId.HasValue)
                 {
+                    _logger.LogInformation($"Found configured standings channel ID: {server.StandingsChannelId.Value}");
+
                     // Generate the standings image
-                    string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, client);
-
-                    // Get the standings channel
-                    var standingsChannel = await client.GetChannelAsync(server.StandingsChannelId.Value);
-                    if (standingsChannel is not null)
+                    try
                     {
-                        // Create the embed
-                        var embed = new DiscordEmbedBuilder()
-                            .WithTitle($"🏆 Tournament Standings: {tournament.Name}")
-                            .WithDescription($"Format: {tournament.Format}\nPlayers: {tournament.Groups.Sum(g => g.Participants.Count)}\nGroups: {tournament.Groups.Count}")
-                            .WithColor(DiscordColor.Gold)
-                            .WithFooter("Tournament Standings");
+                        _logger.LogInformation("Generating tournament standings image");
+                        string imagePath = await TournamentVisualization.GenerateStandingsImage(tournament, client);
+                        _logger.LogInformation($"Generated standings image at: {imagePath}");
 
-                        // Send the image to the channel
-                        using (var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
+                        // Get the standings channel
+                        try
                         {
-                            var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
-                                .AddEmbed(embed)
-                                .AddFile(Path.GetFileName(imagePath), fileStream));
+                            _logger.LogInformation($"Fetching standings channel with ID: {server.StandingsChannelId.Value}");
+                            var standingsChannel = await client.GetChannelAsync(server.StandingsChannelId.Value);
 
-                            // Store this message ID for later deletion if needed
-                            var relatedMessage = new RelatedMessage
+                            if (standingsChannel is not null)
                             {
-                                ChannelId = standingsChannel.Id,
-                                MessageId = message.Id,
-                                Type = "StandingsVisualization"
-                            };
+                                _logger.LogInformation($"Successfully fetched standings channel: {standingsChannel.Name}");
 
-                            // Add to tournament's related messages
-                            if (tournament.RelatedMessages == null)
-                                tournament.RelatedMessages = new List<RelatedMessage>();
+                                // Create the embed
+                                var embed = new DiscordEmbedBuilder()
+                                    .WithTitle($"🏆 Tournament Standings: {tournament.Name}")
+                                    .WithDescription($"Format: {tournament.Format}\nPlayers: {tournament.Groups.Sum(g => g.Participants.Count)}\nGroups: {tournament.Groups.Count}")
+                                    .WithColor(DiscordColor.Gold)
+                                    .WithFooter("Tournament Standings");
 
-                            tournament.RelatedMessages.Add(relatedMessage);
+                                // Send the image to the channel
+                                try
+                                {
+                                    _logger.LogInformation("Sending standings image to channel");
+                                    using (var fileStream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
+                                    {
+                                        var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
+                                            .AddEmbed(embed)
+                                            .AddFile(Path.GetFileName(imagePath), fileStream));
 
-                            // Save updated tournament state
-                            await SaveTournamentState(client);
+                                        _logger.LogInformation($"Successfully sent standings image, message ID: {message.Id}");
+
+                                        // Store this message ID for later deletion if needed
+                                        var relatedMessage = new RelatedMessage
+                                        {
+                                            ChannelId = standingsChannel.Id,
+                                            MessageId = message.Id,
+                                            Type = "StandingsVisualization"
+                                        };
+
+                                        // Add to tournament's related messages
+                                        if (tournament.RelatedMessages == null)
+                                        {
+                                            tournament.RelatedMessages = new List<RelatedMessage>();
+                                            _logger.LogInformation("Created new related messages list for tournament");
+                                        }
+
+                                        tournament.RelatedMessages.Add(relatedMessage);
+                                        _logger.LogInformation("Added related message to tournament");
+
+                                        // Save updated tournament state
+                                        await SaveTournamentState(client);
+                                        _logger.LogInformation("Saved tournament state after posting visualization");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Error sending standings image to channel");
+                                }
+                            }
+                            else
+                            {
+                                _logger.LogError($"Failed to get standings channel with ID: {server.StandingsChannelId.Value}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Error fetching standings channel with ID: {server.StandingsChannelId.Value}");
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error generating tournament standings image");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning($"No standings channel configured for server with ID: {serverId}. Skipping visualization posting.");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error posting standings visualization: {ex.Message}");
+                _logger.LogError(ex, $"Unhandled error in PostTournamentVisualization for tournament '{tournament?.Name ?? "null"}'");
             }
         }
 
