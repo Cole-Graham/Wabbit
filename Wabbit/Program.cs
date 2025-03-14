@@ -3,6 +3,8 @@ using DSharpPlus.Commands;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Serilog;
+using Serilog.Events;
 using Wabbit.BotClient.Commands;
 using Wabbit.BotClient.Config;
 using Wabbit.BotClient.Events;
@@ -19,10 +21,30 @@ namespace Wabbit
         {
             try
             {
+                // Configure Serilog
+                string logsPath = Path.Combine(Directory.GetCurrentDirectory(), "Logs");
+                Directory.CreateDirectory(logsPath);
+
+                Log.Logger = new LoggerConfiguration()
+                    .MinimumLevel.Information()
+                    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+                    .MinimumLevel.Override("System", LogEventLevel.Warning)
+                    .Enrich.FromLogContext()
+                    .WriteTo.Console()
+                    .WriteTo.File(
+                        Path.Combine(logsPath, "wabbit-.log"),
+                        rollingInterval: RollingInterval.Day,
+                        retainedFileCountLimit: 7,
+                        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+                    .CreateLogger();
+
+                Log.Information("Starting Wabbit Discord Bot");
+
                 await ConfigManager.ReadConfig();
 
                 if (ConfigManager.Config is null || ConfigManager.Config.Token is null)
                 {
+                    Log.Error("Discord bot token is not configured.");
                     Console.WriteLine("Discord bot token is not configured. Please either:");
                     Console.WriteLine("1. Create a .env file with WABBIT_BOT_TOKEN=\"your-token-here\"");
                     Console.WriteLine("2. Run the application again and enter the token when prompted (interactive mode only)");
@@ -42,6 +64,14 @@ namespace Wabbit
                 var ongoingRounds = new OngoingRounds();
 
                 DiscordClientBuilder builder = DiscordClientBuilder.CreateDefault(ConfigManager.Config.Token, DiscordIntents.All);
+
+                // Configure logging with Serilog
+                // Set minimum log level to match our Serilog configuration
+                builder.ConfigureLogging(logging =>
+                {
+                    // Add Serilog provider to DSharpPlus logging
+                    logging.AddSerilog(Log.Logger);
+                });
 
                 builder.ConfigureServices(services =>
                 {
@@ -106,7 +136,12 @@ namespace Wabbit
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                Log.Fatal(ex, "Host terminated unexpectedly");
+            }
+            finally
+            {
+                // Close and flush the log
+                Log.CloseAndFlush();
             }
         }
     }

@@ -1347,6 +1347,7 @@ namespace Wabbit.BotClient.Events
                 builder.AddField("Scheduled Start Time", formattedTime);
             }
 
+            // First try to use loaded Discord members if available
             if (signup.Participants?.Count > 0)
             {
                 // Sort participants by any seeds
@@ -1388,6 +1389,54 @@ namespace Wabbit.BotClient.Events
                             var rightPlayer = sortedParticipants[rightIndex];
                             string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
                             participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
+                        }
+
+                        participantsText.AppendLine();
+                    }
+                }
+
+                string finalText = participantsText.ToString();
+
+                // If the text is too long, truncate it
+                if (finalText.Length > 1024)
+                {
+                    finalText = finalText.Substring(0, 1020) + "...";
+                }
+
+                builder.AddField($"Participants ({sortedParticipants.Count})", finalText);
+            }
+            // Fallback to ParticipantInfo if Discord members couldn't be loaded
+            else if (signup.ParticipantInfo?.Count > 0)
+            {
+                // Sort participants by username
+                var sortedParticipants = signup.ParticipantInfo
+                    .OrderBy(p => p.Username)
+                    .ToList();
+
+                StringBuilder participantsText = new StringBuilder();
+                int totalParticipants = sortedParticipants.Count;
+
+                // Calculate the number of rows needed
+                int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
+
+                for (int i = 0; i < rowsNeeded; i++)
+                {
+                    // Left column
+                    int leftIndex = i * 2;
+                    if (leftIndex < totalParticipants)
+                    {
+                        var leftPlayer = sortedParticipants[leftIndex];
+                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Id}>");
+
+                        // Add padding between columns
+                        participantsText.Append("    ");
+
+                        // Right column
+                        int rightIndex = leftIndex + 1;
+                        if (rightIndex < totalParticipants)
+                        {
+                            var rightPlayer = sortedParticipants[rightIndex];
+                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Id}>");
                         }
 
                         participantsText.AppendLine();
