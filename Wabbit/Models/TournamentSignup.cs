@@ -39,11 +39,11 @@ namespace Wabbit.Models
 
         // Used to store participant info from JSON until we can convert to DiscordMembers
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
-        public List<(ulong Id, string Username)> ParticipantInfo { get; set; } = [];
+        public List<ParticipantInfo> ParticipantInfo { get; set; } = [];
 
         // Used to store seeding info from JSON until we can convert to DiscordMembers
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
-        public List<(ulong Id, int Seed)> SeedInfo { get; set; } = [];
+        public List<SeedInfo> SeedInfo { get; set; } = [];
     }
 
     public class ParticipantSeed
@@ -69,5 +69,17 @@ namespace Wabbit.Models
         public ulong ChannelId { get; set; }
         public ulong MessageId { get; set; }
         public string Type { get; set; } = "Announcement"; // e.g., "Announcement", "Standings", etc.
+    }
+
+    public class ParticipantInfo
+    {
+        public ulong Id { get; set; }
+        public string Username { get; set; } = string.Empty;
+    }
+
+    public class SeedInfo
+    {
+        public ulong Id { get; set; }
+        public int Seed { get; set; }
     }
 }

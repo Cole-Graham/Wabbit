@@ -183,12 +183,12 @@ namespace Wabbit.Services
 
             // Store participant IDs and usernames for later reconstruction
             cleanedSignup.ParticipantInfo = signup.Participants
-                .Select(p => (p.Id, p.Username))
+                .Select(p => new ParticipantInfo { Id = p.Id, Username = p.Username })
                 .ToList();
 
             // Store seed info for later reconstruction
             cleanedSignup.SeedInfo = signup.Seeds
-                .Select(s => (s.PlayerId, s.Seed))
+                .Select(s => new SeedInfo { Id = s.PlayerId, Seed = s.Seed })
                 .ToList();
 
             return cleanedSignup;
