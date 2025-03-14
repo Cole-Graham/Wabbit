@@ -189,6 +189,8 @@ namespace Wabbit.Services
                 // Find or create a thread for the match
                 _logger.LogInformation("Finding channel for tournament match");
                 DiscordChannel? thread = null;
+                DiscordThreadChannel? player1Thread = null;
+                DiscordThreadChannel? player2Thread = null;
                 DiscordGuild? guild = null;
 
                 // Try to get guild from player
@@ -212,32 +214,51 @@ namespace Wabbit.Services
                         // Create a thread for the match using our helper method
                         var threadName = $"{match.Name}";
 
-                        var threadChannel = await DiscordUtilities.CreateThreadAsync(
+                        // Create separate threads for each player
+                        // Player 1 thread
+                        var player1ThreadName = $"{player1.DisplayName}'s Match";
+                        var p1Thread = await DiscordUtilities.CreateThreadAsync(
                             channel,
-                            threadName,
+                            player1ThreadName,
                             _logger,
                             DiscordChannelType.PrivateThread,
                             DSharpPlus.Entities.DiscordAutoArchiveDuration.Day);
 
-                        if (threadChannel is not null)
-                        {
-                            thread = threadChannel;
+                        // Player 2 thread
+                        var player2ThreadName = $"{player2.DisplayName}'s Match";
+                        var p2Thread = await DiscordUtilities.CreateThreadAsync(
+                            channel,
+                            player2ThreadName,
+                            _logger,
+                            DiscordChannelType.PrivateThread,
+                            DSharpPlus.Entities.DiscordAutoArchiveDuration.Day);
 
-                            // Add players to the thread
+                        if (p1Thread is not null && p2Thread is not null)
+                        {
+                            // Store main thread reference (using player 1's thread)
+                            thread = p1Thread;
+                            player1Thread = p1Thread;
+                            player2Thread = p2Thread;
+
+                            // Add players to their respective threads
                             try
                             {
-                                // Mention players in the thread
-                                await thread.SendMessageAsync($"{player1.Mention} {player2.Mention}");
+                                await p1Thread.AddThreadMemberAsync(player1);
+                                await p2Thread.AddThreadMemberAsync(player2);
+
+                                // Thread references will be stored in team objects after Round is created
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Error adding members to thread");
+                                _logger.LogError(ex, "Error adding members to threads");
                             }
                         }
                         else
                         {
                             // Fallback to using the channel directly if thread creation failed
                             thread = channel;
+                            player1Thread = null;
+                            player2Thread = null;
                         }
                     }
                     catch (Exception ex)
@@ -304,6 +325,7 @@ namespace Wabbit.Services
                     _logger.LogWarning("No maps available for match. Map pool may be empty.");
                 }
 
+                // Create options for map ban dropdown
                 var options = new List<DiscordSelectComponentOption>();
                 foreach (var map in maps1v1)
                 {
@@ -319,7 +341,7 @@ namespace Wabbit.Services
                     {
                         new Round.Participant { Player = player1 }
                     },
-                    Thread = thread as DiscordThreadChannel,
+                    Thread = player1Thread ?? (thread as DiscordThreadChannel),
                     MapBans = new List<string>()
                 };
 
@@ -330,6 +352,7 @@ namespace Wabbit.Services
                     {
                         new Round.Participant { Player = player2 }
                     },
+                    Thread = player2Thread ?? (thread as DiscordThreadChannel),
                     MapBans = new List<string>()
                 };
 
@@ -358,13 +381,27 @@ namespace Wabbit.Services
                 // Link the round to the match
                 match.LinkedRound = round;
 
-                // Send match information to the thread
-                if (thread is not null)
+                // Helper method to send match information to a thread
+                async Task SendMatchInfoToThread(DiscordChannel threadChannel)
                 {
                     try
                     {
-                        // Mention players
-                        await thread.SendMessageAsync($"{player1.Mention} {player2.Mention}");
+                        // Welcome message without mentions - will auto-delete after 10 seconds
+                        var welcomeMsg = await threadChannel.SendMessageAsync("**Match Thread**\nWelcome to your tournament match thread!");
+
+                        // Auto-delete welcome message after 10 seconds to keep thread clean
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(10000); // 10 seconds
+                            try
+                            {
+                                await welcomeMsg.DeleteAsync();
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning($"Failed to auto-delete welcome message: {ex.Message}");
+                            }
+                        });
 
                         // Create match overview
                         var matchOverview = new DiscordEmbedBuilder()
@@ -374,17 +411,57 @@ namespace Wabbit.Services
                             .AddField("Game", "1/" + (bestOf > 1 ? bestOf.ToString() : "1"), true)
                             .WithColor(DiscordColor.Blurple);
 
-                        // Send match overview
-                        await thread.SendMessageAsync(embed: matchOverview);
+                        // Send match overview - this will remain as a reference
+                        await threadChannel.SendMessageAsync(embed: matchOverview);
 
-                        // Announce the initial map
-                        if (round?.CustomProperties != null &&
-                            round.CustomProperties.ContainsKey("CurrentMap") &&
-                            round.CustomProperties["CurrentMap"] is string currentMap &&
-                            !string.IsNullOrEmpty(currentMap))
+                        // Create map ban dropdown options
+                        var options = new List<DiscordSelectComponentOption>();
+                        foreach (var map in maps1v1)
                         {
-                            await thread.SendMessageAsync($"🗺️ Map for Game 1: **{currentMap}**");
+                            if (string.IsNullOrEmpty(map)) continue;
+                            options.Add(new DiscordSelectComponentOption(map, map));
                         }
+
+                        // Create dropdown with appropriate instructions based on match length
+                        DiscordSelectComponent dropdown;
+                        string message;
+
+                        switch (bestOf)
+                        {
+                            case 3:
+                                dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
+                                message = "**Scroll to see all map options!**\n\n" +
+                                    "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                    "Only 2 maps from each player will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
+                                    "selected will be randomly banned in case both players ban the same map. " +
+                                    "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
+                                    "randomly before each game after deck codes have been locked in.\n\n" +
+                                    "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
+                                break;
+                            case 5:
+                                dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 2, 2);
+                                message = "**Scroll to see all map options!**\n\n" +
+                                    "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                    "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
+                                    "One of the 2nd priority maps selected by each player will be randomly banned. " +
+                                    "You will not know which maps were banned by your opponent, " +
+                                    "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.\n\n" +
+                                    "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
+                                break;
+                            default:
+                                dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
+                                message = "**Scroll to see all map options!**\n\n" +
+                                    "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
+                                    "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
+                                break;
+                        }
+
+                        // Instructions message with the dropdown - this is important to keep
+                        var dropdownBuilder = new DiscordMessageBuilder()
+                            .WithContent(message)
+                            .AddComponents(dropdown);
+
+                        await threadChannel.SendMessageAsync(dropdownBuilder);
 
                         // Create a button to report results
                         var reportButton = new DiscordButtonComponent(
@@ -392,18 +469,29 @@ namespace Wabbit.Services
                             "report_result",
                             "Report Result");
 
-                        // Create a message with the button
-                        var message = new DiscordMessageBuilder()
+                        // Create a message with the button - this is important to keep
+                        var resultMessage = new DiscordMessageBuilder()
                             .WithContent("Report the result of the match when it's done:")
                             .AddComponents(reportButton);
 
                         // Send the message with the button
-                        await thread.SendMessageAsync(message);
+                        await threadChannel.SendMessageAsync(resultMessage);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error sending match information to thread");
+                        _logger.LogError(ex, $"Error sending match information to thread {threadChannel.Name}");
                     }
+                }
+
+                // Send information to both player threads
+                if (team1.Thread is not null)
+                {
+                    await SendMatchInfoToThread(team1.Thread);
+                }
+
+                if (team2.Thread is not null)
+                {
+                    await SendMatchInfoToThread(team2.Thread);
                 }
 
                 // Save tournament state

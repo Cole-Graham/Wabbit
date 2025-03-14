@@ -233,14 +233,13 @@ namespace Wabbit.BotClient.Events
                                         if (userParticipant != null && e.Channel is not null)
                                         {
                                             // Create a message with instructions for deck submission
-                                            var promptMessage = new DiscordMessageBuilder()
-                                                .WithContent($"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
-                                                            "After submitting, you'll be able to review and confirm your deck code.");
+                                            var promptContent = $"{e.User.Mention} Please use the `/tournament submit_deck` command to submit your deck code.\n\n" +
+                                                            "After submitting, you'll be able to review and confirm your deck code.";
 
-                                            var deckPrompt = await e.Channel.SendMessageAsync(promptMessage);
+                                            var deckPrompt = await e.Channel.SendMessageAsync(promptContent);
 
                                             // Log the action
-                                            Console.WriteLine($"Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
+                                            Console.WriteLine($"Second handler: Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
 
                                             // The detailed instruction message is already in the deck prompt above
                                         }
@@ -557,9 +556,11 @@ namespace Wabbit.BotClient.Events
                                     // Update message without deck button
                                     if (e.Message is not null)
                                     {
-                                        await e.Message.ModifyAsync(new DiscordMessageBuilder()
+                                        var confirmationMsg = await e.Message.ModifyAsync(new DiscordMessageBuilder()
                                             .WithContent("Map bans confirmed! Please submit your deck next using `/tournament submit_deck`")
                                             .AddEmbed(finalEmbed));
+
+                                        // Don't auto-delete this confirmation as it's needed to provide instructions
                                     }
 
                                     // Send notification to bot channel
@@ -581,14 +582,22 @@ namespace Wabbit.BotClient.Events
                                     {
                                         try
                                         {
-                                            await e.Channel.SendMessageAsync($"{e.User.Mention} Error confirming map bans: {ex.Message}");
+                                            var errorMsg = await e.Channel.SendMessageAsync($"{e.User.Mention} Error confirming map bans: {ex.Message}");
+                                            await AutoDeleteMessageAsync(errorMsg, 10);
                                         }
                                         catch { }
                                     }
                                 }
 
-                                // Save tournament state
+                                // Save both tournament state and tournament data files
+                                // This ensures map bans are preserved in both runtime and persistent storage
                                 await _stateService.SaveTournamentStateAsync(sender);
+
+                                using (var scope = _scopeFactory.CreateScope())
+                                {
+                                    var tournamentManager = scope.ServiceProvider.GetRequiredService<ITournamentManagerService>();
+                                    await tournamentManager.SaveAllDataAsync();
+                                }
                                 break;
 
                             case string s when s.StartsWith("revise_map_bans_"):
@@ -748,7 +757,7 @@ namespace Wabbit.BotClient.Events
                                     await e.Message.DeleteAsync();
 
                                     // Send the text-based deck submission prompt
-                                    await e.Channel.SendMessageAsync($"{e.User.Mention} Please enter your deck code as a reply to this message.");
+                                    await e.Channel.SendMessageAsync($"{e.User.Mention} Please use the `/tournament submit_deck` command to submit your deck code.");
                                 }
                                 catch (Exception ex)
                                 {
@@ -904,11 +913,10 @@ namespace Wabbit.BotClient.Events
                                     if (e.Channel is not null)
                                     {
                                         // Create a message with instructions for deck submission
-                                        var promptMessage = new DiscordMessageBuilder()
-                                            .WithContent($"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
-                                                        "After submitting, you'll be able to review and confirm your deck code.");
+                                        var promptContent = $"{e.User.Mention} Please enter your deck code in a reply to this message.\n\n" +
+                                                        "After submitting, you'll be able to review and confirm your deck code.";
 
-                                        var deckPrompt = await e.Channel.SendMessageAsync(promptMessage);
+                                        var deckPrompt = await e.Channel.SendMessageAsync(promptContent);
 
                                         // Log the action
                                         Console.WriteLine($"Second handler: Sent deck submission prompt to user {e.User.Username} ({e.User.Id})");
@@ -1385,38 +1393,102 @@ namespace Wabbit.BotClient.Events
                 // Calculate the number of rows needed
                 int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
 
+                // Create ASCII table header
+                participantsText.AppendLine("```");
+                participantsText.AppendLine("┌───────┬────────────────────────────┐┌───────┬────────────────────────────┐");
+                participantsText.AppendLine("│   #   │         PARTICIPANT        ││   #   │         PARTICIPANT        │");
+                participantsText.AppendLine("├───────┼────────────────────────────┤├───────┼────────────────────────────┤");
+
                 for (int i = 0; i < rowsNeeded; i++)
                 {
-                    // Left column
+                    StringBuilder rowText = new StringBuilder();
+                    rowText.Append("│");
+
+                    // Left column - always present
                     int leftIndex = i * 2;
                     if (leftIndex < totalParticipants)
                     {
                         var leftPlayer = sortedParticipants[leftIndex];
-                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
-                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
+                        string seedDisplay = leftPlayer.Seed > 0 ? $"[#{leftPlayer.Seed}]" : "";
+                        // Format the number with padding
+                        rowText.Append($" {(leftIndex + 1).ToString().PadLeft(3)} ");
+                        rowText.Append("│");
 
-                        // Add padding between columns
-                        participantsText.Append("                ");
+                        // Get player username (instead of mention) for ASCII table
+                        string playerName = $"{leftPlayer.Player.Username} {seedDisplay}";
+                        // Trim if too long
+                        if (playerName.Length > 26)
+                            playerName = playerName.Substring(0, 23) + "...";
+                        else
+                            playerName = playerName.PadRight(26);
 
-                        // Right column
-                        int rightIndex = leftIndex + 1;
-                        if (rightIndex < totalParticipants)
-                        {
-                            var rightPlayer = sortedParticipants[rightIndex];
-                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
-                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
-                        }
-
-                        participantsText.AppendLine();
+                        rowText.Append($" {playerName} ");
                     }
+                    else
+                    {
+                        // Empty left column for the last row if odd number
+                        rowText.Append("       │                            ");
+                    }
+
+                    rowText.Append("││");
+
+                    // Right column - may not be present for odd number of participants
+                    int rightIndex = leftIndex + 1;
+                    if (rightIndex < totalParticipants)
+                    {
+                        var rightPlayer = sortedParticipants[rightIndex];
+                        string seedDisplay = rightPlayer.Seed > 0 ? $"[#{rightPlayer.Seed}]" : "";
+                        // Format the number with padding
+                        rowText.Append($" {(rightIndex + 1).ToString().PadLeft(3)} ");
+                        rowText.Append("│");
+
+                        // Get player username for ASCII table
+                        string playerName = $"{rightPlayer.Player.Username} {seedDisplay}";
+                        // Trim if too long
+                        if (playerName.Length > 26)
+                            playerName = playerName.Substring(0, 23) + "...";
+                        else
+                            playerName = playerName.PadRight(26);
+
+                        rowText.Append($" {playerName} ");
+                    }
+                    else
+                    {
+                        // Empty right column for the last row if odd number
+                        rowText.Append("       │                            ");
+                    }
+
+                    rowText.Append("│");
+                    participantsText.AppendLine(rowText.ToString());
                 }
+
+                // Table footer
+                participantsText.AppendLine("└───────┴────────────────────────────┘└───────┴────────────────────────────┘");
+                participantsText.AppendLine("```");
+
+                // Add regular mentions list after the table (hidden to avoid notification spam)
+                participantsText.AppendLine("**Participants:** " + string.Join(", ", sortedParticipants.Select(p => p.Player.Username)));
 
                 string finalText = participantsText.ToString();
 
-                // If the text is too long, truncate it
+                // If the text is too long, truncate it and use simpler format
                 if (finalText.Length > 1024)
                 {
-                    finalText = finalText.Substring(0, 1020) + "...";
+                    // Fallback to a simpler format
+                    StringBuilder simpleText = new StringBuilder();
+                    // Create a simple comma-separated list
+                    simpleText.AppendLine("**Participants (list too long for detailed view):**");
+                    simpleText.AppendLine(string.Join(", ", sortedParticipants.Select(p =>
+                    {
+                        string seedDisplay = p.Seed > 0 ? $"[#{p.Seed}]" : "";
+                        return $"{p.Player.Username}{seedDisplay}";
+                    })));
+
+                    finalText = simpleText.ToString();
+
+                    // Still check length
+                    if (finalText.Length > 1024)
+                        finalText = finalText.Substring(0, 1020) + "...";
                 }
 
                 builder.AddField($"Participants ({sortedParticipants.Count})", finalText);
@@ -1443,38 +1515,102 @@ namespace Wabbit.BotClient.Events
                 // Calculate the number of rows needed
                 int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
 
+                // Create ASCII table header
+                participantsText.AppendLine("```");
+                participantsText.AppendLine("┌───────┬────────────────────────────┐┌───────┬────────────────────────────┐");
+                participantsText.AppendLine("│   #   │         PARTICIPANT        ││   #   │         PARTICIPANT        │");
+                participantsText.AppendLine("├───────┼────────────────────────────┤├───────┼────────────────────────────┤");
+
                 for (int i = 0; i < rowsNeeded; i++)
                 {
-                    // Left column
+                    StringBuilder rowText = new StringBuilder();
+                    rowText.Append("│");
+
+                    // Left column - always present
                     int leftIndex = i * 2;
                     if (leftIndex < totalParticipants)
                     {
                         var leftPlayer = sortedParticipants[leftIndex];
-                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
-                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
+                        string seedDisplay = leftPlayer.Seed > 0 ? $"[#{leftPlayer.Seed}]" : "";
+                        // Format the number with padding
+                        rowText.Append($" {(leftIndex + 1).ToString().PadLeft(3)} ");
+                        rowText.Append("│");
 
-                        // Add padding between columns
-                        participantsText.Append("                ");
+                        // Get player username for ASCII table
+                        string playerName = $"{leftPlayer.Username} {seedDisplay}";
+                        // Trim if too long
+                        if (playerName.Length > 26)
+                            playerName = playerName.Substring(0, 23) + "...";
+                        else
+                            playerName = playerName.PadRight(26);
 
-                        // Right column
-                        int rightIndex = leftIndex + 1;
-                        if (rightIndex < totalParticipants)
-                        {
-                            var rightPlayer = sortedParticipants[rightIndex];
-                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
-                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
-                        }
-
-                        participantsText.AppendLine();
+                        rowText.Append($" {playerName} ");
                     }
+                    else
+                    {
+                        // Empty left column for the last row if odd number
+                        rowText.Append("       │                            ");
+                    }
+
+                    rowText.Append("││");
+
+                    // Right column - may not be present for odd number of participants
+                    int rightIndex = leftIndex + 1;
+                    if (rightIndex < totalParticipants)
+                    {
+                        var rightPlayer = sortedParticipants[rightIndex];
+                        string seedDisplay = rightPlayer.Seed > 0 ? $"[#{rightPlayer.Seed}]" : "";
+                        // Format the number with padding
+                        rowText.Append($" {(rightIndex + 1).ToString().PadLeft(3)} ");
+                        rowText.Append("│");
+
+                        // Get player username for ASCII table
+                        string playerName = $"{rightPlayer.Username} {seedDisplay}";
+                        // Trim if too long
+                        if (playerName.Length > 26)
+                            playerName = playerName.Substring(0, 23) + "...";
+                        else
+                            playerName = playerName.PadRight(26);
+
+                        rowText.Append($" {playerName} ");
+                    }
+                    else
+                    {
+                        // Empty right column for the last row if odd number
+                        rowText.Append("       │                            ");
+                    }
+
+                    rowText.Append("│");
+                    participantsText.AppendLine(rowText.ToString());
                 }
+
+                // Table footer
+                participantsText.AppendLine("└───────┴────────────────────────────┘└───────┴────────────────────────────┘");
+                participantsText.AppendLine("```");
+
+                // Add regular mentions list after the table (hidden to avoid notification spam)
+                participantsText.AppendLine("**Participants:** " + string.Join(", ", sortedParticipants.Select(p => p.Username)));
 
                 string finalText = participantsText.ToString();
 
-                // If the text is too long, truncate it
+                // If the text is too long, truncate it and use simpler format
                 if (finalText.Length > 1024)
                 {
-                    finalText = finalText.Substring(0, 1020) + "...";
+                    // Fallback to a simpler format
+                    StringBuilder simpleText = new StringBuilder();
+                    // Create a simple comma-separated list
+                    simpleText.AppendLine("**Participants (list too long for detailed view):**");
+                    simpleText.AppendLine(string.Join(", ", sortedParticipants.Select(p =>
+                    {
+                        string seedDisplay = p.Seed > 0 ? $"[#{p.Seed}]" : "";
+                        return $"{p.Username}{seedDisplay}";
+                    })));
+
+                    finalText = simpleText.ToString();
+
+                    // Still check length
+                    if (finalText.Length > 1024)
+                        finalText = finalText.Substring(0, 1020) + "...";
                 }
 
                 builder.AddField($"Participants ({sortedParticipants.Count})", finalText);
@@ -1896,19 +2032,36 @@ namespace Wabbit.BotClient.Events
                     .WithColor(DiscordColor.Green);
 
                 // Send a confirmation message using the appropriate method
+                DiscordMessage? confirmedMessage = null;
                 if (hasBeenDeferred)
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(
+                    var response = await e.Interaction.CreateFollowupMessageAsync(
                         new DiscordFollowupMessageBuilder()
                             .WithContent($"{e.User.Mention} Your deck code has been confirmed!")
                             .AddEmbed(confirmedEmbed));
+
+                    // Get the actual message for auto-deletion
+                    if (e.Channel is not null)
+                    {
+                        try
+                        {
+                            confirmedMessage = await e.Channel.GetMessageAsync(response.Id);
+                        }
+                        catch (Exception) { /* Ignore if we can't get it */ }
+                    }
                 }
                 else
                 {
-                    await e.Channel.SendMessageAsync(
+                    confirmedMessage = await e.Channel.SendMessageAsync(
                         new DiscordMessageBuilder()
                             .WithContent($"{e.User.Mention} Your deck code has been confirmed!")
                             .AddEmbed(confirmedEmbed));
+                }
+
+                // Auto-delete the confirmation message after 10 seconds
+                if (confirmedMessage is not null)
+                {
+                    await AutoDeleteMessageAsync(confirmedMessage, 10);
                 }
 
                 // Delete the confirmation message with the buttons
@@ -1921,8 +2074,15 @@ namespace Wabbit.BotClient.Events
                     _logger.LogWarning($"Could not delete confirmation message: {ex.Message}");
                 }
 
-                // Save tournament state
+                // Save both tournament state and tournament data files
+                // This ensures deck codes are preserved in both runtime and persistent storage
                 await _stateService.SaveTournamentStateAsync(sender);
+
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var tournamentManager = scope.ServiceProvider.GetRequiredService<ITournamentManagerService>();
+                    await tournamentManager.SaveAllDataAsync();
+                }
 
                 // Check if all participants have submitted their decks
                 bool allSubmitted = round.Teams?.All(t =>
@@ -1943,8 +2103,14 @@ namespace Wabbit.BotClient.Events
                         }
                     }
 
-                    // Save tournament state again
+                    // Save both tournament state and tournament data files
                     await _stateService.SaveTournamentStateAsync(sender);
+
+                    using (var scope = _scopeFactory.CreateScope())
+                    {
+                        var tournamentManager = scope.ServiceProvider.GetRequiredService<ITournamentManagerService>();
+                        await tournamentManager.SaveAllDataAsync();
+                    }
                 }
             }
             catch (Exception ex)
@@ -1954,13 +2120,25 @@ namespace Wabbit.BotClient.Events
                 // Use the appropriate method for sending the error message
                 if (hasBeenDeferred)
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(
+                    var response = await e.Interaction.CreateFollowupMessageAsync(
                         new DiscordFollowupMessageBuilder()
                             .WithContent($"{e.User.Mention} There was an error confirming your deck: {ex.Message}"));
+
+                    // Try to get the actual message for auto-deletion
+                    if (e.Channel is not null)
+                    {
+                        try
+                        {
+                            var errorMsg = await e.Channel.GetMessageAsync(response.Id);
+                            await AutoDeleteMessageAsync(errorMsg, 10);
+                        }
+                        catch (Exception) { /* Ignore if we can't get it */ }
+                    }
                 }
                 else if (e.Channel is not null)
                 {
-                    await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error confirming your deck: {ex.Message}");
+                    var errorMsg = await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error confirming your deck: {ex.Message}");
+                    await AutoDeleteMessageAsync(errorMsg, 10);
                 }
             }
         }
@@ -2027,21 +2205,14 @@ namespace Wabbit.BotClient.Events
                 await CleanupDeckSubmissionMessages(e.Channel, userId);
 
                 // Prompt the user to submit a new deck code
-                var promptMessage = new DiscordMessageBuilder()
-                    .WithContent($"{e.User.Mention} Please enter your revised deck code as a reply to this message.\n\n" +
-                                "After submitting, you'll be able to review and confirm your deck code.");
+                var promptContent = $"{e.User.Mention} Please use the `/tournament submit_deck` command to submit your revised deck code.\n\n" +
+                                  "After submitting, you'll be able to review and confirm your deck code.";
 
-                // Send the new prompt using the appropriate method
-                if (hasBeenDeferred)
-                {
-                    await e.Interaction.CreateFollowupMessageAsync(
-                        new DiscordFollowupMessageBuilder()
-                            .WithContent($"{e.User.Mention} Please enter your revised deck code in this thread.\n\n" +
-                                        "After submitting, you'll be able to review and confirm your deck code."));
-                }
+                // Send the message directly with the string content
+                var reviseDeckMessage = await e.Channel.SendMessageAsync(promptContent);
 
-                // Always send the channel message as well for clarity
-                await e.Channel.SendMessageAsync(promptMessage);
+                // Auto-delete the revision prompt after 10 seconds
+                await AutoDeleteMessageAsync(reviseDeckMessage, 10);
             }
             catch (Exception ex)
             {
@@ -2050,15 +2221,49 @@ namespace Wabbit.BotClient.Events
                 // Use the appropriate method for sending the error message
                 if (hasBeenDeferred)
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(
+                    var response = await e.Interaction.CreateFollowupMessageAsync(
                         new DiscordFollowupMessageBuilder()
-                            .WithContent($"{e.User.Mention} There was an error processing your deck revision request: {ex.Message}"));
+                            .WithContent($"{e.User.Mention} There was an error revising your deck: {ex.Message}"));
+
+                    // Try to auto-delete error message
+                    if (e.Channel is not null)
+                    {
+                        try
+                        {
+                            var errorMsg = await e.Channel.GetMessageAsync(response.Id);
+                            await AutoDeleteMessageAsync(errorMsg, 10);
+                        }
+                        catch (Exception) { /* Ignore if we can't get it */ }
+                    }
                 }
                 else if (e.Channel is not null)
                 {
-                    await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error processing your deck revision request: {ex.Message}");
+                    var errorMsg = await e.Channel.SendMessageAsync($"{e.User.Mention} There was an error revising your deck: {ex.Message}");
+                    await AutoDeleteMessageAsync(errorMsg, 10);
                 }
             }
+        }
+
+        // Helper method to auto-delete a message after a specified number of seconds
+        private Task AutoDeleteMessageAsync(DiscordMessage message, int seconds)
+        {
+            if (message == null) return Task.CompletedTask;
+
+            // Run in a background task to avoid blocking
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(seconds * 1000);
+                    await message.DeleteAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Failed to auto-delete message: {ex.Message}");
+                }
+            });
+
+            return Task.CompletedTask;
         }
 
         // Handler for game winner dropdown
@@ -2181,11 +2386,24 @@ namespace Wabbit.BotClient.Events
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling game winner dropdown");
+                _logger.LogError(ex, "Unexpected error in HandleGameWinnerDropdown");
 
+                // Attempt to notify the user if possible
                 if (e.Channel is not null)
                 {
-                    await e.Channel.SendMessageAsync($"⚠️ Error processing game result: {ex.Message}");
+                    await e.Channel.SendMessageAsync($"⚠️ An unexpected error occurred: {ex.Message}");
+                }
+
+                // If interaction was deferred, try to send a followup
+                if (hasBeenDeferred)
+                {
+                    try
+                    {
+                        await e.Interaction.CreateFollowupMessageAsync(
+                            new DiscordFollowupMessageBuilder()
+                                .WithContent($"⚠️ An unexpected error occurred: {ex.Message}"));
+                    }
+                    catch (Exception) { /* Ignore if we can't send followup */ }
                 }
             }
         }
