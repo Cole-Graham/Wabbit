@@ -86,6 +86,23 @@ namespace Wabbit.Services
                             if (signups != null)
                             {
                                 _ongoingRounds.TournamentSignups = signups;
+
+                                // Verify the ParticipantInfo was loaded correctly
+                                foreach (var signup in _ongoingRounds.TournamentSignups)
+                                {
+                                    if (signup.ParticipantInfo == null)
+                                    {
+                                        signup.ParticipantInfo = new List<ParticipantInfo>();
+                                    }
+
+                                    // Log the participants to verify they're properly loaded
+                                    _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
+                                    foreach (var participant in signup.ParticipantInfo)
+                                    {
+                                        _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
+                                    }
+                                }
+
                                 _logger.LogInformation($"Loaded {signups.Count} signups from root $values");
                                 return;
                             }
@@ -98,6 +115,23 @@ namespace Wabbit.Services
                             if (wrapper != null && wrapper.Signups != null)
                             {
                                 _ongoingRounds.TournamentSignups = wrapper.Signups;
+
+                                // Verify the ParticipantInfo was loaded correctly
+                                foreach (var signup in _ongoingRounds.TournamentSignups)
+                                {
+                                    if (signup.ParticipantInfo == null)
+                                    {
+                                        signup.ParticipantInfo = new List<ParticipantInfo>();
+                                    }
+
+                                    // Log the participants to verify they're properly loaded
+                                    _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
+                                    foreach (var participant in signup.ParticipantInfo)
+                                    {
+                                        _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
+                                    }
+                                }
+
                                 _logger.LogInformation($"Loaded {wrapper.Signups.Count} signups from wrapper class");
                                 return;
                             }
@@ -114,6 +148,23 @@ namespace Wabbit.Services
                             if (signups != null)
                             {
                                 _ongoingRounds.TournamentSignups = signups;
+
+                                // Verify the ParticipantInfo was loaded correctly
+                                foreach (var signup in _ongoingRounds.TournamentSignups)
+                                {
+                                    if (signup.ParticipantInfo == null)
+                                    {
+                                        signup.ParticipantInfo = new List<ParticipantInfo>();
+                                    }
+
+                                    // Log the participants to verify they're properly loaded
+                                    _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
+                                    foreach (var participant in signup.ParticipantInfo)
+                                    {
+                                        _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
+                                    }
+                                }
+
                                 _logger.LogInformation($"Loaded {signups.Count} signups from direct deserialization");
                                 return;
                             }
@@ -121,6 +172,48 @@ namespace Wabbit.Services
                         catch (Exception ex)
                         {
                             _logger.LogError($"Failed to directly deserialize signups: {ex.Message}");
+                        }
+
+                        // If standard methods fail, try manually extracting participant info
+                        try
+                        {
+                            // Check if we already have signups loaded
+                            if (_ongoingRounds.TournamentSignups.Count > 0)
+                            {
+                                _logger.LogInformation("Attempting to manually parse participant info from JSON");
+
+                                // Try to manually extract participants from the JSON
+                                foreach (var signup in _ongoingRounds.TournamentSignups)
+                                {
+                                    // Create empty collections if missing
+                                    if (signup.ParticipantInfo == null)
+                                    {
+                                        signup.ParticipantInfo = new List<ParticipantInfo>();
+                                    }
+
+                                    // Search for this signup in the JSON by name
+                                    try
+                                    {
+                                        var signupElement = FindSignupElementByName(document.RootElement, signup.Name);
+                                        if (signupElement.ValueKind != JsonValueKind.Undefined)
+                                        {
+                                            if (TryExtractParticipantInfo(signupElement, out var participantInfoList) && participantInfoList.Count > 0)
+                                            {
+                                                signup.ParticipantInfo = participantInfoList;
+                                                _logger.LogInformation($"Manually extracted {participantInfoList.Count} participants for signup '{signup.Name}'");
+                                            }
+                                        }
+                                    }
+                                    catch (Exception extractEx)
+                                    {
+                                        _logger.LogError($"Error manually extracting participants for '{signup.Name}': {extractEx.Message}");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception manualEx)
+                        {
+                            _logger.LogError($"Failed to manually extract participant info: {manualEx.Message}");
                         }
                     }
                 }
@@ -133,6 +226,101 @@ namespace Wabbit.Services
             // If we got here, either the file doesn't exist or we couldn't deserialize it
             _logger.LogWarning("Failed to load signups or file doesn't exist. Starting with empty list.");
             _ongoingRounds.TournamentSignups = new List<TournamentSignup>();
+        }
+
+        /// <summary>
+        /// Find a signup element by name in the JSON
+        /// </summary>
+        private JsonElement FindSignupElementByName(JsonElement root, string name)
+        {
+            try
+            {
+                // Navigate through the nested structure
+                if (root.TryGetProperty("$values", out var values1))
+                {
+                    if (values1.TryGetProperty("$values", out var values2))
+                    {
+                        // Array of signups
+                        foreach (var signupElement in values2.EnumerateArray())
+                        {
+                            if (signupElement.TryGetProperty("Name", out var nameElement) &&
+                                nameElement.GetString() == name)
+                            {
+                                return signupElement;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Direct array of signups
+                        foreach (var signupElement in values1.EnumerateArray())
+                        {
+                            if (signupElement.TryGetProperty("Name", out var nameElement) &&
+                                nameElement.GetString() == name)
+                            {
+                                return signupElement;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error finding signup by name: {ex.Message}");
+            }
+
+            return default;
+        }
+
+        /// <summary>
+        /// Extract ParticipantInfo from a signup element
+        /// </summary>
+        private bool TryExtractParticipantInfo(JsonElement signupElement, out List<ParticipantInfo> participants)
+        {
+            participants = new List<ParticipantInfo>();
+
+            try
+            {
+                if (signupElement.TryGetProperty("ParticipantInfo", out var participantInfoElement))
+                {
+                    // Navigate through the nested structure to find the actual array
+                    JsonElement valuesArray = participantInfoElement;
+
+                    // Try first level of nesting
+                    if (participantInfoElement.TryGetProperty("$values", out var values1))
+                    {
+                        valuesArray = values1;
+
+                        // Try second level of nesting
+                        if (values1.TryGetProperty("$values", out var values2))
+                        {
+                            valuesArray = values2;
+                        }
+                    }
+
+                    // Enumerate the participants array
+                    foreach (var participantElement in valuesArray.EnumerateArray())
+                    {
+                        if (participantElement.TryGetProperty("Id", out var idElement) &&
+                            participantElement.TryGetProperty("Username", out var usernameElement))
+                        {
+                            participants.Add(new ParticipantInfo
+                            {
+                                Id = idElement.GetUInt64(),
+                                Username = usernameElement.GetString() ?? ""
+                            });
+                        }
+                    }
+
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error extracting participant info: {ex.Message}");
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -251,9 +439,17 @@ namespace Wabbit.Services
         /// </summary>
         public int GetParticipantCount(TournamentSignup signup)
         {
-            // Use ParticipantInfo count as it's more reliable than the Participants list
-            // ParticipantInfo is persisted to disk and always available
-            return signup.ParticipantInfo?.Count ?? 0;
+            int participantsCount = signup.Participants?.Count ?? 0;
+            int participantInfoCount = signup.ParticipantInfo?.Count ?? 0;
+
+            // Log warning if there's a discrepancy
+            if (participantsCount != participantInfoCount)
+            {
+                _logger.LogWarning($"Participant count discrepancy for '{signup.Name}': {participantsCount} in Participants list, {participantInfoCount} in ParticipantInfo list");
+            }
+
+            // Always use ParticipantInfo count as it's more reliable and persisted
+            return participantInfoCount;
         }
 
         /// <summary>
