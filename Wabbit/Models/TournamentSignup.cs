@@ -15,12 +15,22 @@ namespace Wabbit.Models
         public string Name { get; set; } = string.Empty;
         public bool IsOpen { get; set; } = true;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
+
+        // Discord objects that shouldn't be serialized to JSON
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<DiscordMember> Participants { get; set; } = [];
+
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<ParticipantSeed> Seeds { get; set; } = [];
+
+        [System.Text.Json.Serialization.JsonIgnore]
         public DiscordMessage? SignupListMessage { get; set; }
+
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
         public GameType Type { get; set; } = GameType.OneVsOne;
         public DateTime? ScheduledStartTime { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
         public DiscordUser CreatedBy { get; set; } = null!;
 
         // Store plain properties for serialization

@@ -87,13 +87,10 @@ namespace Wabbit.Services
                             {
                                 _ongoingRounds.TournamentSignups = signups;
 
-                                // Verify the ParticipantInfo was loaded correctly
+                                // Initialize all collections for each signup
                                 foreach (var signup in _ongoingRounds.TournamentSignups)
                                 {
-                                    if (signup.ParticipantInfo == null)
-                                    {
-                                        signup.ParticipantInfo = new List<ParticipantInfo>();
-                                    }
+                                    InitializeCollections(signup);
 
                                     // Log the participants to verify they're properly loaded
                                     _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
@@ -116,13 +113,10 @@ namespace Wabbit.Services
                             {
                                 _ongoingRounds.TournamentSignups = wrapper.Signups;
 
-                                // Verify the ParticipantInfo was loaded correctly
+                                // Initialize all collections for each signup
                                 foreach (var signup in _ongoingRounds.TournamentSignups)
                                 {
-                                    if (signup.ParticipantInfo == null)
-                                    {
-                                        signup.ParticipantInfo = new List<ParticipantInfo>();
-                                    }
+                                    InitializeCollections(signup);
 
                                     // Log the participants to verify they're properly loaded
                                     _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
@@ -149,13 +143,10 @@ namespace Wabbit.Services
                             {
                                 _ongoingRounds.TournamentSignups = signups;
 
-                                // Verify the ParticipantInfo was loaded correctly
+                                // Initialize all collections for each signup
                                 foreach (var signup in _ongoingRounds.TournamentSignups)
                                 {
-                                    if (signup.ParticipantInfo == null)
-                                    {
-                                        signup.ParticipantInfo = new List<ParticipantInfo>();
-                                    }
+                                    InitializeCollections(signup);
 
                                     // Log the participants to verify they're properly loaded
                                     _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
@@ -366,7 +357,12 @@ namespace Wabbit.Services
                 CreatorUsername = signup.CreatorUsername,
                 SignupChannelId = signup.SignupChannelId,
                 MessageId = signup.MessageId,
-                RelatedMessages = signup.RelatedMessages?.ToList() ?? new List<RelatedMessage>()
+                RelatedMessages = signup.RelatedMessages?.ToList() ?? new List<RelatedMessage>(),
+                // Set empty collections for properties that will be ignored during serialization
+                Participants = new(),
+                Seeds = new(),
+                SignupListMessage = null,
+                CreatedBy = null!
             };
 
             // Create a set of all participant IDs from both lists
@@ -548,97 +544,90 @@ namespace Wabbit.Services
         /// </summary>
         public async Task LoadParticipantsAsync(TournamentSignup signup, DiscordClient client, bool verbose = true)
         {
-            try
+            // Initialize all collections to prevent null reference exceptions
+            InitializeCollections(signup);
+
+            // Clear existing participants (if any)
+            signup.Participants.Clear();
+
+            // Log the number of participants we're going to load
+            _logger.LogInformation($"Loading {signup.ParticipantInfo.Count} participants for signup {signup.Name}");
+
+            // Check if client has any guilds
+            if (client.Guilds == null || client.Guilds.Count == 0)
             {
-                // Clear the existing participants list
-                signup.Participants.Clear();
+                _logger.LogWarning($"Client has no guilds available to lookup members for signup '{signup.Name}'");
+                return;
+            }
 
-                _logger.LogInformation($"Loading {signup.ParticipantInfo.Count} participants for signup '{signup.Name}'");
+            if (verbose)
+            {
+                _logger.LogInformation($"Client has {client.Guilds.Count} guilds available for member lookup");
+            }
 
-                // Check if client has any guilds
-                if (client.Guilds == null || client.Guilds.Count == 0)
+            foreach (var participantInfo in signup.ParticipantInfo)
+            {
+                try
                 {
-                    _logger.LogWarning("Client has no guilds available - cannot load Discord members");
-                    _logger.LogWarning($"Client CurrentUser: {(client.CurrentUser != null ? client.CurrentUser.Username : "null")}");
-                }
-                else
-                {
-                    _logger.LogInformation($"Client has {client.Guilds.Count} guilds available for member lookup");
-                }
-
-                // Load participants from stored info
-                foreach (var participantInfo in signup.ParticipantInfo)
-                {
-                    try
+                    if (verbose)
                     {
-                        _logger.LogInformation($"Attempting to load participant {participantInfo.Username} (ID: {participantInfo.Id})");
-                        bool foundMember = false;
+                        _logger.LogInformation($"Looking up participant: {participantInfo.Username} (ID: {participantInfo.Id})");
+                    }
 
-                        // Try to find the guild member from the stored ID
-                        foreach (var guild in client.Guilds?.Values ?? [])
+                    // Try to find the member in any of the client's guilds
+                    foreach (var guild in client.Guilds.Values)
+                    {
+                        try
                         {
-                            try
+                            var member = await guild.GetMemberAsync(participantInfo.Id);
+                            if (member is not null)
                             {
-                                _logger.LogInformation($"Trying to get member {participantInfo.Username} from guild {guild.Name} (ID: {guild.Id})");
-
-                                // Try to get the member
-                                var member = await guild.GetMemberAsync(participantInfo.Id);
-
-                                if (member is not null)
+                                signup.Participants.Add(member);
+                                if (verbose)
                                 {
-                                    signup.Participants.Add(member);
-                                    _logger.LogInformation($"Successfully added {member.Username} (ID: {member.Id}) to participants list");
-                                    foundMember = true;
-                                    break;
+                                    _logger.LogInformation($"Found member {participantInfo.Username} in guild {guild.Name}");
                                 }
-                                else
-                                {
-                                    _logger.LogWarning($"GetMemberAsync returned null for {participantInfo.Username} (ID: {participantInfo.Id}) in guild {guild.Name}");
-                                }
+                                break;
                             }
-                            catch (Exception guildEx)
+                        }
+                        catch (Exception ex)
+                        {
+                            if (verbose)
                             {
-                                _logger.LogWarning($"Failed to get member {participantInfo.Username} (ID: {participantInfo.Id}) from guild {guild.Name}: {guildEx.Message}");
-                                if (guildEx.InnerException != null)
+                                _logger.LogWarning($"Could not find member {participantInfo.Username} in guild {guild.Name}: {ex.Message}");
+                                if (ex.InnerException != null)
                                 {
-                                    _logger.LogWarning($"Inner exception: {guildEx.InnerException.Message}");
+                                    _logger.LogWarning($"Inner exception: {ex.InnerException.Message}");
                                 }
                             }
                         }
-
-                        if (!foundMember)
-                        {
-                            _logger.LogWarning($"Could not find member {participantInfo.Username} (ID: {participantInfo.Id}) in any guild. ParticipantInfo will be used as fallback.");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (verbose)
-                        {
-                            _logger.LogWarning($"Failed to load participant {participantInfo.Username}: {ex.Message}");
-                        }
                     }
                 }
-
-                _logger.LogInformation($"Loaded {signup.Participants.Count} participants for signup '{signup.Name}'");
-                _logger.LogInformation($"ParticipantInfo has {signup.ParticipantInfo.Count} entries");
-
-                // Load seed information
-                signup.Seeds.Clear();
-                foreach (var seedInfo in signup.SeedInfo)
+                catch (Exception ex)
                 {
-                    var member = signup.Participants.FirstOrDefault(p => p.Id == seedInfo.Id);
-                    if (member is not null)
+                    if (verbose)
                     {
-                        var seed = new ParticipantSeed { Seed = seedInfo.Seed };
-                        seed.SetPlayer(member);
-                        signup.Seeds.Add(seed);
+                        _logger.LogWarning($"Failed to load participant {participantInfo.Username}: {ex.Message}");
                     }
                 }
             }
-            catch (Exception ex)
+
+            if (verbose)
             {
-                _logger.LogError($"Error loading participants for signup {signup.Name}: {ex.Message}");
+                _logger.LogInformation($"Loaded {signup.Participants.Count} participants and have {signup.ParticipantInfo.Count} entries in ParticipantInfo");
+            }
+
+            // Load seed information
+            signup.Seeds.Clear();
+            foreach (var seedInfo in signup.SeedInfo)
+            {
+                var member = signup.Participants.FirstOrDefault(p => p.Id == seedInfo.Id);
+                if (member is not null)
+                {
+                    var seed = new ParticipantSeed { Seed = seedInfo.Seed };
+                    seed.SetPlayer(member);
+                    signup.Seeds.Add(seed);
+                }
             }
         }
 
@@ -649,7 +638,7 @@ namespace Wabbit.Services
         {
             foreach (var signup in GetAllSignups())
             {
-                await LoadParticipantsAsync(signup, client, false);
+                await LoadParticipantsAsync(signup, client);
             }
         }
 
@@ -685,6 +674,37 @@ namespace Wabbit.Services
             {
                 // Keep property names as-is
                 return name;
+            }
+        }
+
+        /// <summary>
+        /// Initialize all collections in a TournamentSignup object to prevent null reference exceptions
+        /// </summary>
+        private void InitializeCollections(TournamentSignup signup)
+        {
+            if (signup.Participants == null)
+            {
+                signup.Participants = new List<DiscordMember>();
+            }
+
+            if (signup.Seeds == null)
+            {
+                signup.Seeds = new List<ParticipantSeed>();
+            }
+
+            if (signup.ParticipantInfo == null)
+            {
+                signup.ParticipantInfo = new List<ParticipantInfo>();
+            }
+
+            if (signup.SeedInfo == null)
+            {
+                signup.SeedInfo = new List<SeedInfo>();
+            }
+
+            if (signup.RelatedMessages == null)
+            {
+                signup.RelatedMessages = new List<RelatedMessage>();
             }
         }
     }
