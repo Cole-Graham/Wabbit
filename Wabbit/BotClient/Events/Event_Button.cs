@@ -1371,7 +1371,7 @@ namespace Wabbit.BotClient.Events
                     .Select(p => new
                     {
                         Player = p,
-                        Seed = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == p.Id || s.PlayerId == p.Id)?.Seed ?? 0,
+                        Seed = FindSeedValue(signup, p.Id),
                         DisplayName = p.DisplayName
                     })
                     .OrderBy(p => p.Seed == 0) // Seeded players first
@@ -1426,7 +1426,15 @@ namespace Wabbit.BotClient.Events
             {
                 // Sort participants by username
                 var sortedParticipants = (signup.ParticipantInfo ?? new List<ParticipantInfo>())
-                    .OrderBy(p => p.Username)
+                    .Select(p => new
+                    {
+                        Player = p,
+                        Seed = signup.SeedInfo?.FirstOrDefault(s => s.Id == p.Id)?.Seed ?? 0,
+                        Username = p.Username
+                    })
+                    .OrderBy(p => p.Seed == 0) // Seeded players first
+                    .ThenBy(p => p.Seed)       // Then by seed value
+                    .ThenBy(p => p.Username)   // Then alphabetically by username
                     .ToList();
 
                 StringBuilder participantsText = new StringBuilder();
@@ -1442,7 +1450,8 @@ namespace Wabbit.BotClient.Events
                     if (leftIndex < totalParticipants)
                     {
                         var leftPlayer = sortedParticipants[leftIndex];
-                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Id}>");
+                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
+                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
 
                         // Add padding between columns
                         participantsText.Append("    ");
@@ -1452,7 +1461,8 @@ namespace Wabbit.BotClient.Events
                         if (rightIndex < totalParticipants)
                         {
                             var rightPlayer = sortedParticipants[rightIndex];
-                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Id}>");
+                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
+                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
                         }
 
                         participantsText.AppendLine();
@@ -2178,6 +2188,17 @@ namespace Wabbit.BotClient.Events
                     await e.Channel.SendMessageAsync($"⚠️ Error processing game result: {ex.Message}");
                 }
             }
+        }
+
+        private int FindSeedValue(TournamentSignup signup, ulong playerId)
+        {
+            // First check in Seeds collection (with Player references)
+            var seedFromSeeds = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == playerId || s.PlayerId == playerId)?.Seed ?? 0;
+            if (seedFromSeeds > 0)
+                return seedFromSeeds;
+
+            // Then check in SeedInfo collection (with just Ids)
+            return signup.SeedInfo?.FirstOrDefault(s => s.Id == playerId)?.Seed ?? 0;
         }
     }
 }

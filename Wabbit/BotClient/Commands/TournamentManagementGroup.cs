@@ -1064,16 +1064,27 @@ namespace Wabbit.BotClient.Commands
                     signup.Seeds = [];
                 }
 
-                // Remove any existing seed for this player
-                signup.Seeds.RemoveAll(s => s.Player?.Id == player.Id || s.PlayerId == player.Id);
+                // Initialize SeedInfo list if needed
+                if (signup.SeedInfo == null)
+                {
+                    signup.SeedInfo = [];
+                }
 
-                // If seed is not 0, add the new seed
+                // Remove any existing seed for this player from both collections
+                signup.Seeds.RemoveAll(s => s.Player?.Id == player.Id || s.PlayerId == player.Id);
+                signup.SeedInfo.RemoveAll(s => s.Id == player.Id);
+
+                // If seed is not 0, add the new seed to both collections
                 if (seed > 0)
                 {
+                    // Add to Seeds collection
                     var participantSeed = new ParticipantSeed();
                     participantSeed.SetPlayer(player);
                     participantSeed.Seed = seed;
                     signup.Seeds.Add(participantSeed);
+
+                    // Add to SeedInfo collection
+                    signup.SeedInfo.Add(new SeedInfo { Id = player.Id, Seed = seed });
                 }
 
                 // Update the signup
@@ -1205,7 +1216,8 @@ namespace Wabbit.BotClient.Commands
                     .Select(p => new
                     {
                         Player = p,
-                        Seed = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == p.Id || s.PlayerId == p.Id)?.Seed ?? 0,
+                        // Look at both Seeds and SeedInfo collections for seed values
+                        Seed = FindSeedValue(signup, p.Id),
                         DisplayName = p.DisplayName
                     })
                     .OrderBy(p => p.Seed == 0) // False (0) comes before True (1), so seeded come first
@@ -1260,7 +1272,16 @@ namespace Wabbit.BotClient.Commands
             {
                 // Fallback to ParticipantInfo when Participants list is empty
                 var sortedParticipantInfo = (signup.ParticipantInfo ?? new List<ParticipantInfo>())
-                    .OrderBy(p => p.Username)
+                    .Select(p => new
+                    {
+                        Player = p,
+                        // Look up seed value from SeedInfo
+                        Seed = signup.SeedInfo?.FirstOrDefault(s => s.Id == p.Id)?.Seed ?? 0,
+                        Username = p.Username
+                    })
+                    .OrderBy(p => p.Seed == 0) // Seeded players first
+                    .ThenBy(p => p.Seed)       // Then by seed value
+                    .ThenBy(p => p.Username)   // Then alphabetically by username
                     .ToList();
 
                 StringBuilder participantsText = new StringBuilder();
@@ -1276,7 +1297,8 @@ namespace Wabbit.BotClient.Commands
                     if (leftIndex < totalParticipants)
                     {
                         var leftPlayer = sortedParticipantInfo[leftIndex];
-                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Id}>");
+                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
+                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
 
                         // Add padding between columns
                         participantsText.Append("    ");
@@ -1286,7 +1308,8 @@ namespace Wabbit.BotClient.Commands
                         if (rightIndex < totalParticipants)
                         {
                             var rightPlayer = sortedParticipantInfo[rightIndex];
-                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Id}>");
+                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
+                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
                         }
 
                         participantsText.AppendLine();
@@ -1768,6 +1791,17 @@ namespace Wabbit.BotClient.Commands
                 // If the client is not a DiscordClient, pass null
                 await _stateService.SaveTournamentStateAsync(null);
             }
+        }
+
+        private int FindSeedValue(TournamentSignup signup, ulong playerId)
+        {
+            // First check in Seeds collection (with Player references)
+            var seedFromSeeds = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == playerId || s.PlayerId == playerId)?.Seed ?? 0;
+            if (seedFromSeeds > 0)
+                return seedFromSeeds;
+
+            // Then check in SeedInfo collection (with just Ids)
+            return signup.SeedInfo?.FirstOrDefault(s => s.Id == playerId)?.Seed ?? 0;
         }
     }
 
