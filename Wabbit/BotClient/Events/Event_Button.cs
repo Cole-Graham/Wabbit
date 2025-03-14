@@ -1086,8 +1086,21 @@ namespace Wabbit.BotClient.Events
                 // Replace the participants list in the signup
                 signup.Participants = newParticipantsList;
 
+                // Also update the ParticipantInfo list for persistence
+                if (signup.ParticipantInfo == null)
+                {
+                    signup.ParticipantInfo = new List<ParticipantInfo>();
+                }
+
+                // Add to ParticipantInfo if not already there
+                if (!signup.ParticipantInfo.Any(p => p.Id == member.Id))
+                {
+                    signup.ParticipantInfo.Add(new ParticipantInfo { Id = member.Id, Username = member.Username });
+                    _logger.LogInformation($"Added {member.Username} (ID: {member.Id}) to ParticipantInfo list, now: {signup.ParticipantInfo.Count}");
+                }
+
                 // Log signup using logger instead of console
-                _logger.LogInformation($"Added participant {member.Username} to signup '{signup.Name}' (now has {signup.Participants.Count} participants)");
+                _logger.LogInformation($"Added participant {member.Username} to signup '{signup.Name}' (now has {signup.Participants.Count} participants, ParticipantInfo: {signup.ParticipantInfo.Count})");
 
                 // Save the updated signup
                 _signupService.UpdateSignup(signup);
@@ -1209,55 +1222,52 @@ namespace Wabbit.BotClient.Events
                 }
 
                 // Remove the user from the signup
-                var participant = signup.Participants.FirstOrDefault(p => p.Id == userId);
-                if (participant is not null)
-                {
-                    var newParticipantsList = new List<DiscordMember>();
+                var newParticipantsList = new List<DiscordMember>();
 
-                    // Add all participants except the one to be removed
-                    foreach (var p in signup.Participants)
+                // Add all participants except the one to be removed
+                foreach (var p in signup.Participants)
+                {
+                    if (p.Id != userId)
                     {
-                        if (p.Id != userId)
-                        {
-                            newParticipantsList.Add(p);
-                        }
+                        newParticipantsList.Add(p);
                     }
-
-                    // Replace the participants list in the signup
-                    signup.Participants = newParticipantsList;
-
-                    // Save the updated signup
-                    _signupService.UpdateSignup(signup);
-                    await _signupService.SaveSignupsAsync();
-
-                    // Update the signup message
-                    await UpdateSignupMessage(sender, signup);
-
-                    // Send confirmation message and schedule deletion
-                    var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You have been removed from the '{signup.Name}' tournament.")
-                        .AsEphemeral(true));
-
-                    // Schedule deletion after 10 seconds
-                    _ = Task.Run(async () =>
-                    {
-                        await Task.Delay(10000); // 10 seconds
-                        try
-                        {
-                            await response.DeleteAsync();
-                        }
-                        catch (Exception deleteEx)
-                        {
-                            _logger.LogWarning($"Failed to delete confirmation message: {deleteEx.Message}");
-                        }
-                    });
                 }
-                else
+
+                // Replace the participants list in the signup
+                signup.Participants = newParticipantsList;
+
+                // Also remove from ParticipantInfo list for persistence
+                if (signup.ParticipantInfo != null)
                 {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent($"You were not found in the participants list for '{tournamentName}'.")
-                        .AsEphemeral(true));
+                    signup.ParticipantInfo.RemoveAll(p => p.Id == userId);
+                    _logger.LogInformation($"Removed user {userId} from ParticipantInfo list, remaining: {signup.ParticipantInfo.Count}");
                 }
+
+                // Save the updated signup
+                _signupService.UpdateSignup(signup);
+                await _signupService.SaveSignupsAsync();
+
+                // Update the signup message
+                await UpdateSignupMessage(sender, signup);
+
+                // Send confirmation message and schedule deletion
+                var response = await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .WithContent($"You have been removed from the '{signup.Name}' tournament.")
+                    .AsEphemeral(true));
+
+                // Schedule deletion after 10 seconds
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(10000); // 10 seconds
+                    try
+                    {
+                        await response.DeleteAsync();
+                    }
+                    catch (Exception deleteEx)
+                    {
+                        _logger.LogWarning($"Failed to delete confirmation message: {deleteEx.Message}");
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -1347,11 +1357,17 @@ namespace Wabbit.BotClient.Events
                 builder.AddField("Scheduled Start Time", formattedTime);
             }
 
-            // First try to use loaded Discord members if available
-            if (signup.Participants?.Count > 0)
+            // Compare counts to determine which list to use
+            int participantsCount = signup.Participants?.Count ?? 0;
+            int participantInfoCount = signup.ParticipantInfo?.Count ?? 0;
+
+            _logger.LogInformation($"CreateSignupEmbed for '{signup.Name}': Participants count: {participantsCount}, ParticipantInfo count: {participantInfoCount}");
+
+            // Use Participants list if it's complete, otherwise use ParticipantInfo
+            if (participantsCount > 0 && participantsCount >= participantInfoCount)
             {
                 // Sort participants by any seeds
-                var sortedParticipants = signup.Participants
+                var sortedParticipants = (signup.Participants ?? new List<DiscordMember>())
                     .Select(p => new
                     {
                         Player = p,
@@ -1405,11 +1421,11 @@ namespace Wabbit.BotClient.Events
 
                 builder.AddField($"Participants ({sortedParticipants.Count})", finalText);
             }
-            // Fallback to ParticipantInfo if Discord members couldn't be loaded
-            else if (signup.ParticipantInfo?.Count > 0)
+            // Use ParticipantInfo if Participants list is incomplete or empty
+            else if (participantInfoCount > 0)
             {
                 // Sort participants by username
-                var sortedParticipants = signup.ParticipantInfo
+                var sortedParticipants = (signup.ParticipantInfo ?? new List<ParticipantInfo>())
                     .OrderBy(p => p.Username)
                     .ToList();
 
@@ -1516,6 +1532,13 @@ namespace Wabbit.BotClient.Events
 
             // Replace the participants list in the signup
             signup.Participants = newParticipantsList;
+
+            // Also remove from ParticipantInfo list for persistence
+            if (signup.ParticipantInfo != null)
+            {
+                signup.ParticipantInfo.RemoveAll(p => p.Id == user?.Id);
+                _logger.LogInformation($"Removed user {user?.Username} (ID: {user?.Id}) from ParticipantInfo list, remaining: {signup.ParticipantInfo.Count}");
+            }
 
             // Save the updated signup
             _signupService.UpdateSignup(signup);

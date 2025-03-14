@@ -369,10 +369,51 @@ namespace Wabbit.Services
                 RelatedMessages = signup.RelatedMessages?.ToList() ?? new List<RelatedMessage>()
             };
 
-            // Store participant IDs and usernames for later reconstruction
-            cleanedSignup.ParticipantInfo = signup.Participants
-                .Select(p => new ParticipantInfo { Id = p.Id, Username = p.Username })
-                .ToList();
+            // Create a set of all participant IDs from both lists
+            HashSet<ulong> allParticipantIds = new HashSet<ulong>();
+
+            // Add IDs from ParticipantInfo
+            if (signup.ParticipantInfo != null)
+            {
+                foreach (var info in signup.ParticipantInfo)
+                {
+                    allParticipantIds.Add(info.Id);
+                }
+            }
+
+            // Add IDs from Participants
+            foreach (var participant in signup.Participants)
+            {
+                allParticipantIds.Add(participant.Id);
+            }
+
+            _logger.LogInformation($"Cleaning signup '{signup.Name}' for serialization. Combined total of {allParticipantIds.Count} unique participants.");
+
+            // Create a comprehensive ParticipantInfo list
+            var mergedParticipantInfo = new List<ParticipantInfo>();
+
+            foreach (var id in allParticipantIds)
+            {
+                // Try to find in ParticipantInfo first
+                var existingInfo = signup.ParticipantInfo?.FirstOrDefault(p => p.Id == id);
+                if (existingInfo != null)
+                {
+                    mergedParticipantInfo.Add(existingInfo);
+                    continue;
+                }
+
+                // If not found, check Participants
+                var participant = signup.Participants.FirstOrDefault(p => p.Id == id);
+                if (participant is not null)
+                {
+                    mergedParticipantInfo.Add(new ParticipantInfo { Id = participant.Id, Username = participant.Username });
+                }
+            }
+
+            // Store the merged list
+            cleanedSignup.ParticipantInfo = mergedParticipantInfo;
+
+            _logger.LogInformation($"Created ParticipantInfo list with {mergedParticipantInfo.Count} entries for signup '{signup.Name}'");
 
             // Store seed info for later reconstruction
             cleanedSignup.SeedInfo = signup.Seeds
