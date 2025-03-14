@@ -774,8 +774,21 @@ namespace Wabbit.BotClient.Commands
                 // Replace the participants list in the signup
                 signup.Participants = newParticipantsList;
 
+                // Also update the ParticipantInfo list for persistence
+                if (signup.ParticipantInfo == null)
+                {
+                    signup.ParticipantInfo = new List<ParticipantInfo>();
+                }
+
+                // Add to ParticipantInfo if not already there
+                if (!signup.ParticipantInfo.Any(p => p.Id == player.Id))
+                {
+                    signup.ParticipantInfo.Add(new ParticipantInfo { Id = player.Id, Username = player.Username });
+                    Console.WriteLine($"Added {player.Username} (ID: {player.Id}) to ParticipantInfo list, now has {signup.ParticipantInfo.Count} entries");
+                }
+
                 Console.WriteLine($"Successfully added {player.Username} (ID: {player.Id}) to signup '{tournamentName}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
+                Console.WriteLine($"Signup now has {signup.Participants.Count} participants (ParticipantInfo: {signup.ParticipantInfo.Count})");
 
                 // Save the updated signup
                 _signupService.UpdateSignup(signup);
@@ -829,8 +842,15 @@ namespace Wabbit.BotClient.Commands
                 // Replace the participants list in the signup
                 signup.Participants = newParticipantsList;
 
+                // Also remove from ParticipantInfo list for persistence
+                if (signup.ParticipantInfo != null)
+                {
+                    signup.ParticipantInfo.RemoveAll(p => p.Id == player.Id);
+                    Console.WriteLine($"Removed {player.Username} (ID: {player.Id}) from ParticipantInfo list, remaining: {signup.ParticipantInfo.Count}");
+                }
+
                 Console.WriteLine($"Successfully removed {player.DisplayName} (ID: {player.Id}) from signup '{tournamentName}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants");
+                Console.WriteLine($"Signup now has {signup.Participants.Count} participants (ParticipantInfo: {signup.ParticipantInfo?.Count ?? 0})");
 
                 // Save the updated signup
                 _signupService.UpdateSignup(signup);
@@ -1171,18 +1191,17 @@ namespace Wabbit.BotClient.Commands
                 embedBuilder.AddField("Scheduled Start Time", formattedTime);
             }
 
-            // Check if we have Discord Members available, or need to use ParticipantInfo as fallback
-            bool useParticipantInfoFallback = !signup.Participants.Any() && signup.ParticipantInfo.Any();
+            // Compare counts to determine which list to use
+            int participantsCount = signup.Participants?.Count ?? 0;
+            int participantInfoCount = signup.ParticipantInfo?.Count ?? 0;
 
-            if (useParticipantInfoFallback)
-            {
-                _logger.LogInformation($"Using ParticipantInfo fallback for signup '{signup.Name}' - Participants list is empty but ParticipantInfo has {signup.ParticipantInfo.Count} entries");
-            }
+            _logger.LogInformation($"CreateSignupEmbed for '{signup.Name}': Participants count: {participantsCount}, ParticipantInfo count: {participantInfoCount}");
 
-            if (signup.Participants.Any())
+            // Use Participants list if it's complete, otherwise use ParticipantInfo
+            if (participantsCount > 0 && participantsCount >= participantInfoCount)
             {
                 // Sort participants: seeded players first (by seed value), then non-seeded alphabetically
-                var sortedParticipants = signup.Participants
+                var sortedParticipants = (signup.Participants ?? new List<DiscordMember>())
                     .Select(p => new
                     {
                         Player = p,
@@ -1237,10 +1256,10 @@ namespace Wabbit.BotClient.Commands
 
                 embedBuilder.AddField($"Participants ({sortedParticipants.Count})", finalText);
             }
-            else if (useParticipantInfoFallback)
+            else if (participantInfoCount > 0)
             {
                 // Fallback to ParticipantInfo when Participants list is empty
-                var sortedParticipantInfo = signup.ParticipantInfo
+                var sortedParticipantInfo = (signup.ParticipantInfo ?? new List<ParticipantInfo>())
                     .OrderBy(p => p.Username)
                     .ToList();
 
