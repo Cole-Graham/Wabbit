@@ -38,11 +38,11 @@ namespace Wabbit.Models
         public List<RelatedMessage> RelatedMessages { get; set; } = [];
 
         // Used to store participant info from JSON until we can convert to DiscordMembers
-        [System.Text.Json.Serialization.JsonIgnore]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
         public List<(ulong Id, string Username)> ParticipantInfo { get; set; } = [];
 
         // Used to store seeding info from JSON until we can convert to DiscordMembers
-        [System.Text.Json.Serialization.JsonIgnore]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
         public List<(ulong Id, int Seed)> SeedInfo { get; set; } = [];
     }
 
