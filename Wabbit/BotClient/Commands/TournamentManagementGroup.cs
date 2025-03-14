@@ -122,6 +122,36 @@ namespace Wabbit.BotClient.Commands
                 // Post the tournament standings visualization to the standings channel if configured
                 await _tournamentService.PostTournamentVisualizationAsync(tournament, context.Client);
 
+                // Start all group matches to create threads for each match
+                _logger.LogInformation($"Starting group matches for tournament {tournament.Name}");
+                foreach (var group in tournament.Groups)
+                {
+                    foreach (var match in group.Matches)
+                    {
+                        try
+                        {
+                            // Convert players to Discord members
+                            var player1 = match.Participants[0].Player as DiscordMember;
+                            var player2 = match.Participants[1].Player as DiscordMember;
+
+                            if (player1 is not null && player2 is not null)
+                            {
+                                // Start the match round which will create a thread
+                                await _tournamentService.StartMatchRoundAsync(tournament, match, context.Channel, context.Client);
+                                _logger.LogInformation($"Started match {match.Name} in tournament {tournament.Name}");
+                            }
+                            else
+                            {
+                                _logger.LogWarning($"Could not start match {match.Name}: players are not valid DiscordMembers");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Error starting match {match.Name} in tournament {tournament.Name}");
+                        }
+                    }
+                }
+
                 // Create confirmation embed
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"🏆 Tournament Created: {tournament.Name}")
@@ -385,7 +415,9 @@ namespace Wabbit.BotClient.Commands
                         string status = "";
                         if (tournament.IsComplete)
                         {
-                            status = "✅ Complete";
+                            var winner = FindTournamentWinner(tournament);
+                            string winnerName = winner != null ? GetPlayerDisplayName(winner) : "Unknown";
+                            status = $"✅ Complete - 🏆 Winner: {winnerName}";
                         }
                         else if (tournament.CurrentStage == TournamentStage.Groups)
                         {
@@ -395,6 +427,12 @@ namespace Wabbit.BotClient.Commands
                         else if (tournament.CurrentStage == TournamentStage.Playoffs)
                         {
                             status = "🥇 Playoffs";
+                        }
+                        else if (tournament.CurrentStage == TournamentStage.Complete)
+                        {
+                            var winner = FindTournamentWinner(tournament);
+                            string winnerName = winner != null ? GetPlayerDisplayName(winner) : "Unknown";
+                            status = $"✅ Complete - 🏆 Winner: {winnerName}";
                         }
 
                         int playerCount = tournament.Groups.Sum(g => g.Participants.Count);
@@ -1748,6 +1786,12 @@ namespace Wabbit.BotClient.Commands
         public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
         {
             await _tournamentMatchService.HandleMatchCompletion(tournament, match, client);
+
+            // After playoff setup and state save
+            if (tournament.CurrentStage == TournamentStage.Playoffs)
+            {
+                await _tournamentMatchService.StartPlayoffMatches(tournament, client);
+            }
         }
 
         // Method to handle game result selection and advance the match series
@@ -1802,6 +1846,20 @@ namespace Wabbit.BotClient.Commands
 
             // Then check in SeedInfo collection (with just Ids)
             return signup.SeedInfo?.FirstOrDefault(s => s.Id == playerId)?.Seed ?? 0;
+        }
+
+        // Helper method to find a tournament winner
+        private object? FindTournamentWinner(Tournament tournament)
+        {
+            if (tournament.PlayoffMatches?.Any() == true)
+            {
+                var finalMatch = tournament.PlayoffMatches
+                    .OrderByDescending(m => m.DisplayPosition)
+                    .FirstOrDefault(m => m.Type == TournamentMatchType.Final);
+
+                return finalMatch?.Result?.Winner;
+            }
+            return null;
         }
     }
 

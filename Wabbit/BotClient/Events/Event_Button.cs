@@ -1396,7 +1396,7 @@ namespace Wabbit.BotClient.Events
                         participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
 
                         // Add padding between columns
-                        participantsText.Append("    ");
+                        participantsText.Append("                ");
 
                         // Right column
                         int rightIndex = leftIndex + 1;
@@ -1454,7 +1454,7 @@ namespace Wabbit.BotClient.Events
                         participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
 
                         // Add padding between columns
-                        participantsText.Append("    ");
+                        participantsText.Append("                ");
 
                         // Right column
                         int rightIndex = leftIndex + 1;

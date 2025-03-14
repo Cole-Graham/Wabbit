@@ -260,31 +260,84 @@ namespace Wabbit.Misc
 
         private static void DrawTournamentHeader(SKCanvas canvas, Tournament tournament, int width)
         {
-            using var paint = new SKPaint
-            {
-                Color = HeaderColor,
-                IsAntialias = true
-            };
-
             // Draw header background
-            canvas.DrawRect(0, 0, width, HeaderHeight, paint);
+            using (var paint = new SKPaint { Color = HeaderColor })
+            {
+                canvas.DrawRect(0, 0, width, HeaderHeight, paint);
+            }
 
             // Draw tournament name
-            using var textPaint = new SKPaint
+            using (var paint = new SKPaint
             {
                 Color = TextColor,
-                TextSize = 28,
+                TextSize = 32,
                 IsAntialias = true,
-                TextAlign = SKTextAlign.Left
-            };
+                TextAlign = SKTextAlign.Center
+            })
+            {
+                string title = tournament.Name;
 
-            // Position the tournament name on the left
-            canvas.DrawText(tournament.Name, Padding * 2, HeaderHeight / 2 + 10, textPaint);
+                // Add stage indicator to the title
+                if (tournament.IsComplete)
+                {
+                    title += " - COMPLETED";
+                }
+                else
+                {
+                    string stageText = tournament.CurrentStage switch
+                    {
+                        TournamentStage.Groups => "Group Stage",
+                        TournamentStage.Playoffs => "Playoffs",
+                        TournamentStage.Complete => "Complete",
+                        _ => ""
+                    };
 
-            // Draw current stage on the right
-            textPaint.TextSize = 18;
-            textPaint.TextAlign = SKTextAlign.Right;
-            canvas.DrawText($"Stage: {tournament.CurrentStage}", width - Padding * 2, HeaderHeight / 2 + 10, textPaint);
+                    if (!string.IsNullOrEmpty(stageText))
+                    {
+                        title += $" - {stageText}";
+                    }
+                }
+
+                canvas.DrawText(title, width / 2, HeaderHeight / 2 + 10, paint);
+            }
+
+            // Draw tournament format subtitle
+            using (var paint = new SKPaint
+            {
+                Color = SKColors.LightGray,
+                TextSize = 20,
+                IsAntialias = true,
+                TextAlign = SKTextAlign.Center
+            })
+            {
+                string subtitle = $"Format: {tournament.Format}";
+
+                // Add tournament winner if tournament is complete
+                if (tournament.IsComplete && tournament.CurrentStage == TournamentStage.Complete)
+                {
+                    // Find the final match and winner
+                    var finalMatch = tournament.PlayoffMatches?
+                        .OrderByDescending(m => m.DisplayPosition)
+                        .FirstOrDefault();
+
+                    if (finalMatch?.Result?.Winner != null)
+                    {
+                        string winnerName = "Unknown";
+                        if (finalMatch.Result.Winner is DiscordMember member)
+                        {
+                            winnerName = member.DisplayName ?? member.Username;
+                        }
+                        else if (finalMatch.Result.Winner is DiscordUser user)
+                        {
+                            winnerName = user.Username;
+                        }
+
+                        subtitle += $" | 🏆 Champion: {winnerName}";
+                    }
+                }
+
+                canvas.DrawText(subtitle, width / 2, HeaderHeight - 15, paint);
+            }
         }
 
         private static void DrawGroupStandings(SKCanvas canvas, Tournament tournament, int width, ref int yOffset)
@@ -533,16 +586,8 @@ namespace Wabbit.Misc
         {
             using var headerPaint = new SKPaint
             {
-                Color = PlayoffsColor,
-                IsAntialias = true
-            };
-
-            using var borderPaint = new SKPaint
-            {
-                Color = BorderColor,
-                IsAntialias = true,
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = 1
+                Style = SKPaintStyle.Fill,
+                Color = PlayoffsColor
             };
 
             using var textPaint = new SKPaint
@@ -557,6 +602,52 @@ namespace Wabbit.Misc
             textPaint.TextAlign = SKTextAlign.Left;
             canvas.DrawText("Playoffs", Padding + CellPadding, yOffset + RowHeight - CellPadding, textPaint);
             yOffset += RowHeight + 20;
+
+            // Add tournament winner banner if tournament is complete
+            if (tournament.IsComplete && tournament.CurrentStage == TournamentStage.Complete)
+            {
+                // Find the final match and winner
+                var finalMatch = tournament.PlayoffMatches?
+                    .OrderByDescending(m => m.DisplayPosition)
+                    .FirstOrDefault(m => m.Type == TournamentMatchType.Final);
+
+                if (finalMatch?.Result?.Winner != null)
+                {
+                    string winnerName = "Unknown";
+                    if (finalMatch.Result.Winner is DiscordMember member)
+                    {
+                        winnerName = member.DisplayName ?? member.Username;
+                    }
+                    else if (finalMatch.Result.Winner is DiscordUser user)
+                    {
+                        winnerName = user.Username;
+                    }
+
+                    // Draw winner banner with gold background
+                    using (var winnerBgPaint = new SKPaint { Color = new SKColor(255, 215, 0, 180) }) // Gold with transparency
+                    {
+                        canvas.DrawRect(Padding, yOffset, width - (2 * Padding), 60, winnerBgPaint);
+                    }
+
+                    // Draw winner text
+                    textPaint.TextAlign = SKTextAlign.Center;
+                    textPaint.TextSize = 28;
+                    using (var winnerTextPaint = new SKPaint
+                    {
+                        Color = new SKColor(0, 0, 0), // Black text on gold background
+                        TextSize = 28,
+                        IsAntialias = true,
+                        TextAlign = SKTextAlign.Center,
+                        Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    })
+                    {
+                        canvas.DrawText("🏆 TOURNAMENT CHAMPION 🏆", width / 2, yOffset + 25, winnerTextPaint);
+                        canvas.DrawText(winnerName, width / 2, yOffset + 55, winnerTextPaint);
+                    }
+
+                    yOffset += 80; // Add space after winner banner
+                }
+            }
 
             // Process tournament data with null checks
             var semifinals = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.Semifinal).ToList() ?? [];

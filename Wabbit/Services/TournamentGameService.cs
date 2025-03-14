@@ -457,11 +457,51 @@ namespace Wabbit.Services
                         if (finalMatch?.Result?.Winner != null)
                         {
                             tournament.IsComplete = true;
-                            // The Tournament class doesn't have CompletedAt or Winner properties
-                            // tournament.CompletedAt = DateTime.Now;
-                            // tournament.Winner = finalMatch.Result.Winner;
+                            // Set the tournament stage to Complete
+                            tournament.CurrentStage = TournamentStage.Complete;
 
                             _logger.LogInformation($"Tournament {tournament.Name} completed with winner: {finalMatch.Result.Winner}");
+
+                            // Get winner display name
+                            string winnerName = "Unknown";
+                            if (finalMatch.Result.Winner is DiscordMember member)
+                            {
+                                winnerName = member.DisplayName ?? member.Username;
+                            }
+                            else if (finalMatch.Result.Winner is DiscordUser user)
+                            {
+                                winnerName = user.Username;
+                            }
+
+                            // Announce the champion in the announcement channel if available
+                            if (tournament.AnnouncementChannel is not null)
+                            {
+                                try
+                                {
+                                    var winnerEmbed = new DiscordEmbedBuilder()
+                                        .WithTitle($"🏆 Tournament Champion: {tournament.Name}")
+                                        .WithDescription($"**{winnerName}** has won the tournament!")
+                                        .WithColor(DiscordColor.Gold)
+                                        .WithTimestamp(DateTime.Now);
+
+                                    await tournament.AnnouncementChannel.SendMessageAsync(winnerEmbed);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, $"Error announcing tournament winner: {ex.Message}");
+                                }
+                            }
+
+                            // Generate final standings visualization
+                            try
+                            {
+                                await Wabbit.Misc.TournamentVisualization.GenerateStandingsImage(tournament, client, _stateService);
+                                _logger.LogInformation($"Generated final standings visualization for tournament {tournament.Name}");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Error generating final standings visualization: {ex.Message}");
+                            }
                         }
                     }
 
