@@ -1,13 +1,9 @@
 using DSharpPlus;
+using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
-using System.Threading.Tasks;
-using System.Collections.Generic;
 using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
-using System;
-using System.Linq;
-using DSharpPlus.Entities;
 
 namespace Wabbit.BotClient.Events
 {

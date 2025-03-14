@@ -1,12 +1,11 @@
 ﻿using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
+using System.Text.RegularExpressions;
 using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
-using System.IO;
-using System.Text.RegularExpressions;
 
 namespace Wabbit.BotClient.Events
 {

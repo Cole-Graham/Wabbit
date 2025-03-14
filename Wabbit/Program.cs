@@ -9,6 +9,7 @@ using Wabbit.Misc;
 using Wabbit.Data;
 using Wabbit.Services;
 using Wabbit.Services.Interfaces;
+using Wabbit.BotClient.Events.Handlers;
 
 namespace Wabbit
 {
@@ -37,12 +38,6 @@ namespace Wabbit
 
                 await Maps.LoadMaps();
 
-                // Create a shared OngoingRounds instance
-                var ongoingRounds = new OngoingRounds();
-
-                // Create and initialize the TournamentManager
-                var tournamentManager = new TournamentManager(ongoingRounds);
-
                 DiscordClientBuilder builder = DiscordClientBuilder.CreateDefault(ConfigManager.Config.Token, DiscordIntents.All);
 
                 builder.ConfigureServices(services =>
@@ -51,9 +46,11 @@ namespace Wabbit
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
 
-                    // Use the existing instances
-                    services.AddSingleton(ongoingRounds);
-                    services.AddSingleton(tournamentManager);
+                    services.AddSingleton<OngoingRounds>();
+                    services.AddSingleton<TournamentManager>();
+
+                    services.AddSingleton<Tournament_Btn_Handlers>();
+                    services.AddSingleton<Game_Btn_Handlers>();
                 });
 
                 builder.ConfigureEventHandlers(events =>
@@ -85,6 +82,7 @@ namespace Wabbit
                 await client.ConnectAsync(status: DiscordUserStatus.Online);
 
                 // Load tournament state
+                var tournamentManager = client.ServiceProvider.GetRequiredService<TournamentManager>();
                 tournamentManager.LoadTournamentState();
                 await tournamentManager.LoadAllParticipantsAsync(client);
 

@@ -1,24 +1,13 @@
+using DSharpPlus;
 using DSharpPlus.Commands;
 using DSharpPlus.Commands.Processors.SlashCommands.ArgumentModifiers;
 using DSharpPlus.Commands.Trees;
 using DSharpPlus.Entities;
-using DSharpPlus.Interactivity;
-using DSharpPlus.Interactivity.Extensions;
-using DSharpPlus.Commands.ContextChecks;
+using Microsoft.Extensions.Logging;
+using System.ComponentModel;
+using Wabbit.BotClient.Config;
 using Wabbit.Misc;
 using Wabbit.Models;
-using Wabbit.BotClient.Config;
-using System.ComponentModel;
-using System.IO;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using DSharpPlus;
-using System.Reflection;
-using System.Dynamic;
-using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 
 namespace Wabbit.BotClient.Commands
 {

@@ -3,13 +3,11 @@ using DSharpPlus.Commands.Processors.SlashCommands;
 using DSharpPlus.Commands.Processors.SlashCommands.ArgumentModifiers;
 using DSharpPlus.Commands.Trees;
 using DSharpPlus.Entities;
+using System.ComponentModel;
+using Wabbit.Data;
 using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
-using System.ComponentModel;
-using System.IO;
-using Wabbit.Data;
-using System.Runtime.InteropServices;
 
 namespace Wabbit.BotClient.Commands
 {
