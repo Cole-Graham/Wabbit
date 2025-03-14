@@ -73,16 +73,19 @@ namespace Wabbit.Misc
             // Draw footer
             DrawFooter(canvas, width, height);
 
-            // Save to file
+            // Generate the image data
             string fileName = $"Images/tournament_{DateTime.Now:yyyyMMddHHmmss}.png";
             using var image = SKImage.FromBitmap(bitmap);
-            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            using var encodedData = image.Encode(SKEncodedImageFormat.Png, 100);
+
+            // Get the data as a byte array that we can use multiple times
+            byte[] imageBytes = encodedData.ToArray();
 
             // Create directory if it doesn't exist
             Directory.CreateDirectory("Images");
 
-            using var stream = File.OpenWrite(fileName);
-            data.SaveTo(stream);
+            // Save to file asynchronously without holding the file open
+            await File.WriteAllBytesAsync(fileName, imageBytes);
 
             // If a client is provided and we have a configured standings channel, post the image there
             if (client != null && tournament.AnnouncementChannel?.Guild is not null)
@@ -122,11 +125,11 @@ namespace Wabbit.Misc
                                         if (existingMessage is not null)
                                         {
                                             // Update the existing message with the new image
-                                            using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+                                            using (var memoryStream = new MemoryStream(imageBytes))
                                             {
                                                 var builder = new DiscordMessageBuilder()
                                                     .AddEmbed(embed)
-                                                    .AddFile(Path.GetFileName(fileName), fileStream);
+                                                    .AddFile(Path.GetFileName(fileName), memoryStream);
 
                                                 await existingMessage.ModifyAsync(builder);
                                                 existingMessageUpdated = true;
@@ -151,11 +154,11 @@ namespace Wabbit.Misc
                             // If we couldn't update an existing message, create a new one
                             if (!existingMessageUpdated)
                             {
-                                using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+                                using (var memoryStream = new MemoryStream(imageBytes))
                                 {
                                     var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
                                         .AddEmbed(embed)
-                                        .AddFile(Path.GetFileName(fileName), fileStream));
+                                        .AddFile(Path.GetFileName(fileName), memoryStream));
 
                                     // Store this message ID for later
                                     var relatedMessage = new Wabbit.Models.RelatedMessage
