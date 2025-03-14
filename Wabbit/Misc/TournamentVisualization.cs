@@ -106,26 +106,75 @@ namespace Wabbit.Misc
                                 .WithColor(DiscordColor.Gold)
                                 .WithFooter("Tournament Standings");
 
-                            // Send the image to the channel
-                            using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+                            // Check if there's an existing visualization message to update
+                            bool existingMessageUpdated = false;
+                            if (tournament.RelatedMessages != null)
                             {
-                                var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
-                                    .AddEmbed(embed)
-                                    .AddFile(Path.GetFileName(fileName), fileStream));
+                                var existingVisualization = tournament.RelatedMessages
+                                    .FirstOrDefault(m => m.Type == "StandingsVisualization" && m.ChannelId == standingsChannel.Id);
 
-                                // Store this message ID for later deletion if needed
-                                var relatedMessage = new Wabbit.Models.RelatedMessage
+                                if (existingVisualization != null)
                                 {
-                                    ChannelId = standingsChannel.Id,
-                                    MessageId = message.Id,
-                                    Type = "StandingsVisualization"
-                                };
+                                    try
+                                    {
+                                        // Try to get the existing message
+                                        var existingMessage = await standingsChannel.GetMessageAsync(existingVisualization.MessageId);
+                                        if (existingMessage is not null)
+                                        {
+                                            // Update the existing message with the new image
+                                            using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+                                            {
+                                                var builder = new DiscordMessageBuilder()
+                                                    .AddEmbed(embed)
+                                                    .AddFile(Path.GetFileName(fileName), fileStream);
 
-                                // Add to tournament's related messages
-                                if (tournament.RelatedMessages == null)
-                                    tournament.RelatedMessages = new List<Wabbit.Models.RelatedMessage>();
+                                                await existingMessage.ModifyAsync(builder);
+                                                existingMessageUpdated = true;
+                                                Console.WriteLine($"Updated existing standings visualization for tournament {tournament.Name}");
 
-                                tournament.RelatedMessages.Add(relatedMessage);
+                                                // Save tournament state after updating the message
+                                                if (stateService != null)
+                                                {
+                                                    await stateService.SaveTournamentStateAsync(client);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"Error updating existing visualization message: {ex.Message}");
+                                        // If we can't update the existing message, we'll create a new one below
+                                    }
+                                }
+                            }
+
+                            // If we couldn't update an existing message, create a new one
+                            if (!existingMessageUpdated)
+                            {
+                                using (var fileStream = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+                                {
+                                    var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
+                                        .AddEmbed(embed)
+                                        .AddFile(Path.GetFileName(fileName), fileStream));
+
+                                    // Store this message ID for later
+                                    var relatedMessage = new Wabbit.Models.RelatedMessage
+                                    {
+                                        ChannelId = standingsChannel.Id,
+                                        MessageId = message.Id,
+                                        Type = "StandingsVisualization"
+                                    };
+
+                                    // Add to tournament's related messages
+                                    if (tournament.RelatedMessages == null)
+                                        tournament.RelatedMessages = new List<Wabbit.Models.RelatedMessage>();
+
+                                    // Remove any old visualization messages first to avoid duplicates
+                                    tournament.RelatedMessages.RemoveAll(m => m.Type == "StandingsVisualization");
+
+                                    // Add the new message
+                                    tournament.RelatedMessages.Add(relatedMessage);
+                                }
 
                                 // Save tournament state if state service is provided
                                 if (stateService != null && client != null)

@@ -51,6 +51,22 @@ namespace Wabbit.Services
 
             // This implementation delegates to the TournamentGameService
             await _tournamentGameService.HandleMatchCompletion(tournament, match, client);
+
+            // Save tournament state
+            await _stateService.SaveTournamentStateAsync(client);
+
+            // Generate a new visualization
+            try
+            {
+                await Misc.TournamentVisualization.GenerateStandingsImage(tournament, client, _stateService);
+                _logger.LogInformation($"Generated updated standings visualization for tournament {tournament.Name}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error generating standings visualization for tournament {tournament.Name}: {ex.Message}");
+            }
+
+            // Check if tournament is complete
         }
 
         /// <inheritdoc/>

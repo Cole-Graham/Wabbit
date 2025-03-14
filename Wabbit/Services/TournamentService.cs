@@ -148,6 +148,9 @@ namespace Wabbit.Services
             // Save tournament state
             await _stateService.SaveTournamentStateAsync(client);
 
+            // Generate tournament visualization
+            await PostTournamentVisualizationAsync(tournament, client);
+
             // Additional tournament startup steps are now handled by individual services
             // Future enhancements: Add tournament visualization and match scheduling implementation
         }
