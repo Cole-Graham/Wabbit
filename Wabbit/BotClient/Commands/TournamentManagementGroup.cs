@@ -1171,22 +1171,30 @@ namespace Wabbit.BotClient.Commands
                 embedBuilder.AddField("Scheduled Start Time", formattedTime);
             }
 
-            // Sort participants: seeded players first (by seed value), then non-seeded alphabetically
-            var sortedParticipants = signup.Participants
-                .Select(p => new
-                {
-                    Player = p,
-                    Seed = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == p.Id || s.PlayerId == p.Id)?.Seed ?? 0,
-                    DisplayName = p.DisplayName
-                })
-                .OrderBy(p => p.Seed == 0) // False (0) comes before True (1), so seeded come first
-                .ThenBy(p => p.Seed) // Sort seeded players by seed value
-                .ThenBy(p => p.DisplayName) // Sort non-seeded players alphabetically
-                .ToList();
+            // Check if we have Discord Members available, or need to use ParticipantInfo as fallback
+            bool useParticipantInfoFallback = !signup.Participants.Any() && signup.ParticipantInfo.Any();
 
-            // Add participants field
-            if (sortedParticipants.Any())
+            if (useParticipantInfoFallback)
             {
+                _logger.LogInformation($"Using ParticipantInfo fallback for signup '{signup.Name}' - Participants list is empty but ParticipantInfo has {signup.ParticipantInfo.Count} entries");
+            }
+
+            if (signup.Participants.Any())
+            {
+                // Sort participants: seeded players first (by seed value), then non-seeded alphabetically
+                var sortedParticipants = signup.Participants
+                    .Select(p => new
+                    {
+                        Player = p,
+                        Seed = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == p.Id || s.PlayerId == p.Id)?.Seed ?? 0,
+                        DisplayName = p.DisplayName
+                    })
+                    .OrderBy(p => p.Seed == 0) // False (0) comes before True (1), so seeded come first
+                    .ThenBy(p => p.Seed) // Sort seeded players by seed value
+                    .ThenBy(p => p.DisplayName) // Sort non-seeded players alphabetically
+                    .ToList();
+
+                // Add participants field
                 StringBuilder participantsText = new StringBuilder();
                 int totalParticipants = sortedParticipants.Count;
 
@@ -1228,6 +1236,53 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 embedBuilder.AddField($"Participants ({sortedParticipants.Count})", finalText);
+            }
+            else if (useParticipantInfoFallback)
+            {
+                // Fallback to ParticipantInfo when Participants list is empty
+                var sortedParticipantInfo = signup.ParticipantInfo
+                    .OrderBy(p => p.Username)
+                    .ToList();
+
+                StringBuilder participantsText = new StringBuilder();
+                int totalParticipants = sortedParticipantInfo.Count;
+
+                // Calculate the number of rows needed
+                int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
+
+                for (int i = 0; i < rowsNeeded; i++)
+                {
+                    // Left column
+                    int leftIndex = i * 2;
+                    if (leftIndex < totalParticipants)
+                    {
+                        var leftPlayer = sortedParticipantInfo[leftIndex];
+                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Id}>");
+
+                        // Add padding between columns
+                        participantsText.Append("    ");
+
+                        // Right column
+                        int rightIndex = leftIndex + 1;
+                        if (rightIndex < totalParticipants)
+                        {
+                            var rightPlayer = sortedParticipantInfo[rightIndex];
+                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Id}>");
+                        }
+
+                        participantsText.AppendLine();
+                    }
+                }
+
+                string finalText = participantsText.ToString();
+
+                // If the text is too long, truncate it
+                if (finalText.Length > 1024)
+                {
+                    finalText = finalText.Substring(0, 1020) + "...";
+                }
+
+                embedBuilder.AddField($"Participants ({sortedParticipantInfo.Count})", finalText);
             }
             else
             {

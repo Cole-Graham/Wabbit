@@ -251,7 +251,9 @@ namespace Wabbit.Services
         /// </summary>
         public int GetParticipantCount(TournamentSignup signup)
         {
-            return signup.Participants?.Count ?? 0;
+            // Use ParticipantInfo count as it's more reliable than the Participants list
+            // ParticipantInfo is persisted to disk and always available
+            return signup.ParticipantInfo?.Count ?? 0;
         }
 
         /// <summary>
@@ -320,6 +322,7 @@ namespace Wabbit.Services
                 if (client.Guilds == null || client.Guilds.Count == 0)
                 {
                     _logger.LogWarning("Client has no guilds available - cannot load Discord members");
+                    _logger.LogWarning($"Client CurrentUser: {(client.CurrentUser != null ? client.CurrentUser.Username : "null")}");
                 }
                 else
                 {
@@ -339,8 +342,11 @@ namespace Wabbit.Services
                         {
                             try
                             {
-                                _logger.LogInformation($"Trying to get member from guild {guild.Name} (ID: {guild.Id})");
+                                _logger.LogInformation($"Trying to get member {participantInfo.Username} from guild {guild.Name} (ID: {guild.Id})");
+
+                                // Try to get the member
                                 var member = await guild.GetMemberAsync(participantInfo.Id);
+
                                 if (member is not null)
                                 {
                                     signup.Participants.Add(member);
@@ -348,17 +354,24 @@ namespace Wabbit.Services
                                     foundMember = true;
                                     break;
                                 }
+                                else
+                                {
+                                    _logger.LogWarning($"GetMemberAsync returned null for {participantInfo.Username} (ID: {participantInfo.Id}) in guild {guild.Name}");
+                                }
                             }
                             catch (Exception guildEx)
                             {
                                 _logger.LogWarning($"Failed to get member {participantInfo.Username} (ID: {participantInfo.Id}) from guild {guild.Name}: {guildEx.Message}");
-                                // Continue to next guild
+                                if (guildEx.InnerException != null)
+                                {
+                                    _logger.LogWarning($"Inner exception: {guildEx.InnerException.Message}");
+                                }
                             }
                         }
 
                         if (!foundMember)
                         {
-                            _logger.LogWarning($"Could not find member {participantInfo.Username} (ID: {participantInfo.Id}) in any guild");
+                            _logger.LogWarning($"Could not find member {participantInfo.Username} (ID: {participantInfo.Id}) in any guild. ParticipantInfo will be used as fallback.");
                         }
                     }
                     catch (Exception ex)
@@ -371,6 +384,7 @@ namespace Wabbit.Services
                 }
 
                 _logger.LogInformation($"Loaded {signup.Participants.Count} participants for signup '{signup.Name}'");
+                _logger.LogInformation($"ParticipantInfo has {signup.ParticipantInfo.Count} entries");
 
                 // Load seed information
                 signup.Seeds.Clear();
