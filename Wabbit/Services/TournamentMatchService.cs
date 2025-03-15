@@ -337,15 +337,20 @@ namespace Wabbit.Services
                     // If we don't have a thread yet, create a new one
                     if (thread is null)
                     {
-                        // Looking for a tournaments channel to create the thread in
-                        var tournamentChannel = guild.Channels.Values
-                            .FirstOrDefault(c => c.Name.Contains("tournament", StringComparison.OrdinalIgnoreCase));
+                        // Get the bot channel from config
+                        var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s.ServerId == guild.Id);
+                        DiscordChannel? tournamentChannel = null;
 
-                        if (tournamentChannel is null)
+                        if (server?.BotChannelId != null)
                         {
-                            // Fallback to any "general" channel if tournament channel not found
-                            tournamentChannel = guild.Channels.Values
-                                .FirstOrDefault(c => c.Name.Contains("general", StringComparison.OrdinalIgnoreCase));
+                            try
+                            {
+                                tournamentChannel = await guild.GetChannelAsync(server.BotChannelId.Value);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Error getting bot channel with ID {server.BotChannelId.Value}");
+                            }
                         }
 
                         if (tournamentChannel is not null)
@@ -368,6 +373,10 @@ namespace Wabbit.Services
                                 DSharpPlus.Entities.DiscordAutoArchiveDuration.Week,
                                 DSharpPlus.Entities.DiscordChannelType.PrivateThread,
                                 "Tournament match thread");
+                        }
+                        else
+                        {
+                            _logger.LogError("Could not find bot channel. Please configure BotChannelId in the server settings.");
                         }
                     }
                 }
@@ -554,68 +563,7 @@ namespace Wabbit.Services
                             _logger.LogError(ex, $"Failed to initialize match status for thread {threadChannel.Id}");
                         }
 
-                        // Create map ban dropdown options
-                        var options = new List<DiscordSelectComponentOption>();
-                        foreach (var map in maps1v1)
-                        {
-                            if (string.IsNullOrEmpty(map)) continue;
-                            options.Add(new DiscordSelectComponentOption(map, map));
-                        }
-
-                        // Create dropdown with appropriate instructions based on match length
-                        DiscordSelectComponent dropdown;
-                        string message;
-
-                        switch (bestOf)
-                        {
-                            case 3:
-                                dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
-                                message = "**Scroll to see all map options!**\n\n" +
-                                    "Choose 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                                    "Only 2 maps from each player will be banned, leaving 4 remaining maps. One of the 3rd priority maps " +
-                                    "selected will be randomly banned in case both players ban the same map. " +
-                                    "You will not know which maps were banned by your opponent, and the remaining maps will be revealed " +
-                                    "randomly before each game after deck codes have been locked in.\n\n" +
-                                    "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
-                                break;
-                            case 5:
-                                dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 2, 2);
-                                message = "**Scroll to see all map options!**\n\n" +
-                                    "Choose 2 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                                    "Only 3 maps will be banned in total, leaving 5 remaining maps. " +
-                                    "One of the 2nd priority maps selected by each player will be randomly banned. " +
-                                    "You will not know which maps were banned by your opponent, " +
-                                    "and the remaining maps will be revealed randomly before each game after deck codes have been locked in.\n\n" +
-                                    "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
-                                break;
-                            default:
-                                dropdown = new DiscordSelectComponent("map_ban_dropdown", "Select maps to ban", options, false, 3, 3);
-                                message = "**Scroll to see all map options!**\n\n" +
-                                    "Select 3 maps to ban **in order of your ban priority**. The order of your selection matters!\n\n" +
-                                    "**Note:** After making your selections, you'll have a chance to review your choices and confirm or revise them.";
-                                break;
-                        }
-
-                        // Instructions message with the dropdown - this is important to keep
-                        var dropdownBuilder = new DiscordMessageBuilder()
-                            .WithContent(message)
-                            .AddComponents(dropdown);
-
-                        await threadChannel.SendMessageAsync(dropdownBuilder);
-
-                        // Create a button to report results
-                        var reportButton = new DiscordButtonComponent(
-                            DiscordButtonStyle.Primary,
-                            "report_result",
-                            "Report Result");
-
-                        // Create a message with the button - this is important to keep
-                        var resultMessage = new DiscordMessageBuilder()
-                            .WithContent("Report the result of the match when it's done:")
-                            .AddComponents(reportButton);
-
-                        // Send the message with the button
-                        await threadChannel.SendMessageAsync(resultMessage);
+                        // Don't send duplicate map ban dropdown - it's already included in the match status
                     }
                     catch (Exception ex)
                     {

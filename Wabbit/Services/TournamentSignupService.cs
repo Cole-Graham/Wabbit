@@ -803,7 +803,7 @@ namespace Wabbit.Services
                 {
                     var rightParticipant = sortedParticipants[i + 1];
                     string rightSeed = GetSeedDisplay(rightParticipant);
-                    string rightEntry = $"{i + 2}. <@{GetParticipantId(rightParticipant)}>{(string.IsNullOrEmpty(rightSeed) ? "" : $" {rightSeed}")}";
+                    string rightEntry = $"{(i + 1) + 1}. <@{GetParticipantId(rightParticipant)}>{(string.IsNullOrEmpty(rightSeed) ? "" : $" {rightSeed}")}";
 
                     // Add both columns with padding
                     participantsText.AppendLine($"{leftEntry.PadRight(LEFT_COLUMN_WIDTH)}{new string(' ', MINIMUM_SPACING)}{rightEntry}");

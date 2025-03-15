@@ -59,28 +59,43 @@ namespace Wabbit.Services
             try
             {
                 var existingMessage = await GetMatchStatusMessageAsync(channel, client);
+
+                // Get map pool once and reuse it
+                var mapPool = round.CurrentStage == MatchStage.MapBan ? _mapService.GetTournamentMapPool(round.OneVOne) : null;
+
                 if (existingMessage is not null)
                 {
                     var builder = new DiscordMessageBuilder()
-                        .AddEmbed(CreateMatchStatusEmbed(round));
+                        .AddEmbed(CreateMatchStatusEmbed(round, mapPool));
 
                     // Only add components if we're in an interactive stage and have valid components to add
+                    // AND we haven't already added them (check message components)
                     if (round.CurrentStage != MatchStage.Created &&
-                        round.CurrentStage != MatchStage.Completed)
+                        round.CurrentStage != MatchStage.Completed &&
+                        (existingMessage.Components?.Any() != true))
                     {
                         // Validate stage-specific requirements before adding components
                         switch (round.CurrentStage)
                         {
                             case MatchStage.MapBan:
-                                var maps = _mapService.GetTournamentMapPool(round.OneVOne);
-                                var availableMaps = maps.Where(m => !round.Maps.Contains(m));
-                                if (availableMaps.Any())
+                                if (mapPool?.Any() == true)
                                 {
-                                    builder.AddComponents(new DiscordSelectComponent(
-                                        $"map_ban_{round.GetHashCode()}",
-                                        "Select maps to ban",
-                                        availableMaps.Select(m => new DiscordSelectComponentOption(m, m))
-                                    ));
+                                    var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
+                                    if (availableMaps.Any())
+                                    {
+                                        // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+                                        // Bo5 matches have 2 bans
+                                        int numBans = round.Length == 5 ? 2 : 3;
+
+                                        builder.AddComponents(new DiscordSelectComponent(
+                                            $"map_ban_{round.GetHashCode()}",
+                                            $"Select {numBans} maps to ban (in order of priority)",
+                                            availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                                            false,
+                                            minOptions: numBans,
+                                            maxOptions: numBans
+                                        ));
+                                    }
                                 }
                                 break;
                             case MatchStage.DeckSubmission:
@@ -106,7 +121,7 @@ namespace Wabbit.Services
                 else
                 {
                     var messageBuilder = new DiscordMessageBuilder()
-                        .AddEmbed(CreateMatchStatusEmbed(round));
+                        .AddEmbed(CreateMatchStatusEmbed(round, mapPool));
 
                     // Same component logic for new messages
                     if (round.CurrentStage != MatchStage.Created &&
@@ -116,15 +131,24 @@ namespace Wabbit.Services
                         switch (round.CurrentStage)
                         {
                             case MatchStage.MapBan:
-                                var maps = _mapService.GetTournamentMapPool(round.OneVOne);
-                                var availableMaps = maps.Where(m => !round.Maps.Contains(m));
-                                if (availableMaps.Any())
+                                if (mapPool?.Any() == true)
                                 {
-                                    messageBuilder.AddComponents(new DiscordSelectComponent(
-                                        $"map_ban_{round.GetHashCode()}",
-                                        "Select maps to ban",
-                                        availableMaps.Select(m => new DiscordSelectComponentOption(m, m))
-                                    ));
+                                    var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
+                                    if (availableMaps.Any())
+                                    {
+                                        // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+                                        // Bo5 matches have 2 bans
+                                        int numBans = round.Length == 5 ? 2 : 3;
+
+                                        messageBuilder.AddComponents(new DiscordSelectComponent(
+                                            $"map_ban_{round.GetHashCode()}",
+                                            $"Select {numBans} maps to ban (in order of priority)",
+                                            availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                                            false,
+                                            minOptions: numBans,
+                                            maxOptions: numBans
+                                        ));
+                                    }
                                 }
                                 break;
                             case MatchStage.DeckSubmission:
@@ -481,7 +505,7 @@ namespace Wabbit.Services
             builder.AddField("Selected Maps", selectedMapsField.ToString(), false);
 
             // Update map pool and other sections
-            AddMapPoolField(builder, round);
+            AddMapPoolField(builder, round, bannedMaps);
             AddTeamMapBansField(builder, round);
             AddGameResultsArea(builder, round);
             AddDeckSubmissionsArea(builder, round);
@@ -520,7 +544,7 @@ namespace Wabbit.Services
             }
 
             // Add updated map pool
-            AddMapPoolField(builder, round);
+            AddMapPoolField(builder, round, selectedMaps);
         }
 
         /// <summary>
@@ -860,7 +884,7 @@ namespace Wabbit.Services
         /// <summary>
         /// Creates the basic match status embed with common information
         /// </summary>
-        private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round)
+        private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round, List<string>? cachedMapPool = null)
         {
             string matchLength = round.Length switch
             {
@@ -902,7 +926,11 @@ namespace Wabbit.Services
             builder.AddField("Progress", progressBar, false);
 
             // Add map pool with color coding
-            AddMapPoolField(builder, round);
+            if (round.CurrentStage == MatchStage.MapBan)
+            {
+                var mapPool = cachedMapPool ?? _mapService.GetTournamentMapPool(round.OneVOne);
+                AddMapPoolField(builder, round, mapPool);
+            }
 
             // Add team map bans
             AddTeamMapBansField(builder, round);
@@ -932,9 +960,8 @@ namespace Wabbit.Services
             return $"{mapBanEmoji} Map Bans ➜ {deckSubmitEmoji} Deck Submission ➜ {gameResultsEmoji} Game Results";
         }
 
-        private void AddMapPoolField(DiscordEmbedBuilder builder, Round round)
+        private void AddMapPoolField(DiscordEmbedBuilder builder, Round round, List<string> mapPool)
         {
-            var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
             if (mapPool is null || !mapPool.Any()) return;
 
             // Sort maps alphanumerically
