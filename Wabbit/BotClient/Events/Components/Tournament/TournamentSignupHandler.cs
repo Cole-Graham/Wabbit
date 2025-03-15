@@ -46,7 +46,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         /// <returns>True if this handler can handle the component, false otherwise</returns>
         public override bool CanHandle(string customId)
         {
-            return customId.StartsWith("signup_") ||
+            return customId.StartsWith("signup_tournament_") ||
                    customId.StartsWith("cancel_signup_") ||
                    customId.StartsWith("keep_signup_") ||
                    customId.StartsWith("withdraw_");
@@ -62,7 +62,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         {
             try
             {
-                if (e.Id.StartsWith("signup_") && e.Id != "signup_button")
+                if (e.Id.StartsWith("signup_tournament_"))
                 {
                     await HandleSignupButton(client, e, hasBeenDeferred);
                 }
@@ -113,8 +113,8 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 }
             }
 
-            // Extract the tournament name from the button ID (format: signup_TournamentName)
-            string tournamentName = e.Id.Substring("signup_".Length);
+            // Extract the tournament name from the button ID (format: signup_tournament_TournamentName)
+            string tournamentName = e.Id.Substring("signup_tournament_".Length);
 
             // Find the signup using the SignupService and ensure participants are loaded
             var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, client);
@@ -491,7 +491,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     {
                         components.Add(new DiscordButtonComponent(
                             DiscordButtonStyle.Success,
-                            $"signup_{signup.Name}",
+                            $"signup_tournament_{signup.Name}",
                             "Sign Up"
                         ));
 
