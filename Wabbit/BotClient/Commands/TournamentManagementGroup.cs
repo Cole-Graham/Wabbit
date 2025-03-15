@@ -556,12 +556,12 @@ namespace Wabbit.BotClient.Commands
                         .AddComponents(
                             new DiscordButtonComponent(
                                 DiscordButtonStyle.Success,
-                                $"signup_tournament_{name}",
+                                $"signup_tournament_{signup.Name}",
                                 "Sign Up"
                             ),
                             new DiscordButtonComponent(
                                 DiscordButtonStyle.Danger,
-                                $"withdraw_{name}",
+                                $"withdraw_{signup.Name}",
                                 "Withdraw"
                             )
                         );
@@ -1424,12 +1424,12 @@ namespace Wabbit.BotClient.Commands
                     builder.AddComponents(
                         new DiscordButtonComponent(
                             DiscordButtonStyle.Success,
-                            $"signup_tournament_{name}",
+                            $"signup_tournament_{signup.Name}",
                             "Sign Up"
                         ),
                         new DiscordButtonComponent(
                             DiscordButtonStyle.Danger,
-                            $"withdraw_{name}",
+                            $"withdraw_{signup.Name}",
                             "Withdraw"
                         )
                     );
@@ -1440,7 +1440,7 @@ namespace Wabbit.BotClient.Commands
                     builder.AddComponents(
                         new DiscordButtonComponent(
                             DiscordButtonStyle.Secondary,
-                            $"closed_{name}",
+                            $"closed_{signup.Name}",
                             "Signups Closed",
                             true // disabled
                         )
