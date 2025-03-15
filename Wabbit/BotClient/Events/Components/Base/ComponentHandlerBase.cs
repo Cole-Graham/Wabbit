@@ -96,6 +96,7 @@ namespace Wabbit.BotClient.Events.Components.Base
                     .WithDescription(message)
                     .WithColor(color);
 
+                // Send error response
                 if (hasBeenDeferred)
                 {
                     await e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
@@ -104,13 +105,8 @@ namespace Wabbit.BotClient.Events.Components.Base
                 {
                     await e.Interaction.CreateResponseAsync(
                         DiscordInteractionResponseType.ChannelMessageWithSource,
-                        new DiscordInteractionResponseBuilder().AddEmbed(embed).AsEphemeral());
-                }
-
-                // Auto-delete ephemeral messages after 10 seconds if there's a message reference
-                if (e.Message is not null)
-                {
-                    await AutoDeleteMessageAsync(e.Message, 10);
+                        new DiscordInteractionResponseBuilder().AddEmbed(embed).AsEphemeral()
+                    );
                 }
             }
             catch (Exception ex)

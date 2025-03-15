@@ -446,15 +446,46 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 // Clean up any existing deck submission prompts in the channel
                 await CleanupDeckSubmissionMessages(e.Channel, userId);
 
-                // Prompt the user to submit a new deck code
-                var promptContent = $"{e.User.Mention} Please use the `/tournament submit_deck` command to submit your revised deck code.\n\n" +
-                                  "After submitting, you'll be able to review and confirm your deck code.";
+                // Get the tournament and match from the tournament manager service
+                var tournament = _tournamentManagerService.GetAllTournaments()
+                    .FirstOrDefault(t => t.Groups.Any(g => g.Matches.Any(m =>
+                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true)) ||
+                        t.PlayoffMatches.Any(m =>
+                            m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true));
 
-                // Send the message directly with the string content
-                var reviseDeckMessage = await e.Channel.SendMessageAsync(promptContent);
+                if (tournament is not null)
+                {
+                    var match = tournament.Groups.SelectMany(g => g.Matches)
+                        .Concat(tournament.PlayoffMatches)
+                        .FirstOrDefault(m => m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true);
 
-                // Auto-delete the revision prompt after 10 seconds
-                await AutoDeleteMessageAsync(reviseDeckMessage, 10);
+                    if (match?.LinkedRound is not null)
+                    {
+                        // Update the match status to show deck revision instructions
+                        match.LinkedRound.CurrentStage = MatchStage.DeckRevision;
+                        await _matchStatusService.UpdateMatchStatusAsync(e.Channel, match.LinkedRound, client);
+
+                        // Save the tournament state
+                        await _stateService.SaveTournamentStateAsync(client);
+                    }
+                }
+
+                // Send ephemeral confirmation to the user
+                if (hasBeenDeferred)
+                {
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("You can now submit your revised deck.")
+                        .AsEphemeral());
+                }
+                else
+                {
+                    await e.Interaction.CreateResponseAsync(
+                        DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder()
+                            .WithContent("You can now submit your revised deck.")
+                            .AsEphemeral()
+                    );
+                }
             }
             catch (Exception ex)
             {

@@ -21,6 +21,11 @@ namespace Wabbit.Models
         DeckSubmission,
 
         /// <summary>
+        /// Deck revision stage where players revise their decks
+        /// </summary>
+        DeckRevision,
+
+        /// <summary>
         /// Game results stage where game outcomes are recorded
         /// </summary>
         GameResults,

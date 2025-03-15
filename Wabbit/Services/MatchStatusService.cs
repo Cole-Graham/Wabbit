@@ -1046,8 +1046,8 @@ namespace Wabbit.Services
         {
             string instructions = round.CurrentStage switch
             {
-                MatchStage.MapBan => "Use the dropdown below to select maps to ban in order of priority.",
                 MatchStage.DeckSubmission => "Submit your deck using `/tournament submit_deck`.",
+                MatchStage.DeckRevision => "Please submit your revised deck using `/tournament submit_deck`.",
                 MatchStage.GameResults => "Select the winner from the dropdown below.",
                 MatchStage.Completed => $"Match completed! {round.WinMsg}",
                 _ => ""

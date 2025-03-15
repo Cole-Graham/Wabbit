@@ -169,8 +169,12 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 var newParticipantsList = new List<DiscordMember>(signup.Participants);
                 newParticipantsList.Add(member);
 
-                // Replace the participants list in the signup
+                // Update the signup with the new participant
                 signup.Participants = newParticipantsList;
+                _signupService.UpdateSignup(signup);
+
+                // Update the signup message with the new participant list
+                await UpdateSignupMessage(client, signup);
 
                 // Make sure ParticipantInfo exists and is updated for persistence
                 if (signup.ParticipantInfo is null)
@@ -192,27 +196,22 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 _signupService.UpdateSignup(signup);
                 await _signupService.SaveSignupsAsync();
 
-                // Update the signup message
-                await UpdateSignupMessage(client, signup);
-
                 // Send confirmation message to the user (ephemeral)
-                var successMessage = $"You have successfully signed up for the '{signup.Name}' tournament!";
                 if (hasBeenDeferred)
                 {
-                    await e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().WithContent(successMessage));
+                    // Create a new interaction response for the success message
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent($"You have successfully signed up for the '{signup.Name}' tournament!")
+                        .AsEphemeral());
                 }
                 else
                 {
                     await e.Interaction.CreateResponseAsync(
                         DiscordInteractionResponseType.ChannelMessageWithSource,
-                        new DiscordInteractionResponseBuilder().WithContent(successMessage).AsEphemeral()
+                        new DiscordInteractionResponseBuilder()
+                            .WithContent($"You have successfully signed up for the '{signup.Name}' tournament!")
+                            .AsEphemeral()
                     );
-                }
-
-                // Schedule auto-deletion of the confirmation message after 10 seconds
-                if (e.Message is not null)
-                {
-                    await AutoDeleteMessageAsync(e.Message, 10);
                 }
             }
             catch (Exception ex)
@@ -317,7 +316,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     );
                 }
 
-                // Delete the original message after handling
+                // Delete the original confirmation dialog if it exists
                 if (e.Message is not null)
                 {
                     try
@@ -326,7 +325,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning($"Failed to delete message after cancel signup: {ex.Message}");
+                        _logger.LogWarning($"Failed to delete confirmation dialog: {ex.Message}");
                     }
                 }
             }
