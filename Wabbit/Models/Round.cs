@@ -1,5 +1,6 @@
 ﻿using DSharpPlus.Entities;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Wabbit.Models
 {
@@ -48,6 +49,7 @@ namespace Wabbit.Models
             public List<Participant> Participants { get; set; } = [];
             public int Wins { get; set; } = 0;
             public List<string> MapBans { get; set; } = []; // Init not needed
+            public bool HasSubmittedDeck => Participants.All(p => !string.IsNullOrEmpty(p.Deck));
         }
     }
 }

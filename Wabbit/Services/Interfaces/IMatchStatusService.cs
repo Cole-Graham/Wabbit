@@ -21,6 +21,15 @@ namespace Wabbit.Services.Interfaces
         Task<DiscordMessage> UpdateMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client);
 
         /// <summary>
+        /// Initializes a new match status with proper stage setup
+        /// </summary>
+        /// <param name="channel">The match thread channel</param>
+        /// <param name="round">The tournament round</param>
+        /// <param name="client">The Discord client</param>
+        /// <returns>The newly created message</returns>
+        Task<DiscordMessage> InitializeMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client);
+
+        /// <summary>
         /// Creates a new match status embed for a new match, preserving history of previous matches
         /// </summary>
         /// <param name="channel">The match thread channel</param>

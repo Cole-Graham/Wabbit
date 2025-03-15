@@ -56,39 +56,140 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage> UpdateMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
-            var existingMessage = await GetMatchStatusMessageAsync(channel, client);
-
-            // Build the base embed
-            var embed = CreateMatchStatusEmbed(round);
-
-            var teamNames = round.Teams?.Select(t => t.Name ?? "Unknown Team").ToList() ?? new List<string> { "Team 1", "Team 2" };
-
-            // Create buttons based on the current match stage
-            var components = new List<DiscordComponent>();
-
-            if (existingMessage is not null)
+            try
             {
-                await existingMessage.ModifyAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(components));
+                var existingMessage = await GetMatchStatusMessageAsync(channel, client);
+                if (existingMessage is not null)
+                {
+                    var builder = new DiscordMessageBuilder()
+                        .AddEmbed(CreateMatchStatusEmbed(round));
 
-                return existingMessage;
+                    // Only add components if we're in an interactive stage and have valid components to add
+                    if (round.CurrentStage != MatchStage.Created &&
+                        round.CurrentStage != MatchStage.Completed)
+                    {
+                        // Validate stage-specific requirements before adding components
+                        switch (round.CurrentStage)
+                        {
+                            case MatchStage.MapBan:
+                                var maps = _mapService.GetTournamentMapPool(round.OneVOne);
+                                var availableMaps = maps.Where(m => !round.Maps.Contains(m));
+                                if (availableMaps.Any())
+                                {
+                                    builder.AddComponents(new DiscordSelectComponent(
+                                        $"map_ban_{round.GetHashCode()}",
+                                        "Select maps to ban",
+                                        availableMaps.Select(m => new DiscordSelectComponentOption(m, m))
+                                    ));
+                                }
+                                break;
+                            case MatchStage.DeckSubmission:
+                                // Only add deck submission button if decks haven't been submitted
+                                if (round.Teams?.Any() != true || !round.Teams.All(t => t.HasSubmittedDeck))
+                                {
+                                    builder.AddComponents(new DiscordButtonComponent(
+                                        DiscordButtonStyle.Primary,
+                                        $"submit_deck_{round.GetHashCode()}",
+                                        "Submit Deck"
+                                    ));
+                                }
+                                break;
+                            case MatchStage.GameResults:
+                                // Game results components are handled separately
+                                break;
+                        }
+                    }
+
+                    await existingMessage.ModifyAsync(builder);
+                    return existingMessage;
+                }
+                else
+                {
+                    var messageBuilder = new DiscordMessageBuilder()
+                        .AddEmbed(CreateMatchStatusEmbed(round));
+
+                    // Same component logic for new messages
+                    if (round.CurrentStage != MatchStage.Created &&
+                        round.CurrentStage != MatchStage.Completed)
+                    {
+                        // Validate stage-specific requirements before adding components
+                        switch (round.CurrentStage)
+                        {
+                            case MatchStage.MapBan:
+                                var maps = _mapService.GetTournamentMapPool(round.OneVOne);
+                                var availableMaps = maps.Where(m => !round.Maps.Contains(m));
+                                if (availableMaps.Any())
+                                {
+                                    messageBuilder.AddComponents(new DiscordSelectComponent(
+                                        $"map_ban_{round.GetHashCode()}",
+                                        "Select maps to ban",
+                                        availableMaps.Select(m => new DiscordSelectComponentOption(m, m))
+                                    ));
+                                }
+                                break;
+                            case MatchStage.DeckSubmission:
+                                // Only add deck submission button if decks haven't been submitted
+                                if (round.Teams?.Any() != true || !round.Teams.All(t => t.HasSubmittedDeck))
+                                {
+                                    messageBuilder.AddComponents(new DiscordButtonComponent(
+                                        DiscordButtonStyle.Primary,
+                                        $"submit_deck_{round.GetHashCode()}",
+                                        "Submit Deck"
+                                    ));
+                                }
+                                break;
+                            case MatchStage.GameResults:
+                                // Game results components are handled separately
+                                break;
+                        }
+                    }
+
+                    var newMessage = await channel.SendMessageAsync(messageBuilder);
+                    _channelToMessageMap[channel.Id] = newMessage.Id;
+                    round.StatusMessageId = newMessage.Id;
+
+                    // Initialize first stage if needed
+                    if (round.CurrentStage == MatchStage.Created)
+                    {
+                        round.CurrentStage = MatchStage.MapBan;
+                        await UpdateToMapBanStageAsync(channel, round, client);
+                    }
+
+                    return newMessage;
+                }
             }
-            else
+            catch (Exception ex)
             {
-                // Create a new message
-                var messageBuilder = new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(components);
-
-                var newMessage = await channel.SendMessageAsync(messageBuilder);
-                _channelToMessageMap[channel.Id] = newMessage.Id;
-
-                // Store the message ID in the round for tracking
-                round.StatusMessageId = newMessage.Id;
-
-                return newMessage;
+                _logger.LogError(ex, "Error updating match status message");
+                throw;
             }
+        }
+
+        /// <summary>
+        /// Initializes a new match status with proper stage setup
+        /// </summary>
+        public async Task<DiscordMessage> InitializeMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
+        {
+            // Remove any existing message mapping for this channel
+            if (_channelToMessageMap.ContainsKey(channel.Id))
+            {
+                _channelToMessageMap.Remove(channel.Id);
+            }
+
+            // Clear any existing status message ID
+            round.StatusMessageId = null;
+
+            // Create initial message with no components
+            var message = await UpdateMatchStatusAsync(channel, round, client);
+
+            // Transition to first stage (usually map bans)
+            if (round.CurrentStage == MatchStage.Created)
+            {
+                round.CurrentStage = MatchStage.MapBan;
+                await UpdateToMapBanStageAsync(channel, round, client);
+            }
+
+            return message;
         }
 
         /// <summary>
@@ -182,83 +283,27 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage> UpdateToMapBanStageAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
-            // Update the round's current stage
+            // Validate current stage
+            if (round.CurrentStage != MatchStage.Created && round.CurrentStage != MatchStage.MapBan)
+            {
+                throw new InvalidOperationException($"Cannot transition to map ban stage from {round.CurrentStage}");
+            }
+
+            // Ensure we have valid teams
+            if (round.Teams?.Count < 2)
+            {
+                throw new InvalidOperationException("Cannot start map ban stage without at least two teams");
+            }
+
+            // Ensure we have a valid map pool
+            var maps = _mapService.GetTournamentMapPool(round.OneVOne);
+            if (!maps.Any())
+            {
+                throw new InvalidOperationException("No maps available for banning");
+            }
+
             round.CurrentStage = MatchStage.MapBan;
-
-            var message = await GetMatchStatusMessageAsync(channel, client);
-            var embed = CreateMatchStatusEmbed(round);
-
-            // Add progress bar to show current stage
-            embed.AddField("Progress", GetMatchProgressBar(round.CurrentStage), false);
-
-            // Get the map pool for this match type
-            var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
-
-            // Create map ban dropdown
-            var mapSelectOptions = new List<DiscordSelectComponentOption>();
-            if (mapPool is not null)
-            {
-                foreach (var mapName in mapPool.OrderBy(m => m))
-                {
-                    if (mapName is not null)
-                    {
-                        var option = new DiscordSelectComponentOption(mapName, mapName);
-                        mapSelectOptions.Add(option);
-                    }
-                }
-            }
-
-            // Selection count depends on match length
-            int selectionCount = round.Length == 5 ? 2 : 3; // Bo5 = 2 bans, others = 3 bans
-
-            var mapBanDropdown = new DiscordSelectComponent(
-                "map_ban_dropdown",
-                "Select maps to ban",
-                mapSelectOptions,
-                false,
-                selectionCount,
-                selectionCount);
-
-            // Build instructions based on match length
-            string instructions = round.Length switch
-            {
-                1 => "Select 3 maps to ban in order of priority. Your first two bans are guaranteed, third is conditional.",
-                3 => "Select 3 maps to ban in order of priority. Your first two bans are guaranteed, third is conditional.",
-                5 => "Select 2 maps to ban in order of priority. Your first ban is guaranteed, second is conditional.",
-                _ => "Select maps to ban in order of priority."
-            };
-
-            // Add map ban instructions section
-            embed.AddField("Map Ban Instructions", instructions, false);
-
-            // Add the dropdown component
-            var components = new List<DiscordComponent> { mapBanDropdown };
-
-            // Add map pool and other sections
-            AddMapPoolField(embed, round);
-            AddTeamMapBansField(embed, round);
-            AddGameResultsArea(embed, round);
-            AddDeckSubmissionsArea(embed, round);
-
-            // Use blue color for map ban stage
-            embed.WithColor(new DiscordColor(66, 134, 244));
-
-            if (message is not null)
-            {
-                await message.ModifyAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(components));
-                return message;
-            }
-            else
-            {
-                var newMessage = await channel.SendMessageAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(components));
-
-                _channelToMessageMap[channel.Id] = newMessage.Id;
-                return newMessage;
-            }
+            return await UpdateMatchStatusAsync(channel, round, client);
         }
 
         /// <summary>

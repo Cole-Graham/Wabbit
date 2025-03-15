@@ -786,25 +786,32 @@ namespace Wabbit.Services
             StringBuilder participantsText = new StringBuilder();
             int count = sortedParticipants.Count;
 
+            // Constants for layout - optimized for average case
+            const int LEFT_COLUMN_WIDTH = 35;  // Accommodates most usernames + seed info
+            const int MINIMUM_SPACING = 4;     // Minimum space between columns
+
             // Add two participants per row
             for (int i = 0; i < count; i += 2)
             {
                 // Left column - always present
                 var leftParticipant = sortedParticipants[i];
                 string leftSeed = GetSeedDisplay(leftParticipant);
-                participantsText.Append($"{i + 1}. <@{GetParticipantId(leftParticipant)}> {leftSeed}");
+                string leftEntry = $"{i + 1}. <@{GetParticipantId(leftParticipant)}>{(string.IsNullOrEmpty(leftSeed) ? "" : $" {leftSeed}")}";
 
                 // Right column - may not be present for odd number of participants
                 if (i + 1 < count)
                 {
                     var rightParticipant = sortedParticipants[i + 1];
                     string rightSeed = GetSeedDisplay(rightParticipant);
-                    participantsText.Append($"     {i + 2}. <@{GetParticipantId(rightParticipant)}> {rightSeed}");
-                }
+                    string rightEntry = $"{i + 2}. <@{GetParticipantId(rightParticipant)}>{(string.IsNullOrEmpty(rightSeed) ? "" : $" {rightSeed}")}";
 
-                if (i + 2 < count) // Add newline if not the last row
+                    // Add both columns with padding
+                    participantsText.AppendLine($"{leftEntry.PadRight(LEFT_COLUMN_WIDTH)}{new string(' ', MINIMUM_SPACING)}{rightEntry}");
+                }
+                else
                 {
-                    participantsText.AppendLine();
+                    // Just add left column for odd number of participants
+                    participantsText.AppendLine(leftEntry);
                 }
             }
 

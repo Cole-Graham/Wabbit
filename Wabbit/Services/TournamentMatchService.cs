@@ -430,20 +430,6 @@ namespace Wabbit.Services
                 // Initialize the Maps collection
                 round.Maps = new List<string>();
 
-                // Select a random map for the first game
-                if (maps1v1.Length > 0)
-                {
-                    var random = new Random();
-                    string firstGameMap = maps1v1[random.Next(maps1v1.Length)];
-                    round.CustomProperties["CurrentMap"] = firstGameMap; // Store the current map in custom properties
-                    round.Maps.Add(firstGameMap); // Add to maps list
-                    _logger.LogInformation($"Selected initial map for match: {firstGameMap}");
-                }
-                else
-                {
-                    _logger.LogWarning("No maps available for match. Map pool may be empty.");
-                }
-
                 // Create options for map ban dropdown
                 var options = new List<DiscordSelectComponentOption>();
                 foreach (var map in maps1v1)
