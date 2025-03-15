@@ -549,7 +549,7 @@ namespace Wabbit.BotClient.Commands
                 {
                     // Create and send the signup message
                     var signupChannel = await context.Client.GetChannelAsync(signupChannelId.Value);
-                    DiscordEmbed embed = CreateSignupEmbed(signup);
+                    var embed = _signupService.CreateSignupEmbed(signup);
 
                     var builder = new DiscordMessageBuilder()
                         .AddEmbed(embed)
@@ -1212,176 +1212,6 @@ namespace Wabbit.BotClient.Commands
             return server?.SignupChannelId;
         }
 
-        private DiscordEmbed CreateSignupEmbed(TournamentSignup signup)
-        {
-            string formatName = signup.Format.ToString();
-            string gameTypeName = signup.Type.ToString();
-
-            var embedBuilder = new DiscordEmbedBuilder()
-                .WithTitle($"🏆 Tournament Signup: {signup.Name}")
-                .WithDescription($"Format: {formatName}\nGame Type: {gameTypeName}")
-                .WithFooter("Sign up by clicking the button below")
-                .WithTimestamp(DateTime.Now);
-
-            if (signup.IsOpen)
-            {
-                embedBuilder.WithColor(DiscordColor.Green);
-            }
-            else
-            {
-                embedBuilder.WithColor(DiscordColor.Red);
-                embedBuilder.WithFooter("Sign up by clicking the button below (CLOSED)");
-            }
-
-            // Add scheduled start time if available
-            if (signup.ScheduledStartTime.HasValue)
-            {
-                string formattedTime = $"<t:{((DateTimeOffset)signup.ScheduledStartTime).ToUnixTimeSeconds()}:F>";
-                embedBuilder.AddField("Scheduled Start Time", formattedTime);
-            }
-
-            // Compare counts to determine which list to use
-            int participantsCount = signup.Participants?.Count ?? 0;
-            int participantInfoCount = signup.ParticipantInfo?.Count ?? 0;
-
-            _logger.LogInformation($"CreateSignupEmbed for '{signup.Name}': Participants count: {participantsCount}, ParticipantInfo count: {participantInfoCount}");
-
-            // Use Participants list if it's complete, otherwise use ParticipantInfo
-            if (participantsCount > 0 && participantsCount >= participantInfoCount)
-            {
-                // Sort participants: seeded players first (by seed value), then non-seeded alphabetically
-                var sortedParticipants = (signup.Participants ?? new List<DiscordMember>())
-                    .Select(p => new
-                    {
-                        Player = p,
-                        // Look at both Seeds and SeedInfo collections for seed values
-                        Seed = FindSeedValue(signup, p.Id),
-                        DisplayName = p.DisplayName
-                    })
-                    .OrderBy(p => p.Seed == 0) // False (0) comes before True (1), so seeded come first
-                    .ThenBy(p => p.Seed) // Sort seeded players by seed value
-                    .ThenBy(p => p.DisplayName) // Sort non-seeded players alphabetically
-                    .ToList();
-
-                // Add participants field
-                StringBuilder participantsText = new StringBuilder();
-                int totalParticipants = sortedParticipants.Count;
-
-                // Calculate the number of rows needed
-                int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
-
-                for (int i = 0; i < rowsNeeded; i++)
-                {
-                    // Left column
-                    int leftIndex = i * 2;
-                    if (leftIndex < totalParticipants)
-                    {
-                        var leftPlayer = sortedParticipants[leftIndex];
-                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
-                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
-
-                        // Add padding between columns
-                        participantsText.Append("    ");
-
-                        // Right column
-                        int rightIndex = leftIndex + 1;
-                        if (rightIndex < totalParticipants)
-                        {
-                            var rightPlayer = sortedParticipants[rightIndex];
-                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
-                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
-                        }
-
-                        participantsText.AppendLine();
-                    }
-                }
-
-                string finalText = participantsText.ToString();
-
-                // If the text is too long, truncate it
-                if (finalText.Length > 1024)
-                {
-                    finalText = finalText.Substring(0, 1020) + "...";
-                }
-
-                embedBuilder.AddField($"Participants ({sortedParticipants.Count})", finalText);
-            }
-            else if (participantInfoCount > 0)
-            {
-                // Fallback to ParticipantInfo when Participants list is empty
-                var sortedParticipantInfo = (signup.ParticipantInfo ?? new List<ParticipantInfo>())
-                    .Select(p => new
-                    {
-                        Player = p,
-                        // Look up seed value from SeedInfo
-                        Seed = signup.SeedInfo?.FirstOrDefault(s => s.Id == p.Id)?.Seed ?? 0,
-                        Username = p.Username
-                    })
-                    .OrderBy(p => p.Seed == 0) // Seeded players first
-                    .ThenBy(p => p.Seed)       // Then by seed value
-                    .ThenBy(p => p.Username)   // Then alphabetically by username
-                    .ToList();
-
-                StringBuilder participantsText = new StringBuilder();
-                int totalParticipants = sortedParticipantInfo.Count;
-
-                // Calculate the number of rows needed
-                int rowsNeeded = (int)Math.Ceiling(totalParticipants / 2.0);
-
-                for (int i = 0; i < rowsNeeded; i++)
-                {
-                    // Left column
-                    int leftIndex = i * 2;
-                    if (leftIndex < totalParticipants)
-                    {
-                        var leftPlayer = sortedParticipantInfo[leftIndex];
-                        string leftSeedDisplay = leftPlayer.Seed > 0 ? $"[Seed #{leftPlayer.Seed}]" : "";
-                        participantsText.Append($"{leftIndex + 1}. <@{leftPlayer.Player.Id}> {leftSeedDisplay}");
-
-                        // Add padding between columns
-                        participantsText.Append("    ");
-
-                        // Right column
-                        int rightIndex = leftIndex + 1;
-                        if (rightIndex < totalParticipants)
-                        {
-                            var rightPlayer = sortedParticipantInfo[rightIndex];
-                            string rightSeedDisplay = rightPlayer.Seed > 0 ? $"[Seed #{rightPlayer.Seed}]" : "";
-                            participantsText.Append($"{rightIndex + 1}. <@{rightPlayer.Player.Id}> {rightSeedDisplay}");
-                        }
-
-                        participantsText.AppendLine();
-                    }
-                }
-
-                string finalText = participantsText.ToString();
-
-                // If the text is too long, truncate it
-                if (finalText.Length > 1024)
-                {
-                    finalText = finalText.Substring(0, 1020) + "...";
-                }
-
-                embedBuilder.AddField($"Participants ({sortedParticipantInfo.Count})", finalText);
-            }
-            else
-            {
-                embedBuilder.AddField("Participants (0)", "No participants yet");
-            }
-
-            // Add created by field
-            if (signup.CreatedBy != null)
-            {
-                embedBuilder.AddField("Created by", signup.CreatedBy.Mention);
-            }
-            else if (!string.IsNullOrEmpty(signup.CreatorUsername))
-            {
-                embedBuilder.AddField("Created by", signup.CreatorUsername);
-            }
-
-            return embedBuilder.Build();
-        }
-
         private async Task UpdateSignupMessage(TournamentSignup signup, DiscordClient client)
         {
             try
@@ -1412,7 +1242,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Use our existing CreateSignupEmbed method for consistency
-                var embed = CreateSignupEmbed(signup);
+                var embed = _signupService.CreateSignupEmbed(signup);
 
                 // Create components based on signup status
                 var builder = new DiscordMessageBuilder()
@@ -1836,17 +1666,6 @@ namespace Wabbit.BotClient.Commands
                 // If the client is not a DiscordClient, pass null
                 await _stateService.SaveTournamentStateAsync(null);
             }
-        }
-
-        private int FindSeedValue(TournamentSignup signup, ulong playerId)
-        {
-            // First check in Seeds collection (with Player references)
-            var seedFromSeeds = signup.Seeds?.FirstOrDefault(s => s.Player?.Id == playerId || s.PlayerId == playerId)?.Seed ?? 0;
-            if (seedFromSeeds > 0)
-                return seedFromSeeds;
-
-            // Then check in SeedInfo collection (with just Ids)
-            return signup.SeedInfo?.FirstOrDefault(s => s.Id == playerId)?.Seed ?? 0;
         }
 
         // Helper method to find a tournament winner

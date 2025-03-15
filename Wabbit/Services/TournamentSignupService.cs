@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Wabbit.Models;
 using Wabbit.Misc;
 using Wabbit.Services.Interfaces;
+using System.Text;
 
 namespace Wabbit.Services
 {
@@ -706,6 +707,137 @@ namespace Wabbit.Services
             {
                 signup.RelatedMessages = new List<RelatedMessage>();
             }
+        }
+
+        /// <summary>
+        /// Creates a standardized signup embed with the required format
+        /// </summary>
+        /// <param name="signup">The tournament signup</param>
+        /// <returns>A Discord embed for the signup</returns>
+        public DiscordEmbed CreateSignupEmbed(TournamentSignup signup)
+        {
+            var builder = new DiscordEmbedBuilder()
+                .WithTitle($"🏆 Tournament Signup: {signup.Name}")
+                .WithColor(new DiscordColor(75, 181, 67));
+
+            // Add Format field
+            builder.AddField("Format", signup.Format.ToString(), true);
+
+            // Add Game Type field - show 1v1 or 2v2
+            string gameType = signup.Type == GameType.OneVsOne ? "1v1" : "2v2";
+            builder.AddField("Game Type", gameType, true);
+
+            // Add Scheduled Start Time field if available
+            if (signup.ScheduledStartTime.HasValue)
+            {
+                string formattedTime = $"<t:{((DateTimeOffset)signup.ScheduledStartTime).ToUnixTimeSeconds()}:F>";
+                builder.AddField("Scheduled Start Time", formattedTime, false);
+            }
+
+            // Process the participants list in the standardized format
+            List<object> sortedParticipants;
+            int participantsCount = signup.Participants?.Count ?? 0;
+            int participantInfoCount = signup.ParticipantInfo?.Count ?? 0;
+
+            // Use the list with more participants (usually Participants, but fall back to ParticipantInfo)
+            if (participantsCount >= participantInfoCount && participantsCount > 0)
+            {
+                // Use Discord Members
+                sortedParticipants = (signup.Participants ?? new List<DiscordMember>())
+                    .Select(p => new
+                    {
+                        Username = p.Username,
+                        Id = p.Id,
+                        Seed = signup.Seeds?.FirstOrDefault(s => s.PlayerId == p.Id)?.Seed ?? 0
+                    })
+                    .OrderBy(p => p.Seed == 0) // Seeded players first
+                    .ThenBy(p => p.Seed) // Then by seed value
+                    .ThenBy(p => p.Username) // Then alphabetically
+                    .Cast<object>()
+                    .ToList();
+            }
+            else if (participantInfoCount > 0)
+            {
+                // Use ParticipantInfo
+                sortedParticipants = (signup.ParticipantInfo ?? new List<ParticipantInfo>())
+                    .Select(p => new
+                    {
+                        Username = p.Username,
+                        Id = p.Id,
+                        Seed = signup.Seeds?.FirstOrDefault(s => s.PlayerId == p.Id)?.Seed ?? 0
+                    })
+                    .OrderBy(p => p.Seed == 0)
+                    .ThenBy(p => p.Seed)
+                    .ThenBy(p => p.Username)
+                    .Cast<object>()
+                    .ToList();
+            }
+            else
+            {
+                // No participants
+                builder.AddField("Participants (0)", "No participants yet", false);
+                builder.WithDescription("Sign up for this tournament by clicking the button below.")
+                       .WithTimestamp(signup.CreatedAt)
+                       .WithFooter($"Created by @{signup.CreatedBy?.Username ?? signup.CreatorUsername}");
+                return builder.Build();
+            }
+
+            // Format participants into columns
+            StringBuilder participantsText = new StringBuilder();
+            int count = sortedParticipants.Count;
+
+            // Add two participants per row
+            for (int i = 0; i < count; i += 2)
+            {
+                // Left column - always present
+                var leftParticipant = sortedParticipants[i];
+                string leftSeed = GetSeedDisplay(leftParticipant);
+                participantsText.Append($"{i + 1}. <@{GetParticipantId(leftParticipant)}> {leftSeed}");
+
+                // Right column - may not be present for odd number of participants
+                if (i + 1 < count)
+                {
+                    var rightParticipant = sortedParticipants[i + 1];
+                    string rightSeed = GetSeedDisplay(rightParticipant);
+                    participantsText.Append($"     {i + 2}. <@{GetParticipantId(rightParticipant)}> {rightSeed}");
+                }
+
+                if (i + 2 < count) // Add newline if not the last row
+                {
+                    participantsText.AppendLine();
+                }
+            }
+
+            // Add the participants field
+            builder.AddField($"Participants ({count})", participantsText.ToString(), false);
+
+            // Add status and creator info
+            string statusText = signup.IsOpen ? "Sign up for this tournament by clicking the button below." : "This signup is now closed.";
+            builder.WithDescription(statusText)
+                   .WithFooter($"Created by @{signup.CreatedBy?.Username ?? signup.CreatorUsername}");
+
+            if (signup.CreatedAt != default)
+            {
+                builder.WithTimestamp(signup.CreatedAt);
+            }
+
+            return builder.Build();
+        }
+
+        private string GetSeedDisplay(object participant)
+        {
+            if (participant is null) return "";
+
+            var seed = participant.GetType().GetProperty("Seed")?.GetValue(participant);
+            return seed is int seedValue && seedValue > 0 ? $"[Seed #{seedValue}]" : "";
+        }
+
+        private ulong GetParticipantId(object participant)
+        {
+            if (participant is null) return 0;
+
+            var id = participant.GetType().GetProperty("Id")?.GetValue(participant);
+            return id is ulong userId ? userId : 0;
         }
     }
 }

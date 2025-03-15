@@ -27,6 +27,14 @@ namespace Wabbit.Models
         // Custom properties for storing dynamic configuration
         public Dictionary<string, object>? CustomProperties { get; set; }
 
+        public Tournament()
+        {
+            Groups = new List<Group>();
+            PlayoffMatches = new List<Match>();
+            RelatedMessages = new List<RelatedMessage>();
+            CustomProperties = new Dictionary<string, object>();
+        }
+
         public class Group
         {
             public string Name { get; set; } = "";

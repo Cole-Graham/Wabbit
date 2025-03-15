@@ -67,5 +67,12 @@ namespace Wabbit.Services.Interfaces
         /// Save signups to file
         /// </summary>
         Task SaveSignupsAsync();
+
+        /// <summary>
+        /// Creates a standardized signup embed with the required format
+        /// </summary>
+        /// <param name="signup">The tournament signup</param>
+        /// <returns>A Discord embed for the signup</returns>
+        DiscordEmbed CreateSignupEmbed(TournamentSignup signup);
     }
 }

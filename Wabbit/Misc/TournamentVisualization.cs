@@ -109,95 +109,94 @@ namespace Wabbit.Misc
                                 .WithColor(DiscordColor.Gold)
                                 .WithFooter("Tournament Standings");
 
-                            // Check if there's an existing visualization message to update
-                            bool existingMessageUpdated = false;
-                            if (tournament.RelatedMessages != null)
+                            // Initialize RelatedMessages if null
+                            tournament.RelatedMessages ??= new List<RelatedMessage>();
+
+                            // Try to find and update existing message
+                            var existingVisualization = tournament.RelatedMessages
+                                .FirstOrDefault(m => m.Type == "StandingsVisualization" && m.ChannelId == standingsChannel.Id);
+
+                            DiscordMessage? message = null;
+                            bool needNewMessage = true;
+
+                            if (existingVisualization != null)
                             {
-                                var existingVisualization = tournament.RelatedMessages
-                                    .FirstOrDefault(m => m.Type == "StandingsVisualization" && m.ChannelId == standingsChannel.Id);
-
-                                if (existingVisualization != null)
+                                try
                                 {
-                                    try
+                                    message = await standingsChannel.GetMessageAsync(existingVisualization.MessageId);
+                                    if (message is not null)
                                     {
-                                        // Try to get the existing message
-                                        var existingMessage = await standingsChannel.GetMessageAsync(existingVisualization.MessageId);
-                                        if (existingMessage is not null)
+                                        // Update existing message
+                                        using (var memoryStream = new MemoryStream(imageBytes))
                                         {
-                                            // Update the existing message with the new image
-                                            using (var memoryStream = new MemoryStream(imageBytes))
-                                            {
-                                                var builder = new DiscordMessageBuilder()
-                                                    .AddEmbed(embed)
-                                                    .AddFile(Path.GetFileName(fileName), memoryStream);
+                                            var builder = new DiscordMessageBuilder()
+                                                .AddEmbed(embed)
+                                                .AddFile(Path.GetFileName(fileName), memoryStream);
 
-                                                await existingMessage.ModifyAsync(builder);
-                                                existingMessageUpdated = true;
-                                                Console.WriteLine($"Updated existing standings visualization for tournament {tournament.Name}");
-
-                                                // Save tournament state after updating the message
-                                                if (stateService != null)
-                                                {
-                                                    await stateService.SaveTournamentStateAsync(client);
-                                                }
-                                            }
+                                            await message.ModifyAsync(builder);
+                                            needNewMessage = false;
+                                            Console.WriteLine($"Updated existing standings visualization for tournament {tournament.Name}");
                                         }
                                     }
-                                    catch (Exception ex)
-                                    {
-                                        Console.WriteLine($"Error updating existing visualization message: {ex.Message}");
-                                        // If we can't update the existing message, we'll create a new one below
-                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to update existing message, will create new one: {ex.Message}");
+                                    // Remove the old message reference since we couldn't update it
+                                    tournament.RelatedMessages.Remove(existingVisualization);
                                 }
                             }
 
-                            // If we couldn't update an existing message, create a new one
-                            if (!existingMessageUpdated)
+                            // Create new message if needed
+                            if (needNewMessage)
                             {
                                 using (var memoryStream = new MemoryStream(imageBytes))
                                 {
-                                    var message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
+                                    message = await standingsChannel.SendMessageAsync(new DiscordMessageBuilder()
                                         .AddEmbed(embed)
                                         .AddFile(Path.GetFileName(fileName), memoryStream));
 
-                                    // Store this message ID for later
-                                    var relatedMessage = new Wabbit.Models.RelatedMessage
+                                    // Remove any old visualization messages
+                                    tournament.RelatedMessages.RemoveAll(m => m.Type == "StandingsVisualization");
+
+                                    // Add the new message reference
+                                    tournament.RelatedMessages.Add(new RelatedMessage
                                     {
                                         ChannelId = standingsChannel.Id,
                                         MessageId = message.Id,
                                         Type = "StandingsVisualization"
-                                    };
+                                    });
 
-                                    // Add to tournament's related messages
-                                    if (tournament.RelatedMessages == null)
-                                        tournament.RelatedMessages = new List<Wabbit.Models.RelatedMessage>();
-
-                                    // Remove any old visualization messages first to avoid duplicates
-                                    tournament.RelatedMessages.RemoveAll(m => m.Type == "StandingsVisualization");
-
-                                    // Add the new message
-                                    tournament.RelatedMessages.Add(relatedMessage);
+                                    Console.WriteLine($"Created new standings visualization for tournament {tournament.Name}");
                                 }
+                            }
 
-                                // Save tournament state if state service is provided
-                                if (stateService != null && client != null)
+                            // Save tournament state
+                            if (stateService != null)
+                            {
+                                try
                                 {
-                                    try
-                                    {
-                                        await stateService.SaveTournamentStateAsync(client);
-                                    }
-                                    catch (Exception savEx)
-                                    {
-                                        Console.WriteLine($"Error saving tournament state: {savEx.Message}");
-                                    }
+                                    await stateService.SaveTournamentStateAsync(client);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Error saving tournament state: {ex.Message}");
                                 }
                             }
                         }
+                        else
+                        {
+                            Console.WriteLine($"Could not find standings channel with ID {server.StandingsChannelId.Value}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"No standings channel configured for server {serverId}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error posting standings to channel: {ex.Message}");
+                    Console.WriteLine($"Error posting standings visualization: {ex.Message}");
                 }
             }
 
