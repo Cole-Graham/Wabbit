@@ -1792,6 +1792,7 @@ namespace Wabbit.BotClient.Commands
             {
                 await _tournamentMatchService.StartPlayoffMatches(tournament, client);
             }
+
         }
 
         // Method to handle game result selection and advance the match series

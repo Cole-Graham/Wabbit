@@ -18,6 +18,9 @@ namespace Wabbit.Models
         [System.Text.Json.Serialization.JsonIgnore]
         public DiscordChannel? AnnouncementChannel { get; set; }
 
+        // Tournament settings
+        public TournamentSettings? Settings { get; set; }
+
         // Related message IDs for deletion when tournament is removed
         public List<RelatedMessage> RelatedMessages { get; set; } = [];
 
@@ -50,6 +53,13 @@ namespace Wabbit.Models
 
             // Qualification information for visualization
             public string? QualificationInfo { get; set; }
+
+            public Group? SourceGroup { get; set; } // For playoff seeding
+            public Match? SourceMatch { get; set; } // For bracket advancement tracking
+            public int SourceGroupPosition { get; set; } = 0; // 1 = first place, 2 = second place, etc.
+            public int Score { get; set; } = 0;
+            public bool IsWinner { get; set; } = false;
+            public string Display => Player?.ToString() ?? $"{SourceGroup?.Name ?? "Unknown"} #{SourceGroupPosition}";
         }
 
         public class Match
@@ -60,6 +70,7 @@ namespace Wabbit.Models
             public MatchResult? Result { get; set; }
             public Round? LinkedRound { get; set; } // Reference to the actual round in the system
             public Match? NextMatch { get; set; } // For brackets, the match that follows
+            public Match? ThirdPlaceMatch { get; set; } // For semifinals, refers to the third place match
             public bool IsComplete => Result != null;
             public int BestOf { get; set; } = 3; // Default Bo3
 
@@ -71,6 +82,7 @@ namespace Wabbit.Models
         {
             public object? Player { get; set; }
             public Group? SourceGroup { get; set; } // For playoff seeding
+            public Match? SourceMatch { get; set; } // For bracket advancement tracking
             public int SourceGroupPosition { get; set; } = 0; // 1 = first place, 2 = second place, etc.
             public int Score { get; set; } = 0;
             public bool IsWinner { get; set; } = false;
@@ -82,6 +94,9 @@ namespace Wabbit.Models
             public object? Winner { get; set; }
             public List<string> MapResults { get; set; } = [];
             public DateTime CompletedAt { get; set; } = DateTime.Now;
+            public MatchStatus Status { get; set; } = MatchStatus.Completed;
+            public MatchResultType ResultType { get; set; } = MatchResultType.Normal;
+            public object? Forfeiter { get; set; } // For forfeit results
 
             // Dictionary<PlayerID, Dictionary<MapName, DeckCode>>
             // Stores deck codes by player ID and map name for verification
@@ -109,10 +124,38 @@ namespace Wabbit.Models
     {
         GroupStage,
         PlayoffStage,
+        RoundOf16,
         Quarterfinal,
         Semifinal,
         Final,
         ThirdPlace,
         ThirdPlaceTiebreaker
+    }
+
+    public enum MatchStatus
+    {
+        Pending,
+        InProgress,
+        Completed,
+        Cancelled
+    }
+
+    public enum MatchResultType
+    {
+        Normal,
+        Forfeit,
+        Disqualification,
+        Tiebreaker,
+        Default    // Used for byes and other automatic advancements
+    }
+
+    // Add TournamentSettings class
+    public class TournamentSettings
+    {
+        public bool IncludeThirdPlaceMatch { get; set; } = false; // Default to no third place match
+        public int BestOfFinals { get; set; } = 3; // Change to best of 3
+        public int BestOfSemifinals { get; set; } = 3;
+        public int BestOfQuarterfinals { get; set; } = 3;
+        public int BestOfGroupStage { get; set; } = 1; // Group stage is best of 1
     }
 }

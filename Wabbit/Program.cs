@@ -8,6 +8,13 @@ using Serilog.Events;
 using Wabbit.BotClient.Commands;
 using Wabbit.BotClient.Config;
 using Wabbit.BotClient.Events;
+using Wabbit.BotClient.Events.Components.Base;
+using Wabbit.BotClient.Events.Components.Factory;
+using Wabbit.BotClient.Events.Components.Tournament;
+using Wabbit.BotClient.Events.MainHandlers;
+using Wabbit.BotClient.Events.Modals.Base;
+using Wabbit.BotClient.Events.Modals.Factory;
+using Wabbit.BotClient.Events.Modals.Tournament;
 using Wabbit.Misc;
 using Wabbit.Data;
 using Wabbit.Services;
@@ -88,18 +95,55 @@ namespace Wabbit
                     services.AddSingleton<ITournamentMapService, TournamentMapService>();
                     services.AddSingleton<ITournamentService, TournamentService>();
                     services.AddSingleton<ITournamentManagerService, TournamentManagerService>();
+                    services.AddSingleton<IMatchStatusService, MatchStatusService>();
 
                     // Register existing services
                     services.AddSingleton<IRandomProvider, RandomProvider>();
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
                     services.AddSingleton<TournamentManagementGroup>();
+
+                    // Register component handler factory and handlers - New for Phase 1
+                    services.AddSingleton<ComponentHandlerFactory>();
+                    services.AddSingleton<DefaultComponentHandler>();
+
+                    // Register specialized component handlers - New for Phase 1
+                    services.AddSingleton<ComponentHandlerBase, DeckSubmissionHandler>();
+                    services.AddSingleton<ComponentHandlerBase, GameResultHandler>();
+                    services.AddSingleton<ComponentHandlerBase, MapBanHandler>();
+                    services.AddSingleton<ComponentHandlerBase, TournamentSignupHandler>();
+                    services.AddSingleton<ComponentHandlerBase, TournamentJoinHandler>();
+                    services.AddSingleton<ComponentHandlerBase, AdminThirdPlaceMatchHandler>();
+
+                    // Register the new ComponentInteractionHandler (will replace Event_Button in Phase 2)
+                    services.AddSingleton<ComponentInteractionHandler>();
+
+                    // Register modal handler factory and handlers - New for Phase 3
+                    services.AddSingleton<BotClient.Events.Modals.Factory.ModalHandlerFactory>();
+                    services.AddSingleton<BotClient.Events.Modals.Tournament.DefaultModalHandler>();
+
+                    // Register specialized modal handlers - New for Phase 3
+                    services.AddSingleton<BotClient.Events.Modals.Base.ModalHandlerBase, BotClient.Events.Modals.Tournament.DeckSubmissionModalHandler>();
+                    services.AddSingleton<BotClient.Events.Modals.Base.ModalHandlerBase, BotClient.Events.Modals.Tournament.TournamentCreationModalHandler>();
+                    services.AddSingleton<BotClient.Events.Modals.Base.ModalHandlerBase, BotClient.Events.Modals.Tournament.MapBanModalHandler>();
+
+                    // Register the new ModalInteractionHandler - New for Phase 3
+                    services.AddSingleton<ModalInteractionHandler>();
                 });
 
                 builder.ConfigureEventHandlers(events =>
                 {
-                    events.AddEventHandlers<Event_Button>(ServiceLifetime.Singleton);
-                    events.AddEventHandlers<Event_Modal>(ServiceLifetime.Singleton);
+                    // Comment out the old Event_Button registration
+                    // events.AddEventHandlers<Event_Button>(ServiceLifetime.Singleton);
+
+                    // Register the new ComponentInteractionHandler
+                    events.AddEventHandlers<ComponentInteractionHandler>(ServiceLifetime.Singleton);
+
+                    // Register the new ModalInteractionHandler and comment out Event_Modal
+                    events.AddEventHandlers<ModalInteractionHandler>(ServiceLifetime.Singleton);
+                    // events.AddEventHandlers<Event_Modal>(ServiceLifetime.Singleton);
+
+                    // Keep the other event handlers
                     events.AddEventHandlers<Event_MessageCreated>(ServiceLifetime.Singleton);
                 });
 

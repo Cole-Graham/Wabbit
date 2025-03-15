@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Wabbit.Models;
 
 namespace Wabbit.Services.Interfaces
 {
@@ -39,5 +40,20 @@ namespace Wabbit.Services.Interfaces
         /// <param name="matchLength">Length of the match (number of maps needed)</param>
         /// <returns>A list of maps for the match</returns>
         List<string> GenerateMapList(bool oneVOne, List<string> team1Bans, List<string> team2Bans, int matchLength);
+
+        /// <summary>
+        /// Gets the list of available maps for the next game in a match
+        /// </summary>
+        /// <param name="round">The current round</param>
+        /// <returns>A list of available map names</returns>
+        List<string> GetAvailableMapsForNextGame(Round round);
+
+        /// <summary>
+        /// Validates a map ban selection to ensure it contains valid maps
+        /// </summary>
+        /// <param name="mapBans">The list of map bans to validate</param>
+        /// <param name="oneVOne">Whether this is for a 1v1 match</param>
+        /// <returns>A tuple containing (isValid, validatedBans, errorMessage)</returns>
+        (bool isValid, List<string> validatedBans, string? errorMessage) ValidateMapBans(List<string> mapBans, bool oneVOne);
     }
 }

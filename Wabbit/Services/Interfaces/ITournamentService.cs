@@ -62,5 +62,30 @@ namespace Wabbit.Services.Interfaces
         /// <param name="tournament">The tournament to start</param>
         /// <param name="client">Discord client</param>
         Task StartTournamentAsync(Tournament tournament, DiscordClient client);
+
+        /// <summary>
+        /// Archives threads for a completed match
+        /// </summary>
+        /// <param name="match">The completed match</param>
+        /// <param name="client">Discord client</param>
+        /// <param name="archiveDuration">Duration before thread is auto-archived (default: 24 hours)</param>
+        /// <returns>Task representing the asynchronous operation</returns>
+        Task ArchiveThreadsAsync(Tournament.Match match, DiscordClient client, TimeSpan? archiveDuration = null);
+
+        /// <summary>
+        /// Archives all threads for a completed tournament
+        /// </summary>
+        /// <param name="tournament">The completed tournament</param>
+        /// <param name="client">Discord client</param>
+        /// <param name="archiveDuration">Duration before threads are auto-archived (default: 24 hours)</param>
+        /// <returns>Task representing the asynchronous operation</returns>
+        Task ArchiveAllTournamentThreadsAsync(Tournament tournament, DiscordClient client, TimeSpan? archiveDuration = null);
+
+        /// <summary>
+        /// Updates the tournament display in Discord
+        /// </summary>
+        /// <param name="tournament">The tournament to update</param>
+        /// <returns>Task representing the asynchronous operation</returns>
+        Task UpdateTournamentDisplayAsync(Tournament tournament);
     }
 }

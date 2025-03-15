@@ -16,6 +16,14 @@ namespace Wabbit.Services.Interfaces
         Task SaveTournamentStateAsync(DiscordClient? client = null);
 
         /// <summary>
+        /// Safely saves the tournament state with retry logic and error handling
+        /// </summary>
+        /// <param name="client">Discord client for channel updates</param>
+        /// <param name="caller">Optional caller information for logging</param>
+        /// <returns>A boolean indicating whether the save operation was successful</returns>
+        Task<bool> SafeSaveTournamentStateAsync(DiscordClient? client = null, string? caller = null);
+
+        /// <summary>
         /// Loads the tournament state
         /// </summary>
         void LoadTournamentState();

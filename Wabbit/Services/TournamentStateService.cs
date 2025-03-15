@@ -827,5 +827,47 @@ namespace Wabbit.Services
 
             return null;
         }
+
+        /// <summary>
+        /// Safely saves the tournament state with retry logic and error handling
+        /// </summary>
+        public async Task<bool> SafeSaveTournamentStateAsync(DiscordClient? client = null, string? caller = null)
+        {
+            const int maxRetries = 3;
+            int attempt = 0;
+
+            while (attempt < maxRetries)
+            {
+                try
+                {
+                    attempt++;
+                    _logger.LogInformation($"Saving tournament state (attempt {attempt}/{maxRetries}){(caller != null ? $" from {caller}" : "")}");
+
+                    // Convert all rounds to their state representation
+                    var activeRounds = ConvertRoundsToState(_ongoingRounds.TourneyRounds);
+
+                    // Serialize to JSON
+                    string json = JsonSerializer.Serialize(activeRounds, _serializerOptions);
+
+                    // Save to file
+                    await File.WriteAllTextAsync(_tournamentStateFilePath, json);
+
+                    _logger.LogInformation($"Successfully saved {activeRounds.Count} active rounds to {_tournamentStateFilePath}");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Error saving tournament state (attempt {attempt}/{maxRetries}): {ex.Message}");
+
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(1000 * attempt); // Exponential backoff
+                        continue;
+                    }
+                }
+            }
+
+            return false;
+        }
     }
 }

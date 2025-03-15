@@ -174,6 +174,85 @@ namespace Wabbit.BotClient.Commands
             await context.EditResponseAsync($"{channel.Mention} has been set as the tournament standings channel.");
         }
 
+        [Command("set_thread_archival_hours")]
+        [Description("Set the number of hours before tournament threads are auto-archived")]
+        public async Task SetThreadArchivalHours(
+            CommandContext context,
+            [Description("Number of hours (1-168)")] long hours)
+        {
+            await context.DeferResponseAsync();
+
+            // Check permissions
+            if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageGuild))
+            {
+                await context.EditResponseAsync("You don't have permission to configure the bot.");
+                return;
+            }
+
+            // Validate the hours (Discord limits: 1, 24, 72, 168)
+            if (hours < 1 || hours > 168)
+            {
+                await context.EditResponseAsync("The number of hours must be between 1 and 168 (7 days).");
+                return;
+            }
+
+            // Convert to closest Discord auto-archive duration
+            string durationText;
+            if (hours < 24)
+            {
+                durationText = "1 hour";
+            }
+            else if (hours < 72)
+            {
+                durationText = "24 hours";
+                hours = 24;
+            }
+            else if (hours < 168)
+            {
+                durationText = "3 days";
+                hours = 72;
+            }
+            else
+            {
+                durationText = "7 days";
+                hours = 168;
+            }
+
+            // Update the config
+            ConfigManager.Config.Tournament.ThreadArchivalHours = (int)hours;
+
+            // Save the config
+            await ConfigManager.SaveConfig();
+
+            await context.EditResponseAsync($"Thread archival duration has been set to {durationText}. " +
+                $"Tournament threads will be auto-archived after this period of inactivity when matches are completed.");
+        }
+
+        [Command("toggle_auto_archive")]
+        [Description("Toggle automatic thread archiving for tournaments")]
+        public async Task ToggleAutoArchive(
+            CommandContext context,
+            [Description("Whether to automatically archive threads (true/false)")] bool enabled)
+        {
+            await context.DeferResponseAsync();
+
+            // Check permissions
+            if (context.Member is null || !context.Member.Permissions.HasPermission(DiscordPermission.ManageGuild))
+            {
+                await context.EditResponseAsync("You don't have permission to configure the bot.");
+                return;
+            }
+
+            // Update the config
+            ConfigManager.Config.Tournament.AutoArchiveThreads = enabled;
+
+            // Save the config
+            await ConfigManager.SaveConfig();
+
+            string status = enabled ? "enabled" : "disabled";
+            await context.EditResponseAsync($"Automatic thread archiving has been {status} for tournaments.");
+        }
+
         private BotConfig.ServerConfig GetOrCreateServerConfig(ulong guildId)
         {
             var serverConfig = ConfigManager.Config.Servers.FirstOrDefault(s => s.ServerId == guildId);
