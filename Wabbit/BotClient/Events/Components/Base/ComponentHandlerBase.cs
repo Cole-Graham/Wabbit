@@ -99,7 +99,9 @@ namespace Wabbit.BotClient.Events.Components.Base
                 // Send error response
                 if (hasBeenDeferred)
                 {
-                    await e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .AddEmbed(embed)
+                        .AsEphemeral());
                 }
                 else
                 {

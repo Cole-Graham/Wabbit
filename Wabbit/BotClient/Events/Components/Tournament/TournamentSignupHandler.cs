@@ -103,7 +103,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
             {
                 try
                 {
-                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredChannelMessageWithSource);
                     hasBeenDeferred = true;
                 }
                 catch (Exception ex)
@@ -168,33 +168,21 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 // Add the user to the signup
                 var newParticipantsList = new List<DiscordMember>(signup.Participants);
                 newParticipantsList.Add(member);
-
-                // Update the signup with the new participant
                 signup.Participants = newParticipantsList;
-                _signupService.UpdateSignup(signup);
 
-                // Update the signup message with the new participant list
-                await UpdateSignupMessage(client, signup);
-
-                // Make sure ParticipantInfo exists and is updated for persistence
+                // Also add to ParticipantInfo list for persistence
                 if (signup.ParticipantInfo is null)
                 {
                     signup.ParticipantInfo = new List<ParticipantInfo>();
                 }
-
-                // Add the user to ParticipantInfo if not already there
-                if (!signup.ParticipantInfo.Any(p => p.Id == member.Id))
-                {
-                    signup.ParticipantInfo.Add(new ParticipantInfo { Id = member.Id, Username = member.Username });
-                    _logger.LogInformation($"Added {member.Username} (ID: {member.Id}) to ParticipantInfo list, now: {signup.ParticipantInfo.Count}");
-                }
-
-                // Log signup
-                _logger.LogInformation($"Added participant {member.Username} to signup '{signup.Name}' (now has {signup.Participants.Count} participants, ParticipantInfo: {signup.ParticipantInfo.Count})");
+                signup.ParticipantInfo.Add(new ParticipantInfo { Id = member.Id, Username = member.Username });
 
                 // Save the updated signup
                 _signupService.UpdateSignup(signup);
                 await _signupService.SaveSignupsAsync();
+
+                // Update the signup message
+                await UpdateSignupMessage(client, signup);
 
                 // Send confirmation message to the user (ephemeral)
                 if (hasBeenDeferred)
@@ -234,7 +222,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
             {
                 try
                 {
-                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredChannelMessageWithSource);
                     hasBeenDeferred = true;
                 }
                 catch (Exception ex)
@@ -344,16 +332,34 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         /// <param name="hasBeenDeferred">Whether the interaction has already been deferred</param>
         private async Task HandleKeepSignupButton(DiscordClient client, ComponentInteractionCreatedEventArgs e, bool hasBeenDeferred)
         {
+            // Only try to defer if not already deferred
+            if (!hasBeenDeferred)
+            {
+                try
+                {
+                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredChannelMessageWithSource);
+                    hasBeenDeferred = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Failed to defer keep signup button response: {ex.Message}");
+                }
+            }
+
             // Simple handler to just acknowledge that the user wants to keep their signup
             if (hasBeenDeferred)
             {
-                await e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().WithContent("Your signup has been kept."));
+                await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                    .WithContent("Your signup has been kept.")
+                    .AsEphemeral());
             }
             else
             {
                 await e.Interaction.CreateResponseAsync(
                     DiscordInteractionResponseType.ChannelMessageWithSource,
-                    new DiscordInteractionResponseBuilder().WithContent("Your signup has been kept.").AsEphemeral()
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent("Your signup has been kept.")
+                        .AsEphemeral()
                 );
             }
 
@@ -384,7 +390,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
             {
                 try
                 {
-                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
+                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredChannelMessageWithSource);
                     hasBeenDeferred = true;
                 }
                 catch (Exception ex)
