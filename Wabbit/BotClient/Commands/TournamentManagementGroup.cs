@@ -568,6 +568,10 @@ namespace Wabbit.BotClient.Commands
 
                 try
                 {
+                    // Ensure signup is saved before proceeding
+                    _signupService.UpdateSignup(signup);
+                    await _signupService.SaveSignupsAsync();
+
                     // Create and send the signup message
                     var signupChannel = await context.Client.GetChannelAsync(signupChannelId.Value);
                     var embed = _signupService.CreateSignupEmbed(signup);
@@ -591,10 +595,11 @@ namespace Wabbit.BotClient.Commands
 
                     // Store the message ID
                     signup.MessageId = message.Id;
-                    Console.WriteLine($"Set MessageId to {message.Id} for signup '{name}'");
+                    _logger.LogInformation($"Set MessageId to {message.Id} for signup '{name}'");
 
                     // Save updated MessageId - this is critical for future updates
                     _signupService.UpdateSignup(signup);
+                    await _signupService.SaveSignupsAsync();
 
                     // Verify the MessageId was saved
                     var savedSignup = _signupService.GetSignup(name);
