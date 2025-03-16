@@ -718,6 +718,370 @@ namespace Wabbit.Services
         }
 
         /// <summary>
+        /// Validates and recovers team threads that might have been deleted
+        /// </summary>
+        public async Task<bool> ValidateAndRecoverThreadsAsync(Tournament tournament, DiscordClient client)
+        {
+            if (tournament == null)
+            {
+                _logger.LogError("Cannot validate threads: tournament is null");
+                return false;
+            }
+
+            _logger.LogInformation($"Validating threads for tournament {tournament.Name}");
+
+            try
+            {
+                // Get all rounds linked to this tournament
+                var tournamentRounds = _ongoingRounds.TourneyRounds
+                    .Where(r => r.TournamentId == tournament.Name)
+                    .ToList();
+
+                _logger.LogInformation($"Found {tournamentRounds.Count} rounds for tournament {tournament.Name}");
+
+                int recoveredThreads = 0;
+                int failedRecoveries = 0;
+
+                // Check each round and its teams
+                foreach (var round in tournamentRounds)
+                {
+                    if (round.Teams == null) continue;
+
+                    foreach (var team in round.Teams)
+                    {
+                        try
+                        {
+                            if (team.Thread is null)
+                            {
+                                _logger.LogWarning($"Team {team.Name} has no thread");
+                                continue;
+                            }
+
+                            // Check if thread is missing or inaccessible
+                            bool threadNeedsRecovery = team.Thread is null;
+
+                            if (!threadNeedsRecovery)
+                            {
+                                try
+                                {
+                                    if (team.Thread is null)
+                                    {
+                                        _logger.LogWarning($"Team {team.Name} has no thread");
+                                        continue;
+                                    }
+
+                                    // Try to access the thread to verify it exists
+                                    var channel = await client.GetChannelAsync(team.Thread.Id);
+                                    if (channel is null)
+                                    {
+                                        threadNeedsRecovery = true;
+                                    }
+                                }
+                                catch (Exception)
+                                {
+                                    threadNeedsRecovery = true;
+                                }
+                            }
+
+                            if (threadNeedsRecovery)
+                            {
+                                // Get the player for this team
+                                var player = team.Participants?.FirstOrDefault()?.Player;
+                                if (player is DiscordMember member)
+                                {
+                                    _logger.LogInformation($"Recreating thread for {member.DisplayName} in tournament {tournament.Name}");
+
+                                    // Get appropriate channel for the thread (use announcement channel)
+                                    var parentChannel = tournament.AnnouncementChannel ??
+                                        await client.GetChannelAsync(client.Guilds.FirstOrDefault().Value.Id);
+
+                                    if (parentChannel is not null)
+                                    {
+                                        // Create new thread
+                                        string threadName = $"{member.DisplayName}'s Tournament Thread";
+                                        var thread = await DiscordUtilities.CreateThreadAsync(
+                                            parentChannel,
+                                            threadName,
+                                            _logger);
+
+                                        if (thread is not null)
+                                        {
+                                            // Add the player to the thread
+                                            await thread.AddThreadMemberAsync(member);
+
+                                            // Update the team's thread reference
+                                            team.Thread = thread;
+                                            recoveredThreads++;
+
+                                            _logger.LogInformation($"Successfully recreated thread for {member.DisplayName}");
+                                        }
+                                        else
+                                        {
+                                            _logger.LogError($"Failed to create thread for {member.DisplayName} in tournament {tournament.Name}");
+                                            failedRecoveries++;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    _logger.LogWarning($"Cannot recover thread: player is not a DiscordMember");
+                                    failedRecoveries++;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Error validating thread in tournament {tournament.Name}");
+                            failedRecoveries++;
+                        }
+                    }
+                }
+
+                // Save the state with recovered threads
+                if (recoveredThreads > 0)
+                {
+                    await SaveTournamentStateAsync(client);
+                    _logger.LogInformation($"Recovered {recoveredThreads} threads for tournament {tournament.Name}");
+                }
+
+                // Report failed recoveries
+                if (failedRecoveries > 0)
+                {
+                    _logger.LogWarning($"Failed to recover {failedRecoveries} threads for tournament {tournament.Name}");
+                }
+
+                return failedRecoveries == 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error validating threads for tournament {tournament.Name}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Recovers match status embeds for a specific player/team thread
+        /// </summary>
+        public async Task<bool> RecoverMatchStatusEmbedsAsync(Round round, Tournament.Match match, DiscordClient client)
+        {
+            if (round == null || match == null)
+            {
+                _logger.LogError("Cannot recover match status embeds: round or match is null");
+                return false;
+            }
+
+            try
+            {
+                _logger.LogInformation($"Recovering match status embeds for match {match.Name}");
+
+                // Check if we can recover for this round
+                if (round.Teams == null || round.Teams.Count < 2)
+                {
+                    _logger.LogWarning($"Cannot recover match status embeds: round has invalid teams");
+                    return false;
+                }
+
+                // For each team, recreate the status embed in their thread
+                foreach (var team in round.Teams)
+                {
+                    try
+                    {
+                        if (team.Thread is not null)
+                        {
+                            // Find the participant from the match corresponding to this team
+                            var teamPlayer = team.Participants?.FirstOrDefault()?.Player;
+                            if (teamPlayer is not null)
+                            {
+                                // Find corresponding match participant
+                                var matchParticipant = match.Participants?.FirstOrDefault(p =>
+                                    (p.Player is DiscordMember member1 && teamPlayer is DiscordMember member2 && member1.Id == member2.Id));
+
+                                if (matchParticipant != null)
+                                {
+                                    // Determine the opponent
+                                    var opponentParticipant = match.Participants?.FirstOrDefault(p => p != matchParticipant);
+                                    string opponentName = opponentParticipant?.Player is DiscordMember opp ? opp.DisplayName : "Unknown";
+
+                                    // Create status message based on match state
+                                    var embedBuilder = new DiscordEmbedBuilder()
+                                        .WithTitle($"Match: {match.Name}")
+                                        .WithColor(DiscordColor.Blue)
+                                        .WithDescription($"Your match against {opponentName}")
+                                        .WithTimestamp(DateTime.Now);
+
+                                    // Add fields based on match state
+                                    if (match.IsComplete)
+                                    {
+                                        var isWinner = match.Result?.Winner is DiscordMember winner &&
+                                            teamPlayer is DiscordMember player &&
+                                            winner.Id == player.Id;
+
+                                        embedBuilder.WithColor(isWinner ? DiscordColor.Green : DiscordColor.Red)
+                                            .AddField("Status", "Completed", true)
+                                            .AddField("Result", isWinner ? "Victory" : "Defeat", true);
+
+                                        if (match.Result != null)
+                                        {
+                                            embedBuilder.AddField("Score", $"{match.Result.WinnerScore} - {match.Result.LoserScore}", true);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // Match is ongoing
+                                        embedBuilder.AddField("Status", "In Progress", true)
+                                            .AddField("Best of", match.BestOf.ToString(), true);
+
+                                        // Add current score if available
+                                        if (round.Teams[0].Wins > 0 || round.Teams[1].Wins > 0)
+                                        {
+                                            var teamIndex = round.Teams.IndexOf(team);
+                                            var opponentIndex = teamIndex == 0 ? 1 : 0;
+
+                                            embedBuilder.AddField("Current Score",
+                                                $"{round.Teams[teamIndex].Wins} - {round.Teams[opponentIndex].Wins}", true);
+                                        }
+                                    }
+
+                                    // Send the embed to the thread
+                                    await team.Thread.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(embedBuilder));
+
+                                    _logger.LogInformation($"Successfully recovered match status embed for {teamPlayer} in match {match.Name}");
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Error recovering match status embed for a team in match {match.Name}");
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error recovering match status embeds for match {match.Name}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the relationship between tournament matches and Discord threads
+        /// </summary>
+        public async Task<bool> RebuildMatchThreadAssociationsAsync(Tournament tournament, DiscordClient client)
+        {
+            if (tournament == null)
+            {
+                _logger.LogError("Cannot rebuild match thread associations: tournament is null");
+                return false;
+            }
+
+            _logger.LogInformation($"Rebuilding match thread associations for tournament {tournament.Name}");
+
+            try
+            {
+                // First recover any missing threads
+                await ValidateAndRecoverThreadsAsync(tournament, client);
+
+                int recoveredAssociations = 0;
+                int failedAssociations = 0;
+
+                // For group stage matches
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
+                {
+                    foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
+                    {
+                        // Check if this match needs a round association
+                        if (match.LinkedRound == null)
+                        {
+                            // Try to find a matching round
+                            var round = _ongoingRounds.TourneyRounds.FirstOrDefault(r =>
+                                r.TournamentId == tournament.Name && r.Name == match.Name);
+
+                            if (round != null)
+                            {
+                                // Found the round, link it
+                                match.LinkedRound = round;
+
+                                // Set reference back to the match in the round
+                                if (round.CustomProperties == null)
+                                {
+                                    round.CustomProperties = new Dictionary<string, object>();
+                                }
+                                round.CustomProperties["TournamentMatch"] = match;
+
+                                recoveredAssociations++;
+
+                                // Recover match status embeds
+                                await RecoverMatchStatusEmbedsAsync(round, match, client);
+                            }
+                            else
+                            {
+                                _logger.LogWarning($"Could not find round for match {match.Name} in tournament {tournament.Name}");
+                                failedAssociations++;
+                            }
+                        }
+                    }
+                }
+
+                // For playoff matches
+                foreach (var match in tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>())
+                {
+                    // Check if this match needs a round association
+                    if (match.LinkedRound == null)
+                    {
+                        // Try to find a matching round
+                        var round = _ongoingRounds.TourneyRounds.FirstOrDefault(r =>
+                            r.TournamentId == tournament.Name && r.Name == match.Name);
+
+                        if (round != null)
+                        {
+                            // Found the round, link it
+                            match.LinkedRound = round;
+
+                            // Set reference back to the match in the round
+                            if (round.CustomProperties == null)
+                            {
+                                round.CustomProperties = new Dictionary<string, object>();
+                            }
+                            round.CustomProperties["TournamentMatch"] = match;
+
+                            recoveredAssociations++;
+
+                            // Recover match status embeds
+                            await RecoverMatchStatusEmbedsAsync(round, match, client);
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"Could not find round for playoff match {match.Name} in tournament {tournament.Name}");
+                            failedAssociations++;
+                        }
+                    }
+                }
+
+                // Save the state with recovered associations
+                if (recoveredAssociations > 0)
+                {
+                    await SaveTournamentStateAsync(client);
+                    _logger.LogInformation($"Recovered {recoveredAssociations} match thread associations for tournament {tournament.Name}");
+                }
+
+                // Report failed recoveries
+                if (failedAssociations > 0)
+                {
+                    _logger.LogWarning($"Failed to recover {failedAssociations} match thread associations for tournament {tournament.Name}");
+                }
+
+                return failedAssociations == 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error rebuilding match thread associations for tournament {tournament.Name}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Safely saves the tournament state with retry logic and error handling
         /// </summary>
         public async Task<bool> SafeSaveTournamentStateAsync(DiscordClient? client = null, string? caller = null)

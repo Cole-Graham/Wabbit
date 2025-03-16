@@ -361,11 +361,42 @@ package "Event Handling System" as EventLayer {
 ' Define service layers as packages
 package "Command/UI Layer" as UILayer {
     class TournamentManagementGroup <<command handler>> {
-        +CreateSignup() <<"/tournament signup_create">>
+        +TManagementBasicGroup 
+        +TManagementSignupGroup
+        +TManagementRecoveryGroup
+    }
+
+    class TManagementBasicGroup <<partial>> {
         +CreateTournamentFromSignup()
-        +StartMatchRoundAsync()
-        +AddToSignup()/RemoveFromSignup()
-        +SetSeed()
+        +ShowStandings()
+        +ListTournaments()
+        +DeleteTournament()
+        +ResumeTournament()
+        +RepairData()
+        +SaveTournamentData()
+        +SetStandingsChannel()
+        +HandleMatchCompletion()
+        +HandleGameResultAsync()
+        +StartGroupStageMatches()
+    }
+
+    class TManagementSignupGroup <<partial>> {
+        +CreateSignup() <<"/tournament signup_create">>
+        +CloseSignup() <<"/tournament signup_close">>
+        +ReopenSignup() <<"/tournament signup_reopen">>
+        +AddToSignup() <<"/tournament signup_add">>
+        +RemoveFromSignup() <<"/tournament signup_remove">>
+        +SetSeed() <<"/tournament signup_set_seed">>
+        +SetTournamentSeed() <<"/tournament set_tournament_seed">>
+        -UpdateSignupMessage()
+    }
+
+    class TManagementRecoveryGroup <<partial>> {
+        +RecoverThreads() <<"/tournament recover_threads">>
+        +RecoverPlayerThread() <<"/tournament recover_player_thread">>
+        +RecoverMatch() <<"/tournament recover_match">>
+        +RebuildTournament() <<"/tournament rebuild_tournament">>
+        +ValidateTournament() <<"/tournament validate_tournament">>
     }
     
     class AdminThirdPlaceMatchHandler <<component handler>> {
@@ -377,9 +408,14 @@ package "Command/UI Layer" as UILayer {
         +GameResultHandler
     }
     
-    note right of TournamentManagementGroup::CreateSignup
-      /tournament signup_create <name> <format> <gameType> <startTimeUnix>
+    note right of TManagementSignupGroup::CreateSignup
+      /tournament signup_create <n> <format> <gameType> <startTimeUnix>
       Creates tournament signup with specified parameters
+    end note
+
+    note right of TManagementRecoveryGroup::RecoverThreads
+      /tournament recover_threads <tournamentName>
+      Recovers threads and match status embeds for a tournament
     end note
 }
 
@@ -395,6 +431,11 @@ package "Service Coordinator Layer" as CoordinatorLayer {
         +StartTournamentAsync()
         +FinalizeTournamentAsync()
         +StartMatchRoundAsync()
+        +StartGroupStage()
+        +GeneratePendingMatches()
+        +Generate1v1Matches()
+        +ScheduleNextMatchBatchAsync()
+        +HandleMatchCompletionEvent()
     }
     
     class TournamentSignupService {
@@ -440,10 +481,11 @@ package "Core Services Layer" as CoreLayer {
     
     class TournamentMatchService {
         +CreateAndStart1v1Match()
+        +CreateAndStartMatch()
         +UpdateMatchResultAsync()
-        +StartMatchRoundAsync()
+        +HandleMatchCompletion()
         +HandleDeckSubmissionAsync()
-        +CreateThreadsForTeamsAsync()
+        +GetOrCreateTeamThreadsAsync()
     }
     
     class TournamentGroupService {
@@ -467,6 +509,12 @@ package "Core Services Layer" as CoreLayer {
         +LoadTournamentStateAsync()
         +UpdateTournamentStateAsync()
         +TrackMatchProgress()
+        +ValidateAndRecoverThreadsAsync()
+        +RecoverMatchStatusEmbedsAsync()
+        +RebuildMatchThreadAssociationsAsync()
+        +UpdateTournamentFromRound()
+        +UpdateTournamentFromRounds()
+        +SafeSaveTournamentStateAsync()
     }
 
     class TournamentMapService {
@@ -495,9 +543,17 @@ package "Base Services Layer" as BaseLayer {
     }
     
     interface ITournamentStateValidator {
+        +ValidateTournamentState()
         +IsValidStateTransition()
-        +ValidatePlayoffSetup()
+        +ValidateMatch()
+        +ValidateBracketStructure()
         +ValidatePlayoffBracket()
+        +ValidateGroupStandings()
+        +TryRecoverMatchResult()
+        +TryRecoverBracketGeneration()
+        +ValidatePlayoffSetup()
+        +ValidateGroupMatchCreation()
+        +ValidateGroupCompletion()
     }
     
     interface ITournamentBracketManager {
@@ -572,9 +628,17 @@ TournamentGameService --> Round
 DiscordUtilities --> Team
 
 ' Add new relationship for thread creation flow
+TournamentManagerService --> TournamentMatchService : schedules matches via
 TournamentMatchService --> DiscordUtilities : uses for thread creation
 TournamentMatchService --> Team : creates threads for
 MatchStatusService --> Round.Team.Thread : updates status in
+
+' Add new match scheduling flow
+TournamentManagerService --> TournamentMatchService : CreateAndStart1v1Match/CreateAndStartMatch
+TournamentManagerService --> TournamentStateService : SaveTournamentStateAsync
+TournamentManagerService --> TournamentGroupService : EnsureParticipantsAreDiscordMembers
+TournamentMatchService --> DiscordUtilities : CreateThreadAsync
+TournamentManagerService ..> HandleMatchCompletionEvent : calls after match completes
 
 ' Event System inheritance relationships
 TournamentSignupHandler --|> ComponentHandlerBase
@@ -729,5 +793,41 @@ ITournamentMapService -[hidden]d-> ITournamentGameService
 TournamentMatchOperationsService -[hidden]d-> TournamentStateValidator
 TournamentStateValidator -[hidden]d-> TournamentBracketManager
 TournamentBracketManager -[hidden]d-> TournamentScoreManager
+
+' Add new recovery relationship
+TournamentStateService --> Round.Team.Thread : recovers deleted threads
+TournamentStateService --> Match : rebuilds thread associations
+TournamentStateService --> MatchStatusService : regenerates match status embeds
+
+' Add note about thread recovery capabilities
+note right of TournamentStateService::ValidateAndRecoverThreadsAsync
+  Comprehensive thread recovery system:
+  1. Detects and recreates deleted Discord threads
+  2. Reconstructs match status embeds for all matches
+  3. Rebuilds relationships between tournament 
+     matches and Discord threads
+  4. Updates tournament state based on completed matches
+end note
+
+' Add TournamentManagementGroup command for recovery
+TournamentManagementGroup --> TournamentStateService : recover_threads command
+
+' Update relationships section to include new components
+TManagementBasicGroup --> TournamentService
+TManagementBasicGroup --> TournamentManagerService
+TManagementBasicGroup --> TournamentRepositoryService
+TManagementBasicGroup --> TournamentStateService
+
+TManagementSignupGroup --> TournamentSignupService
+TManagementSignupGroup --> TournamentService
+TManagementSignupGroup --> TournamentStateService
+
+TManagementRecoveryGroup --> TournamentStateService
+TManagementRecoveryGroup --> TournamentStateValidator
+TManagementRecoveryGroup --> TournamentService
+
+' Update recovery commands relationship
+TManagementRecoveryGroup --> TournamentStateService : invokes thread/match recovery
+TManagementRecoveryGroup --> TournamentStateValidator : validates tournament structure
 
 @enduml 

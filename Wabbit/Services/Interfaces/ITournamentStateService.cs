@@ -57,5 +57,30 @@ namespace Wabbit.Services.Interfaces
         /// Updates tournament from a round
         /// </summary>
         void UpdateTournamentFromRound(Tournament tournament);
+
+        /// <summary>
+        /// Validates and recovers team threads that might have been deleted
+        /// </summary>
+        /// <param name="tournament">Tournament to validate threads for</param>
+        /// <param name="client">Discord client for channel operations</param>
+        /// <returns>True if recovery was successful, false otherwise</returns>
+        Task<bool> ValidateAndRecoverThreadsAsync(Tournament tournament, DiscordClient client);
+
+        /// <summary>
+        /// Recovers match status embeds for a specific player/team thread
+        /// </summary>
+        /// <param name="team">The team whose thread needs match status embeds recovered</param>
+        /// <param name="match">The tournament match associated with the team</param>
+        /// <param name="client">Discord client for channel operations</param>
+        /// <returns>True if recovery was successful, false otherwise</returns>
+        Task<bool> RecoverMatchStatusEmbedsAsync(Round round, Tournament.Match match, DiscordClient client);
+
+        /// <summary>
+        /// Rebuilds the relationship between tournament matches and Discord threads
+        /// </summary>
+        /// <param name="tournament">Tournament to rebuild associations for</param>
+        /// <param name="client">Discord client for channel operations</param>
+        /// <returns>True if rebuilding was successful, false otherwise</returns>
+        Task<bool> RebuildMatchThreadAssociationsAsync(Tournament tournament, DiscordClient client);
     }
 }

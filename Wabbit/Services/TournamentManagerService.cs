@@ -364,6 +364,18 @@ namespace Wabbit.Services
                 // Check what game type we're dealing with
                 if (tournament.GameType == GameType.OneVsOne && match.TeamA.Count == 1 && match.TeamB.Count == 1)
                 {
+                    // Find if there's an existing match object for this pair in the group
+                    Tournament.Match? existingMatch = null;
+                    if (match.Group?.Matches != null)
+                    {
+                        existingMatch = match.Group.Matches.FirstOrDefault(m =>
+                            m.Participants?.Count == 2 &&
+                            ((m.Participants[0].Player is DiscordMember p1 && match.TeamA[0].Id == p1.Id &&
+                              m.Participants[1].Player is DiscordMember p2 && match.TeamB[0].Id == p2.Id) ||
+                             (m.Participants[0].Player is DiscordMember p3 && match.TeamB[0].Id == p3.Id &&
+                              m.Participants[1].Player is DiscordMember p4 && match.TeamA[0].Id == p4.Id)));
+                    }
+
                     // 1v1 match
                     await _matchService.CreateAndStart1v1Match(
                         tournament,
@@ -371,9 +383,10 @@ namespace Wabbit.Services
                         match.TeamA[0],
                         match.TeamB[0],
                         client,
-                        bestOf);
+                        bestOf,
+                        existingMatch);
 
-                    _logger.LogInformation($"Started 1v1 match {match.TeamA[0].DisplayName} vs {match.TeamB[0].DisplayName} in tournament {tournament.Name}");
+                    _logger.LogInformation($"Started 1v1 match {match.TeamA[0].DisplayName} vs {match.TeamB[0].DisplayName} in tournament {tournament.Name}{(existingMatch != null ? " using existing match object" : "")}");
                 }
                 else
                 {
@@ -493,19 +506,28 @@ namespace Wabbit.Services
                         {
                             // Check if a match already exists between these players
                             bool matchExists = false;
+                            bool matchNeedsExecution = false;
+                            Tournament.Match? existingMatch = null;
+
                             if (group.Matches != null && group.Matches.Count > 0)
                             {
-                                matchExists = group.Matches.Any(m =>
+                                existingMatch = group.Matches.FirstOrDefault(m =>
                                     m.Participants?.Count == 2 &&
                                     ((m.Participants[0].Player is DiscordMember p1 && p1.Id == player1.Id &&
                                       m.Participants[1].Player is DiscordMember p2 && p2.Id == player2.Id) ||
                                      (m.Participants[0].Player is DiscordMember p3 && p3.Id == player2.Id &&
                                       m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id)));
+
+                                matchExists = existingMatch != null;
+
+                                // If match exists but hasn't been executed (no linked round), it needs execution
+                                matchNeedsExecution = matchExists && existingMatch?.LinkedRound == null;
                             }
 
-                            _logger.LogInformation($"Match already exists for {player1.DisplayName} vs {player2.DisplayName}: {matchExists}");
+                            _logger.LogInformation($"Match already exists for {player1.DisplayName} vs {player2.DisplayName}: {matchExists}, Needs execution: {matchNeedsExecution}");
 
-                            if (!matchExists)
+                            // Add match for scheduling if it doesn't exist OR if it exists but needs execution
+                            if (!matchExists || matchNeedsExecution)
                             {
                                 _logger.LogInformation($"Adding pending match: {player1.DisplayName} vs {player2.DisplayName}");
                                 pendingMatches.Add((group, new List<DiscordMember> { player1 }, new List<DiscordMember> { player2 }));

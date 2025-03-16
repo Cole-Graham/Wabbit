@@ -1022,156 +1022,69 @@ namespace Wabbit.Services.ServiceHelpers
         /// <summary>
         /// Validates the integrity of the playoff bracket structure and seeding
         /// </summary>
-        public List<string> ValidatePlayoffBracket(Tournament tournament)
+        public bool ValidatePlayoffBracket(Tournament tournament)
         {
-            var errors = new List<string>();
+            var errors = ValidateBracketStructure(tournament);
+            return errors.Count == 0;
+        }
 
-            if (tournament?.PlayoffMatches == null)
+        public bool ValidateGroupStandings(Tournament tournament, Tournament.Group group)
+        {
+            if (tournament == null || group == null)
             {
-                errors.Add("No playoff bracket found");
-                return errors;
+                _logger.LogError("Cannot validate group standings: tournament or group is null");
+                return false;
             }
 
-            // Validate round progression
-            var rounds = tournament.PlayoffMatches
-                .GroupBy(m => m.Type)
-                .OrderBy(g => g.Key)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            // Check round sizes
-            foreach (var round in rounds)
+            try
             {
-                var expectedCount = round.Key switch
+                // Check if the group has participants
+                if (group.Participants == null || group.Participants.Count == 0)
                 {
-                    TournamentMatchType.RoundOf16 => 8,
-                    TournamentMatchType.Quarterfinal => 4,
-                    TournamentMatchType.Semifinal => 2,
-                    TournamentMatchType.Final => 1,
-                    TournamentMatchType.PlayoffThirdPlace => tournament.Settings?.IncludeThirdPlaceMatch == true ? 1 : 0,
-                    _ => 0
-                };
-
-                if (round.Value.Count != expectedCount)
-                {
-                    errors.Add($"Invalid number of matches in {round.Key}: found {round.Value.Count}, expected {expectedCount}");
+                    _logger.LogWarning($"Group {group.Name} has no participants");
+                    return false;
                 }
+
+                // Create a sorted list of participants based on points (descending)
+                var sortedParticipants = group.Participants
+                    .OrderByDescending(p => p.Points)
+                    .ThenByDescending(p => p.Wins)
+                    .ToList();
+
+                // Verify participant points and positions
+                for (int i = 0; i < sortedParticipants.Count; i++)
+                {
+                    // Check if positions are assigned correctly
+                    if (sortedParticipants[i].Position != i + 1 && group.IsComplete)
+                    {
+                        _logger.LogWarning($"Group {group.Name} participant position is incorrect: expected {i + 1}, got {sortedParticipants[i].Position}");
+                        return false;
+                    }
+
+                    // Verify points calculation matches wins/draws
+                    int expectedPoints = sortedParticipants[i].Wins * 3 + sortedParticipants[i].Draws;
+                    if (sortedParticipants[i].Points != expectedPoints)
+                    {
+                        _logger.LogWarning($"Group {group.Name} participant points calculation is incorrect");
+                        return false;
+                    }
+                }
+
+                // Verify matches count matches the expected count
+                int expectedMatchCount = (group.Participants.Count * (group.Participants.Count - 1)) / 2;
+                if (group.Matches == null || (group.IsComplete && group.Matches.Count < expectedMatchCount))
+                {
+                    _logger.LogWarning($"Group {group.Name} has incorrect number of matches: expected {expectedMatchCount}, got {group.Matches?.Count ?? 0}");
+                    return false;
+                }
+
+                return true;
             }
-
-            // Validate seeding integrity
-            var firstRoundMatches = tournament.PlayoffMatches
-                .Where(m => m.Type == rounds.Keys.Min())
-                .OrderBy(m => m.DisplayPosition)
-                .ToList();
-
-            foreach (var match in firstRoundMatches)
+            catch (Exception ex)
             {
-                if (match.Participants?.Count != 2)
-                {
-                    errors.Add($"First round match {match.Id} has {match.Participants?.Count ?? 0} participants, expected 2");
-                    continue;
-                }
-
-                foreach (var participant in match.Participants)
-                {
-                    if (participant?.Player == null)
-                    {
-                        errors.Add($"Missing player data in first round match {match.Id}");
-                    }
-                    else if (participant.SourceMatch != null)
-                    {
-                        errors.Add($"First round participant in match {match.Id} should not have a source match");
-                    }
-                }
+                _logger.LogError(ex, $"Error validating group standings for {group.Name}: {ex.Message}");
+                return false;
             }
-
-            // Validate advancement paths
-            foreach (var match in tournament.PlayoffMatches.Where(m => m.Type != TournamentMatchType.Final))
-            {
-                if (match.NextMatch == null)
-                {
-                    errors.Add($"Match {match.Id} ({match.Type}) is missing next match connection");
-                    continue;
-                }
-
-                var expectedNextType = match.Type switch
-                {
-                    TournamentMatchType.RoundOf16 => (TournamentMatchType?)TournamentMatchType.Quarterfinal,
-                    TournamentMatchType.Quarterfinal => (TournamentMatchType?)TournamentMatchType.Semifinal,
-                    TournamentMatchType.Semifinal => (TournamentMatchType?)TournamentMatchType.Final,
-                    _ => (TournamentMatchType?)null
-                };
-
-                if (expectedNextType.HasValue && match.NextMatch.Type != expectedNextType)
-                {
-                    errors.Add($"Invalid progression from {match.Type} to {match.NextMatch.Type}");
-                }
-
-                // Validate winner advancement
-                if (match.Result?.Winner != null)
-                {
-                    var winner = match.Result.Winner as DiscordUser;
-                    var advanced = match.NextMatch.Participants?
-                        .Any(p => (p?.Player as DiscordUser)?.Id == winner?.Id);
-
-                    if (advanced != true)
-                    {
-                        errors.Add($"Winner of match {match.Id} ({winner?.Username ?? "Unknown"}) not found in next match");
-                    }
-                }
-            }
-
-            // Validate third place match connections
-            if (tournament.Settings?.IncludeThirdPlaceMatch == true)
-            {
-                var thirdPlaceMatch = tournament.PlayoffMatches
-                    .FirstOrDefault(m => m.Type == TournamentMatchType.PlayoffThirdPlace);
-
-                if (thirdPlaceMatch == null)
-                {
-                    errors.Add("Third place match is enabled but not created");
-                }
-                else
-                {
-                    var semifinals = tournament.PlayoffMatches
-                        .Where(m => m.Type == TournamentMatchType.Semifinal)
-                        .ToList();
-
-                    foreach (var semifinal in semifinals)
-                    {
-                        if (semifinal.ThirdPlaceMatch != thirdPlaceMatch)
-                        {
-                            errors.Add($"Semifinal match {semifinal.Id} not properly connected to third place match");
-                        }
-                    }
-
-                    // Validate third place participants
-                    if (thirdPlaceMatch.Participants?.Count != 2)
-                    {
-                        errors.Add($"Third place match has {thirdPlaceMatch.Participants?.Count ?? 0} participants, expected 2");
-                    }
-                    else
-                    {
-                        foreach (var participant in thirdPlaceMatch.Participants)
-                        {
-                            if (participant?.SourceMatch?.Type != TournamentMatchType.Semifinal)
-                            {
-                                errors.Add("Third place match participant not from semifinals");
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (errors.Any())
-            {
-                _logger.LogError($"Playoff bracket validation failed with {errors.Count} errors");
-                foreach (var error in errors)
-                {
-                    _logger.LogError($"Bracket error: {error}");
-                }
-            }
-
-            return errors;
         }
 
         /// <summary>

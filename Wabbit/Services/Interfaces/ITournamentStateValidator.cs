@@ -1,21 +1,34 @@
+using System.Collections.Generic;
 using Wabbit.Models;
 
 namespace Wabbit.Services.Interfaces
 {
     /// <summary>
-    /// Interface for validating tournament states and transitions
+    /// Interface for tournament state validation
     /// </summary>
     public interface ITournamentStateValidator
     {
         /// <summary>
-        /// Validates the current state and data integrity of a tournament
+        /// Validates a tournament state transition
         /// </summary>
+        bool IsValidStateTransition(Tournament tournament, TournamentStage newStage);
+
+        /// <summary>
+        /// Validates the tournament state for data consistency
+        /// </summary>
+        /// <param name="tournament">Tournament to validate</param>
+        /// <returns>List of validation errors, empty if no errors</returns>
         List<string> ValidateTournamentState(Tournament tournament);
 
         /// <summary>
-        /// Determines if a transition between tournament states is valid
+        /// Validates tournament playoff setup
         /// </summary>
-        bool IsValidStateTransition(Tournament tournament, TournamentStage newState);
+        bool ValidatePlayoffSetup(Tournament tournament);
+
+        /// <summary>
+        /// Validates the playoff bracket is correctly linked
+        /// </summary>
+        bool ValidatePlayoffBracket(Tournament tournament);
 
         /// <summary>
         /// Validates a match's state and data
@@ -27,7 +40,6 @@ namespace Wabbit.Services.Interfaces
         /// </summary>
         List<string> ValidateBracketStructure(Tournament tournament);
 
-        bool ValidatePlayoffSetup(Tournament tournament);
         bool ValidateGroupMatchCreation(Tournament tournament, Tournament.Group group);
         bool ValidateGroupCompletion(Tournament tournament, Tournament.Group group);
     }
