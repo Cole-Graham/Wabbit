@@ -165,35 +165,28 @@ namespace Wabbit.Services
                 // Link the round to the match
                 match.LinkedRound = round;
 
-                // Create threads for teams
-                foreach (var team in round.Teams)
+                // Get or create threads for teams
+                if (tournament is null)
                 {
-                    if (tournament?.AnnouncementChannel is null)
-                    {
-                        _logger.LogError($"Cannot create thread for team {team.Name}: Announcement channel is null");
-                        continue;
-                    }
+                    _logger.LogError("Cannot manage team threads: tournament is null");
+                    return;
+                }
 
-                    var thread = await DiscordUtilities.CreateThreadAsync(
-                        tournament.AnnouncementChannel,
-                        team.Name ?? "Team Thread",
-                        _logger,
-                        DiscordChannelType.PrivateThread,
-                        DiscordAutoArchiveDuration.Day);
+                await GetOrCreateTeamThreadsAsync(tournament, round.Teams, client);
 
-                    if (thread is not null)
-                    {
-                        team.Thread = thread;
-
-                        // Add team participants to the thread
-                        foreach (var participant in team.Participants)
-                            if (participant.Player is not null)
-                                await thread.AddThreadMemberAsync(participant.Player);
-                    }
-                    else
-                    {
-                        _logger.LogError($"Failed to create thread for team {team.Name}");
-                    }
+                // Check if this is a subsequent match for the players
+                bool isFirstMatch = true;
+                if (group != null)
+                {
+                    isFirstMatch = (group.Matches?.Count(m =>
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player1?.Id) ?? false) ||
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player2?.Id) ?? false)) ?? 0) <= 1;
+                }
+                else if (tournament.PlayoffMatches != null)
+                {
+                    isFirstMatch = tournament.PlayoffMatches.Count(m =>
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player1?.Id) ?? false) ||
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player2?.Id) ?? false)) <= 1;
                 }
 
                 // Initialize the match status system
@@ -205,7 +198,7 @@ namespace Wabbit.Services
                         return;
                     }
 
-                    // Create match status in each team's thread instead of announcement channel
+                    // For each team's thread
                     foreach (var team in round.Teams)
                     {
                         if (team.Thread is null)
@@ -214,7 +207,68 @@ namespace Wabbit.Services
                             continue;
                         }
 
-                        await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                        // If not the first match, add a separator before creating a new match status
+                        if (!isFirstMatch)
+                        {
+                            int matchNumber = (int)(round.CustomProperties.ContainsKey("GroupMatchNumber") ?
+                                round.CustomProperties["GroupMatchNumber"] : 1);
+                            int totalMatches = (int)(round.CustomProperties.ContainsKey("TotalGroupMatches") ?
+                                round.CustomProperties["TotalGroupMatches"] : 1);
+
+                            // Get opponent name
+                            string opponentName = team == round.Teams[0] ?
+                                round.Teams[1].Name ?? "Opponent" :
+                                round.Teams[0].Name ?? "Opponent";
+
+                            await _matchStatusService.AddMatchSeparatorAsync(
+                                team.Thread,
+                                client,
+                                matchNumber,
+                                totalMatches,
+                                opponentName);
+                        }
+
+                        // For existing threads with previous matches, ensure we create a new match status
+                        // message rather than updating an old one if the previous match was completed
+                        if (!isFirstMatch)
+                        {
+                            // Find the existing round for this team in this thread, if any
+                            var existingRound = _ongoingRounds.TourneyRounds
+                                .Where(r => r.TournamentId == tournament.Name)
+                                .Where(r => r != round) // Not the current round
+                                .Where(r => r.Teams.Any(t => t.Thread?.Id == team.Thread?.Id))
+                                .OrderByDescending(r => r.CustomProperties.ContainsKey("GroupMatchNumber") ?
+                                    Convert.ToInt32(r.CustomProperties["GroupMatchNumber"]) : 0)
+                                .FirstOrDefault();
+
+                            // If we found a previous round and it's completed, create a new status
+                            if (existingRound != null && existingRound.IsCompleted)
+                            {
+                                await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                            }
+                            else
+                            {
+                                // Otherwise, check if there's an existing message
+                                var existingStatus = await _matchStatusService.GetMatchStatusMessageAsync(team.Thread, client);
+
+                                if (existingStatus == null)
+                                {
+                                    // If no existing message, create a new one
+                                    await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                                }
+                                else
+                                {
+                                    // Update existing status
+                                    await _matchStatusService.UpdateMatchStatusAsync(team.Thread, round, client);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // First match, always create a new status
+                            await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                        }
+
                         await _matchStatusService.UpdateToMapBanStageAsync(team.Thread, round, client);
                         _logger.LogInformation($"Match status initialized for match {match.Name} in thread for {team.Name}");
                     }
@@ -231,6 +285,103 @@ namespace Wabbit.Services
             {
                 _logger.LogError(ex, "Error creating match");
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Gets existing threads for team participants or creates new ones if they don't exist
+        /// </summary>
+        private async Task GetOrCreateTeamThreadsAsync(Tournament tournament, List<Round.Team> teams, DiscordClient client)
+        {
+            if (tournament?.AnnouncementChannel is null)
+            {
+                _logger.LogError("Cannot manage team threads: Announcement channel is null");
+                return;
+            }
+
+            // Find existing rounds for the tournament
+            var tournamentRounds = _ongoingRounds.TourneyRounds
+                .Where(r => r.TournamentId == tournament.Name)
+                .ToList();
+
+            // Process each team
+            foreach (var team in teams)
+            {
+                if (team.Participants?.Count == 0 || team.Participants?.All(p => p.Player is null) == true)
+                {
+                    _logger.LogWarning($"Team {team.Name} has no valid participants");
+                    continue;
+                }
+
+                // Try to find an existing thread for the first participant
+                DiscordThreadChannel? existingThread = null;
+
+                if (team.Participants?.FirstOrDefault()?.Player is DiscordMember member)
+                {
+                    // Look through all rounds to find a thread for this participant
+                    foreach (var round in tournamentRounds)
+                    {
+                        var existingTeam = round.Teams?.FirstOrDefault(t =>
+                            t.Participants?.Any(p => p.Player is DiscordMember pm && pm.Id == member.Id) == true);
+
+                        if (existingTeam?.Thread is not null)
+                        {
+                            existingThread = existingTeam.Thread;
+                            _logger.LogInformation($"Found existing thread {existingThread.Name} for {team.Name}");
+                            break;
+                        }
+                    }
+                }
+
+                // If no existing thread was found, create a new one
+                if (existingThread is null)
+                {
+                    _logger.LogInformation($"Creating new thread for team {team.Name}");
+
+                    try
+                    {
+                        var newThread = await DiscordUtilities.CreateThreadAsync(
+                            tournament.AnnouncementChannel,
+                            team.Name ?? "Team Thread",
+                            _logger,
+                            DiscordChannelType.PrivateThread,
+                            DiscordAutoArchiveDuration.Day);
+
+                        if (newThread is not null)
+                        {
+                            existingThread = newThread;
+                        }
+                        else
+                        {
+                            _logger.LogError($"Failed to create thread for team {team.Name}");
+                            continue;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Error creating thread for team {team.Name}");
+                        continue;
+                    }
+                }
+
+                // Assign the thread to the team
+                team.Thread = existingThread;
+
+                // Add all participants to the thread
+                foreach (var participant in team.Participants ?? Enumerable.Empty<Round.Participant>())
+                {
+                    if (participant?.Player is not null)
+                    {
+                        try
+                        {
+                            await existingThread.AddThreadMemberAsync(participant.Player);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, $"Could not add {participant.Player} to thread {existingThread.Name}");
+                        }
+                    }
+                }
             }
         }
 
@@ -269,8 +420,8 @@ namespace Wabbit.Services
         {
             try
             {
-                // Archive match threads if client is provided
-                if (client != null)
+                // Only archive match threads if tournament is complete
+                if (client != null && tournament.IsComplete)
                 {
                     await ArchiveMatchThreadsAsync(match, client);
                 }
@@ -304,6 +455,10 @@ namespace Wabbit.Services
                     {
                         if (team.Thread is not null)
                         {
+                            // Log that we're archiving this thread
+                            await team.Thread.SendMessageAsync(
+                                "🔒 **This tournament is now complete.** This thread will be archived but remain available for viewing match history.");
+
                             await team.Thread.ModifyAsync(props =>
                             {
                                 props.IsArchived = true;

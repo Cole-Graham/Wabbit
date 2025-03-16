@@ -492,21 +492,24 @@ namespace Wabbit.Services
         /// </summary>
         private void UpdateMapPoolWithSelections(DiscordEmbedBuilder builder, Round round, List<string> selectedMaps)
         {
-            // Update the team's map bans temporarily for display
-            if (round.Teams is not null)
+            if (selectedMaps == null || !selectedMaps.Any() || builder == null) return;
+
+            // Remove existing map pool field if present
+            var existingFields = builder.Fields?.ToList();
+            if (existingFields != null)
             {
-                foreach (var team in round.Teams)
+                for (int i = 0; i < existingFields.Count; i++)
                 {
-                    if (team.MapBans is not null && team.MapBans.SequenceEqual(selectedMaps))
+                    if (existingFields[i]?.Name?.Contains("Map Pool") == true)
                     {
-                        team.MapBans = selectedMaps;
+                        builder.RemoveFieldAt(i);
                         break;
                     }
                 }
             }
 
             // Add updated map pool
-            AddMapPoolField(builder, round, selectedMaps);
+            AddMapPoolFieldWithDivider(builder, round, selectedMaps);
         }
 
         /// <summary>
@@ -872,25 +875,65 @@ namespace Wabbit.Services
         /// </summary>
         private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round, List<string>? cachedMapPool = null)
         {
-            if (round == null) throw new ArgumentNullException(nameof(round));
+            // Default titles for regular matches
+            string title = "Match Status";
+            string subtitle = $"Current Status: {round.CurrentStage}";
 
-            string matchLength = round.Length switch
+            // Try to get better title from round's custom properties
+            if (round.CustomProperties?.TryGetValue("TournamentId", out var tournamentIdObj) == true &&
+                tournamentIdObj is string tournamentId)
             {
-                1 => "Best of 1",
-                3 => "Best of 3",
-                5 => "Best of 5",
-                7 => "Best of 7",
-                _ => $"Best of {round.Length}"
-            };
+                // Extract playoff stage info if available
+                if (round.CustomProperties.TryGetValue("MatchType", out var matchTypeObj) &&
+                    matchTypeObj is string matchType && !string.IsNullOrEmpty(matchType))
+                {
+                    // Playoff match
+                    title = $"Playoffs: {matchType}";
+                }
+                else if (round.CustomProperties.TryGetValue("GroupName", out var groupNameObj) &&
+                         groupNameObj is string groupName && !string.IsNullOrEmpty(groupName))
+                {
+                    // Group stage match
+                    int currentRound = 0;
+                    int totalRounds = 0;
 
-            var teams = round.Teams?.Select(t => t?.Name ?? "Unknown Team").ToList() ?? new List<string> { "Team 1", "Team 2" };
-            string matchTitle = string.Join(" vs ", teams);
+                    if (round.CustomProperties.TryGetValue("CurrentRound", out var currentRoundObj) &&
+                        currentRoundObj is int currentRoundValue)
+                    {
+                        currentRound = currentRoundValue;
+                    }
 
-            // Add group stage information if available
-            string groupStageInfo = "";
-            if (round.TournamentRound && round.GroupStageMatchNumber > 0 && round.TotalGroupStageMatches > 0)
+                    if (round.CustomProperties.TryGetValue("TotalRounds", out var totalRoundsObj) &&
+                        totalRoundsObj is int totalRoundsValue)
+                    {
+                        totalRounds = totalRoundsValue;
+                    }
+
+                    title = $"Group Stage ({groupName}): Round {currentRound} of {totalRounds}";
+                }
+            }
+
+            // Set subtitle to match and game info if available
+            if (round.Teams?.Count >= 2)
             {
-                groupStageInfo = $"Group Stage: Match {round.GroupStageMatchNumber} of {round.TotalGroupStageMatches}";
+                string player1Name = round.Teams[0]?.Name ?? "Player 1";
+                string player2Name = round.Teams[1]?.Name ?? "Player 2";
+                int currentGame = 0;
+                int totalGames = 0;
+
+                if (round.CustomProperties?.TryGetValue("CurrentGame", out var currentGameObj) == true &&
+                    currentGameObj is int currentGameValue)
+                {
+                    currentGame = currentGameValue;
+                }
+
+                if (round.CustomProperties?.TryGetValue("TotalGames", out var totalGamesObj) == true &&
+                    totalGamesObj is int totalGamesValue)
+                {
+                    totalGames = totalGamesValue;
+                }
+
+                subtitle = $"Match: {player1Name} vs {player2Name}, Game {currentGame} of {totalGames}";
             }
 
             // Set color based on match stage
@@ -903,36 +946,36 @@ namespace Wabbit.Services
                 _ => new DiscordColor(75, 181, 67)                          // Default green
             };
 
+            // Get match progress bar
+            string progressBar = GetMatchProgressBar(round.CurrentStage);
+
+            // Create embed with progress bar included in the description
             var builder = new DiscordEmbedBuilder()
-                .WithTitle(groupStageInfo)
-                .WithDescription($"{matchTitle}\n{matchLength}")
+                .WithTitle(title)
+                .WithDescription(subtitle + "\n\n" + progressBar + "\n_______________________________________________")
                 .WithColor(embedColor)
                 .WithTimestamp(DateTimeOffset.Now);
-
-            // Add match progress bar
-            string progressBar = GetMatchProgressBar(round.CurrentStage);
-            builder.AddField("Progress", progressBar, false);
 
             // Add map pool with color coding
             if (round.CurrentStage == MatchStage.MapBan)
             {
                 var mapPool = cachedMapPool ?? _mapService.GetTournamentMapPool(round.OneVOne);
-                AddMapPoolField(builder, round, mapPool);
+                AddMapPoolFieldWithDivider(builder, round, mapPool);
             }
 
-            // Add team map bans
-            AddTeamMapBansField(builder, round);
+            // Add team map bans with divider
+            AddTeamMapBansFieldWithDivider(builder, round);
 
             // Add deck submissions area if applicable
             if (round.CurrentStage >= MatchStage.DeckSubmission)
             {
-                AddDeckSubmissionsArea(builder, round);
+                AddDeckSubmissionsAreaWithDivider(builder, round);
             }
 
-            // Add game results area
-            AddGameResultsArea(builder, round);
+            // Add game results area with divider
+            AddGameResultsAreaWithDivider(builder, round);
 
-            // Add stage-specific instructions at the bottom
+            // Add stage-specific instructions at the bottom (no divider needed after this)
             AddStageInstructions(builder, round);
 
             return builder;
@@ -948,7 +991,7 @@ namespace Wabbit.Services
             return $"{mapBanEmoji} Map Bans ➜ {deckSubmitEmoji} Deck Submission ➜ {gameResultsEmoji} Game Results";
         }
 
-        private void AddMapPoolField(DiscordEmbedBuilder builder, Round round, List<string> mapPool)
+        private void AddMapPoolFieldWithDivider(DiscordEmbedBuilder builder, Round round, List<string> mapPool)
         {
             if (mapPool is null || !mapPool.Any()) return;
 
@@ -979,6 +1022,9 @@ namespace Wabbit.Services
                 mapPoolBuilder.AppendLine();
             }
 
+            // Add divider at the end
+            mapPoolBuilder.AppendLine("\n_______________________________________________");
+
             builder.AddField("🗺️ Map Pool", mapPoolBuilder.ToString().Trim(), false);
         }
 
@@ -1003,37 +1049,56 @@ namespace Wabbit.Services
             return "🟩"; // Green for available maps
         }
 
-        private void AddTeamMapBansField(DiscordEmbedBuilder builder, Round round)
+        private void AddTeamMapBansFieldWithDivider(DiscordEmbedBuilder builder, Round round)
         {
             if (round.Teams is null) return;
 
             var banBuilder = new StringBuilder();
-            banBuilder.AppendLine("**Map Ban Status**");
 
-            foreach (var team in round.Teams)
+            // Process the teams (we'll show detailed bans for the first team, and just status for other teams)
+            var userTeam = round.Teams.FirstOrDefault();
+            var opponentTeams = round.Teams.Skip(1).ToList();
+
+            if (userTeam is null) return;
+
+            // User's team map bans
+            if (userTeam.MapBans?.Any() == true)
+            {
+                // Show priority numbers clearly
+                for (int i = 0; i < userTeam.MapBans.Count; i++)
+                {
+                    string priority = i == 0 ? "1st" : i == 1 ? "2nd" : "3rd";
+                    string mapName = userTeam.MapBans[i];
+                    banBuilder.AppendLine($"• {priority} Priority: {mapName} ✅");
+                }
+            }
+            else
+            {
+                banBuilder.AppendLine("(Not yet submitted)");
+            }
+
+            // Add divider between user team and opponent teams
+            banBuilder.AppendLine();
+
+            // Add opponent teams (only show submission status, not the actual maps)
+            foreach (var team in opponentTeams)
             {
                 if (team is null) continue;
 
-                if (team.MapBans?.Any() == true)
-                {
-                    banBuilder.AppendLine($"\n{team.Name}:");
-                    // Show priority numbers clearly
-                    for (int i = 0; i < team.MapBans.Count; i++)
-                    {
-                        string priority = i == 0 ? "1st" : i == 1 ? "2nd" : "3rd";
-                        banBuilder.AppendLine($"• {priority} Priority Ban ✅");
-                    }
-                }
-                else
-                {
-                    banBuilder.AppendLine($"\n{team.Name}: ⏳ Waiting for map bans");
-                }
+                string banStatus = team.MapBans?.Any() == true
+                    ? "✅ Submitted"
+                    : "⏳ Waiting for submission";
+
+                banBuilder.AppendLine($"Opponent Map Bans: {banStatus}");
             }
 
-            builder.AddField("🚫 Map Bans", banBuilder.ToString().Trim(), false);
+            // Add divider at the end
+            banBuilder.AppendLine("\n_______________________________________________");
+
+            builder.AddField("My Team Map Bans:", banBuilder.ToString().Trim(), false);
         }
 
-        private void AddDeckSubmissionsArea(DiscordEmbedBuilder builder, Round round)
+        private void AddDeckSubmissionsAreaWithDivider(DiscordEmbedBuilder builder, Round round)
         {
             if (round.CustomProperties?.ContainsKey("DeckCodes") != true) return;
 
@@ -1063,18 +1128,25 @@ namespace Wabbit.Services
                 }
             }
 
+            // Add divider at the end
+            deckBuilder.AppendLine("\n_______________________________________________");
+
             builder.AddField("🃏 Deck Submissions", deckBuilder.ToString().Trim(), false);
         }
 
-        private void AddGameResultsArea(DiscordEmbedBuilder builder, Round round)
+        private void AddGameResultsAreaWithDivider(DiscordEmbedBuilder builder, Round round)
         {
+            var resultsBuilder = new StringBuilder();
+
             if (round.Maps?.Any() != true)
             {
-                builder.AddField("🎮 Game Results", "No games completed yet", false);
+                resultsBuilder.AppendLine("No games completed yet");
+                // Add divider at the end
+                resultsBuilder.AppendLine("\n_______________________________________________");
+                builder.AddField("🎮 Game Results", resultsBuilder.ToString().Trim(), false);
                 return;
             }
 
-            var resultsBuilder = new StringBuilder();
             resultsBuilder.AppendLine("**Game History**");
 
             for (int i = 0; i < round.Maps.Count; i++)
@@ -1098,6 +1170,9 @@ namespace Wabbit.Services
                 resultsBuilder.AppendLine($"\n{gameNumber} • {mapName}");
                 resultsBuilder.AppendLine($"└─ {result}");
             }
+
+            // Add divider at the end
+            resultsBuilder.AppendLine("\n_______________________________________________");
 
             builder.AddField("🎮 Game Results", resultsBuilder.ToString().Trim(), false);
         }

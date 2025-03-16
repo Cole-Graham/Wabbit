@@ -43,6 +43,7 @@ package "Models" as ModelLayer {
         +Settings: TournamentSettings
         +CustomProperties: Dictionary<string, object>
         +RelatedMessages: List<RelatedMessage>
+        +AnnouncementChannel: DiscordChannel
     }
     
     ' Tournament group model
@@ -393,6 +394,7 @@ package "Service Coordinator Layer" as CoordinatorLayer {
         +CreateTournamentAsync()
         +StartTournamentAsync()
         +FinalizeTournamentAsync()
+        +StartMatchRoundAsync()
     }
     
     class TournamentSignupService {
@@ -437,9 +439,11 @@ package "Core Services Layer" as CoreLayer {
     }
     
     class TournamentMatchService {
-        +CreateMatchAsync()
+        +CreateAndStart1v1Match()
         +UpdateMatchResultAsync()
         +StartMatchRoundAsync()
+        +HandleDeckSubmissionAsync()
+        +CreateThreadsForTeamsAsync()
     }
     
     class TournamentGroupService {
@@ -454,6 +458,8 @@ package "Core Services Layer" as CoreLayer {
         +UpdateToDeckSubmissionStageAsync()
         +RecordMapBanAsync()
         +UpdateMatchStatusAsync()
+        +UpdateMatchStatusInAllThreadsAsync()
+        +CreateNewMatchStatusAsync()
     }
     
     class TournamentStateService {
@@ -473,6 +479,11 @@ package "Core Services Layer" as CoreLayer {
         +HandleGameResultAsync()
         +ProcessWinnerSelectionAsync()
         +IsMatchCompleteAsync()
+    }
+    
+    class DiscordUtilities <<static>> {
+        +CreateThreadAsync()
+        +AddMembersToThreadAsync()
     }
 }
 
@@ -504,6 +515,8 @@ package "Base Services Layer" as BaseLayer {
         +UpdateToMapBanStageAsync()
         +UpdateToDeckSubmissionStageAsync()
         +RecordMapBanAsync()
+        +UpdateMatchStatusInAllThreadsAsync()
+        +CreateNewMatchStatusAsync()
     }
     
     interface ITournamentStateService {
@@ -556,6 +569,12 @@ TournamentPlayoffService --> Match
 MatchStatusService --> Round
 TournamentMapService --> Map
 TournamentGameService --> Round
+DiscordUtilities --> Team
+
+' Add new relationship for thread creation flow
+TournamentMatchService --> DiscordUtilities : uses for thread creation
+TournamentMatchService --> Team : creates threads for
+MatchStatusService --> Round.Team.Thread : updates status in
 
 ' Event System inheritance relationships
 TournamentSignupHandler --|> ComponentHandlerBase
@@ -649,6 +668,7 @@ TournamentGroupService --> ITournamentStateValidator
 TournamentGroupService --> ITournamentStateService
 
 MatchStatusService --> ITournamentStateService
+MatchStatusService --> ITournamentMapService
 
 ' Arrange services vertically within layers using hidden connections
 ' Models Layer
@@ -694,6 +714,7 @@ TournamentGroupService -[hidden]d-> MatchStatusService
 MatchStatusService -[hidden]d-> TournamentStateService
 TournamentStateService -[hidden]d-> TournamentMapService
 TournamentMapService -[hidden]d-> TournamentGameService
+TournamentGameService -[hidden]d-> DiscordUtilities
 
 ' Base Services Layer
 ITournamentMatchOperationsService -[hidden]d-> ITournamentStateValidator
