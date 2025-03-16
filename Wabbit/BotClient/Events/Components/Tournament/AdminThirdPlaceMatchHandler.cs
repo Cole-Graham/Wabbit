@@ -97,40 +97,31 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 try
                 {
                     // Create the third place match
-                    bool success = await _playoffService.CreateThirdPlaceMatchOnDemand(tournament, member.Id);
+                    bool success = await _playoffService.CreateThirdPlaceMatchAsync(tournament, member.Id);
 
                     if (success)
                     {
-                        // Find the newly created third place match
-                        var thirdPlaceMatch = tournament.PlayoffMatches?.FirstOrDefault(m =>
-                            m.Type == TournamentMatchType.ThirdPlaceTiebreaker);
-
-                        // Get semifinal matches to extract potential participants
+                        // Find the newly created third place match and get match details
+                        var thirdPlaceMatch = tournament.PlayoffMatches?.FirstOrDefault(m => m.Type == TournamentMatchType.PlayoffThirdPlace);
                         var finalMatch = tournament.PlayoffMatches?.FirstOrDefault(m => m.Type == TournamentMatchType.Final);
-                        var semifinals = finalMatch != null
+                        var semifinals = finalMatch?.NextMatch != null
                             ? tournament.PlayoffMatches?.Where(m => m.NextMatch == finalMatch).ToList()
                             : new List<Models.Tournament.Match>();
 
-                        // Prepare participant names for display
-                        string participant1 = "Semifinal 1 Loser";
-                        string participant2 = "Semifinal 2 Loser";
-
-                        // Try to get actual semifinal match names if possible
-                        if (semifinals?.Count >= 2)
-                        {
-                            participant1 = semifinals[0]?.Name ?? "Unknown Semifinal 1";
-                            participant2 = semifinals[1]?.Name ?? "Unknown Semifinal 2";
-                        }
+                        // Get semifinal names with null safety
+                        var participant1 = semifinals?.Count >= 1 ? semifinals[0]?.Name : "Semifinal 1";
+                        var participant2 = semifinals?.Count >= 2 ? semifinals[1]?.Name : "Semifinal 2";
+                        var bestOf = thirdPlaceMatch?.BestOf ?? 3;
 
                         // Create visual confirmation embed
                         var embed = new DiscordEmbedBuilder()
                             .WithTitle("🏅 Third Place Match Created")
                             .WithDescription("A third place match has been added to the tournament bracket.")
-                            .AddField("Format", $"Best of {thirdPlaceMatch?.BestOf ?? 3}", true)
+                            .AddField("Format", $"Best of {bestOf}", true)
                             .AddField("Participants", "Semifinal losers", true)
                             .AddField("Potential Matchup", $"Loser of {participant1} vs Loser of {participant2}")
                             .WithColor(DiscordColor.Gold)
-                            .WithFooter($"Created by {member.Username} • {DateTime.Now.ToString("yyyy-MM-dd HH:mm")}");
+                            .WithFooter($"Created by {member.Username} • {DateTime.Now:yyyy-MM-dd HH:mm}");
 
                         // Save the tournament state immediately
                         await _stateService.SaveTournamentStateAsync(client);
@@ -154,7 +145,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                         // Announce in the channel with more detailed notification
                         await args.Channel.SendMessageAsync(
                             new DiscordMessageBuilder()
-                                .WithContent($"🏅 **Tournament Update**: A third place match has been added to the tournament by {member.Mention}. This match will use a Best-of-{thirdPlaceMatch?.BestOf ?? 3} format between the semifinal losers.")
+                                .WithContent($"🏅 **Tournament Update**: A third place match has been added to the tournament by {member.Mention}. This match will use a Best-of-{bestOf} format between the semifinal losers.")
                                 .WithAllowedMentions([new UserMention(member.Id)]));
                     }
                     else

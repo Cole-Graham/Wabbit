@@ -15,13 +15,64 @@ namespace Wabbit.Services
     {
         private readonly ILogger<TournamentGroupService> _logger;
         private readonly IRandomProvider _randomProvider;
+        private readonly ITournamentMatchService _matchService;
+        private readonly ITournamentScoreManager _scoreManager;
 
         public TournamentGroupService(
             IRandomProvider randomProvider,
-            ILogger<TournamentGroupService> logger)
+            ILogger<TournamentGroupService> logger,
+            ITournamentMatchService matchService,
+            ITournamentScoreManager scoreManager)
         {
             _randomProvider = randomProvider;
             _logger = logger;
+            _matchService = matchService;
+            _scoreManager = scoreManager;
+        }
+
+        /// <summary>
+        /// Determines the number of groups based on player count and tournament format
+        /// </summary>
+        public int DetermineGroupCount(int playerCount, TournamentFormat format)
+        {
+            // Format-specific group count determination
+            switch (format)
+            {
+                case TournamentFormat.GroupStageWithPlayoffs:
+                    return playerCount switch
+                    {
+                        <= 7 => 1,  // 1 group of 7
+                        8 => 2,     // 2 groups of 4
+                        9 => 3,     // 3 groups of 3
+                        10 => 2,    // 2 groups of 5
+                        11 => 3,    // 3 groups (4,4,3)
+                        12 => 3,    // 3 groups of 4
+                        13 => 3,    // 3 groups (4,4,5)
+                        14 => 2,    // 2 groups of 7
+                        15 => 3,    // 3 groups of 5
+                        16 => 4,    // 4 groups of 4
+                        17 => 3,    // 3 groups (6,6,5)
+                        18 => 3,    // 3 groups of 6
+                        19 => 4,    // 4 groups (5,5,5,4)
+                        20 => 4,    // 4 groups of 5
+                        21 or 22 or 23 => 6,  // 6 groups (4,4,4,3,3,3 for 21)
+                        24 => 6,    // 6 groups of 4
+                        25 or 26 or 27 => 6,  // 6 groups (5,5,5,4,3,3 for 25)
+                        28 or 29 or 30 => 6,  // 6 groups of 5
+                        31 or 32 => 8,        // 8 groups of 4
+                        _ => (int)Math.Ceiling(playerCount / 4.0) // Default to ~4 players per group
+                    };
+
+                case TournamentFormat.RoundRobin:
+                    return 1; // Single group for round robin
+
+                case TournamentFormat.SingleElimination:
+                case TournamentFormat.DoubleElimination:
+                    return 0; // No groups for elimination formats
+
+                default:
+                    return 0;
+            }
         }
 
         /// <summary>
@@ -165,7 +216,6 @@ namespace Wabbit.Services
         /// </summary>
         private void GenerateGroupMatches(Tournament tournament, Tournament.Group group)
         {
-            int matchesPerPlayer = tournament.MatchesPerPlayer;
             List<Tournament.GroupParticipant> participants = group.Participants;
 
             // Clear existing matches
@@ -176,57 +226,62 @@ namespace Wabbit.Services
                 return; // Can't create matches with less than 2 players
             }
 
-            // If Round Robin (matchesPerPlayer = 0), create all possible matches
-            if (matchesPerPlayer == 0)
+            // Create a match between each pair of participants
+            for (int i = 0; i < participants.Count; i++)
             {
-                // Create a match between each pair of participants
-                for (int i = 0; i < participants.Count; i++)
+                for (int j = i + 1; j < participants.Count; j++)
                 {
-                    for (int j = i + 1; j < participants.Count; j++)
+                    var player1 = participants[i];
+                    var player2 = participants[j];
+
+                    // Determine match format based on tournament stage and format
+                    int bestOf = tournament.CurrentStage switch
                     {
-                        var player1 = participants[i];
-                        var player2 = participants[j];
+                        TournamentStage.Groups => 1, // Group stage is Bo1
+                        TournamentStage.Playoffs => 3, // Playoff matches are Bo3
+                        _ => 1
+                    };
 
-                        var match = new Tournament.Match
+                    var match = new Tournament.Match
+                    {
+                        Name = $"{GetPlayerDisplayName(player1.Player)} vs {GetPlayerDisplayName(player2.Player)}",
+                        Type = TournamentMatchType.GroupStage,
+                        BestOf = bestOf,
+                        Participants = new List<Tournament.MatchParticipant>
                         {
-                            Name = $"{GetPlayerDisplayName(player1.Player)} vs {GetPlayerDisplayName(player2.Player)}",
-                            Type = TournamentMatchType.GroupStage,
-                            BestOf = 3,
-                            Participants = new List<Tournament.MatchParticipant>
+                            new Tournament.MatchParticipant
                             {
-                                new Tournament.MatchParticipant { Player = player1.Player, SourceGroup = group },
-                                new Tournament.MatchParticipant { Player = player2.Player, SourceGroup = group }
+                                Player = player1.Player,
+                                SourceGroup = group,
+                                SourceGroupPosition = i + 1 // Store position for tiebreakers
+                            },
+                            new Tournament.MatchParticipant
+                            {
+                                Player = player2.Player,
+                                SourceGroup = group,
+                                SourceGroupPosition = j + 1 // Store position for tiebreakers
                             }
-                        };
+                        }
+                    };
 
-                        group.Matches.Add(match);
-                    }
+                    group.Matches.Add(match);
                 }
-            }
-            else
-            {
-                // Create a specific number of matches per player - to be implemented
-                // This would be more complex and could involve algorithms like Swiss system
-                _logger.LogWarning($"Creating specific number of matches per player ({matchesPerPlayer}) is not implemented yet");
             }
         }
 
         /// <summary>
-        /// Checks if a group is complete
+        /// Checks if a group is complete and updates its status
         /// </summary>
         public void CheckGroupCompletion(Tournament.Group group)
         {
             if (group == null)
             {
-                _logger.LogWarning("Cannot check completion for null group");
+                _logger.LogWarning("Cannot check completion of null group");
                 return;
             }
 
-            // A group is complete if all matches are complete
-            bool allMatchesComplete = group.Matches.All(m => m.IsComplete);
-
-            // Set the group as complete
-            group.IsComplete = allMatchesComplete;
+            // Use ScoreManager to check if group is complete
+            group.IsComplete = _scoreManager.IsGroupComplete(group);
 
             if (group.IsComplete)
             {
@@ -235,31 +290,93 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Determines the appropriate group count based on player count and format
+        /// Creates tiebreaker matches for a group if needed
         /// </summary>
-        public int DetermineGroupCount(int playerCount, TournamentFormat format)
+        private Tournament.Match CreateTiebreakerMatch(
+            Tournament tournament,
+            Tournament.Group group,
+            Tournament.GroupParticipant participant1,
+            Tournament.GroupParticipant participant2)
         {
-            // Format-specific group count determination
-            switch (format)
+            var player1 = ConvertToDiscordMember(participant1.Player);
+            var player2 = ConvertToDiscordMember(participant2.Player);
+
+            if (player1 is null || player2 is null)
             {
-                case TournamentFormat.GroupStageWithPlayoffs:
-                    // Typical group counts based on player count
-                    if (playerCount <= 8) return 2;
-                    if (playerCount <= 16) return 4;
-                    if (playerCount <= 24) return 6;
-                    if (playerCount <= 32) return 8;
-                    return (int)Math.Ceiling(playerCount / 4.0); // Approximately 4 players per group
-
-                case TournamentFormat.RoundRobin:
-                    return 1; // Single group for round robin
-
-                case TournamentFormat.SingleElimination:
-                case TournamentFormat.DoubleElimination:
-                    return 0; // No groups for elimination formats
-
-                default:
-                    return 2; // Default to 2 groups
+                throw new ArgumentException("Invalid participants for tiebreaker match");
             }
+
+            var match = new Tournament.Match
+            {
+                Name = $"Tiebreaker: {GetPlayerDisplayName(player1)} vs {GetPlayerDisplayName(player2)}",
+                Type = TournamentMatchType.GroupStageTiebreaker,
+                BestOf = 3, // Tiebreakers are best of 3
+                Participants = new List<Tournament.MatchParticipant>
+                {
+                    new Tournament.MatchParticipant { Player = player1, SourceGroup = group },
+                    new Tournament.MatchParticipant { Player = player2, SourceGroup = group }
+                }
+            };
+
+            return match;
+        }
+
+        /// <summary>
+        /// Creates tiebreaker matches for tied participants
+        /// </summary>
+        private List<Tournament.Match> CreateTiebreakerMatches(
+            Tournament tournament,
+            Tournament.Group group,
+            List<Tournament.GroupParticipant> tiedParticipants)
+        {
+            var tiebreakerMatches = new List<Tournament.Match>();
+
+            // Get head-to-head records for all tied participants
+            for (int i = 0; i < tiedParticipants.Count; i++)
+            {
+                for (int j = i + 1; j < tiedParticipants.Count; j++)
+                {
+                    var (wins, losses) = _scoreManager.GetHeadToHeadRecord(group, tiedParticipants[i], tiedParticipants[j]);
+
+                    // If no clear head-to-head winner, create a tiebreaker match
+                    if (wins == losses)
+                    {
+                        var match = CreateTiebreakerMatch(tournament, group, tiedParticipants[i], tiedParticipants[j]);
+                        tiebreakerMatches.Add(match);
+                    }
+                }
+            }
+
+            return tiebreakerMatches;
+        }
+
+        /// <summary>
+        /// Checks if a group needs tiebreaker matches
+        /// </summary>
+        private bool CheckForTiebreaker(List<Tournament.GroupParticipant> standings, Tournament.Group group)
+        {
+            // Get qualifying positions based on tournament settings
+            int qualifyingPositions = 2; // Default to top 2
+
+            // Check for ties in qualifying positions
+            for (int position = 0; position < qualifyingPositions; position++)
+            {
+                var tiedParticipants = _scoreManager.CheckForTie(group, position);
+                if (tiedParticipants.Count > 1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gets the standings for a group
+        /// </summary>
+        public List<Tournament.GroupParticipant> GetGroupStandings(Tournament.Group group)
+        {
+            return _scoreManager.GetGroupStandings(group);
         }
 
         /// <summary>
@@ -267,18 +384,56 @@ namespace Wabbit.Services
         /// </summary>
         public List<int> GetOptimalGroupSizes(int playerCount, int groupCount)
         {
-            if (groupCount <= 0) return new List<int>();
+            if (groupCount == 0) return new List<int>();
+            if (groupCount == 1) return new List<int> { playerCount };
 
-            // Calculate base size and remainder
+            var sizes = new List<int>();
+
+            // Special cases based on the format document
+            (int[] distribution, bool found) = playerCount switch
+            {
+                8 when groupCount == 2 => (new[] { 4, 4 }, true),
+                9 when groupCount == 3 => (new[] { 3, 3, 3 }, true),
+                10 when groupCount == 2 => (new[] { 5, 5 }, true),
+                11 when groupCount == 3 => (new[] { 4, 4, 3 }, true),
+                12 when groupCount == 3 => (new[] { 4, 4, 4 }, true),
+                13 when groupCount == 3 => (new[] { 4, 4, 5 }, true),
+                14 when groupCount == 2 => (new[] { 7, 7 }, true),
+                15 when groupCount == 3 => (new[] { 5, 5, 5 }, true),
+                16 when groupCount == 4 => (new[] { 4, 4, 4, 4 }, true),
+                17 when groupCount == 3 => (new[] { 6, 6, 5 }, true),
+                18 when groupCount == 3 => (new[] { 6, 6, 6 }, true),
+                19 when groupCount == 4 => (new[] { 5, 5, 5, 4 }, true),
+                20 when groupCount == 4 => (new[] { 5, 5, 5, 5 }, true),
+                21 when groupCount == 6 => (new[] { 4, 4, 4, 3, 3, 3 }, true),
+                24 when groupCount == 6 => (new[] { 4, 4, 4, 4, 4, 4 }, true),
+                25 when groupCount == 6 => (new[] { 5, 5, 5, 4, 3, 3 }, true),
+                28 when groupCount == 6 => (new[] { 5, 5, 5, 5, 4, 4 }, true),
+                30 when groupCount == 6 => (new[] { 5, 5, 5, 5, 5, 5 }, true),
+                32 when groupCount == 8 => (new[] { 4, 4, 4, 4, 4, 4, 4, 4 }, true),
+                _ => (Array.Empty<int>(), false)
+            };
+
+            if (found)
+            {
+                sizes.AddRange(distribution);
+                return sizes;
+            }
+
+            // For cases not explicitly defined, distribute players as evenly as possible
             int baseSize = playerCount / groupCount;
             int remainder = playerCount % groupCount;
 
-            // Create list of group sizes
-            var sizes = new List<int>();
+            // Add base size to all groups
             for (int i = 0; i < groupCount; i++)
             {
-                // Add one extra player to some groups to distribute the remainder
-                sizes.Add(baseSize + (i < remainder ? 1 : 0));
+                sizes.Add(baseSize);
+            }
+
+            // Distribute remainder, prioritizing earlier groups
+            for (int i = 0; i < remainder; i++)
+            {
+                sizes[i]++;
             }
 
             return sizes;
@@ -379,6 +534,46 @@ namespace Wabbit.Services
             // This would need to be done at a higher level with access to the client
 
             return null;
+        }
+
+        /// <summary>
+        /// Gets advancement criteria for playoff stage based on player and group count
+        /// </summary>
+        private (int groupWinners, int bestThirdPlace) GetAdvancementCriteria(int playerCount, int groupCount)
+        {
+            return (playerCount, groupCount) switch
+            {
+                // Single group formats
+                (7, 1) => (4, 0),  // Top 4 advance to playoffs
+
+                // Two group formats
+                (8, 2) => (2, 0),  // Top 2 from each group
+                (10, 2) => (2, 0), // Top 2 from each group
+                (14, 2) => (4, 0), // Top 4 from each group
+
+                // Three group formats
+                (9, 3) => (2, 2),   // Top 2 + best 2 third-place
+                (11, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (12, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (13, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (15, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (17, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (18, 3) => (2, 2),  // Top 2 + best 2 third-place
+
+                // Four group formats
+                (16, 4) => (2, 0),  // Top 2 from each group
+                (19, 4) => (2, 0),  // Top 2 from each group
+                (20, 4) => (2, 0),  // Top 2 from each group
+
+                // Six group formats (21-30 players)
+                ( >= 21 and <= 30, 6) => (2, 4),  // Top 2 + best 4 third-place
+
+                // Eight group formats (31-32 players)
+                ( >= 31 and <= 32, 8) => (2, 0),  // Top 2 from each group
+
+                // Default case - use standard criteria
+                _ => (2, 0)  // Default to top 2 from each group
+            };
         }
     }
 }

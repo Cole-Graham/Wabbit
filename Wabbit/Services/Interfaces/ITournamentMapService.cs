@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using DSharpPlus.Entities;
 using Wabbit.Models;
 
 namespace Wabbit.Services.Interfaces
@@ -32,7 +33,7 @@ namespace Wabbit.Services.Interfaces
         List<string> GetRandomMaps(bool oneVOne, int count);
 
         /// <summary>
-        /// Processes map bans from teams and generates a map list
+        /// Processes map bans from teams and generates a map list based on match length
         /// </summary>
         /// <param name="oneVOne">True for 1v1 maps, false for 2v2+ maps</param>
         /// <param name="team1Bans">Maps banned by team 1</param>
@@ -55,5 +56,35 @@ namespace Wabbit.Services.Interfaces
         /// <param name="oneVOne">Whether this is for a 1v1 match</param>
         /// <returns>A tuple containing (isValid, validatedBans, errorMessage)</returns>
         (bool isValid, List<string> validatedBans, string? errorMessage) ValidateMapBans(List<string> mapBans, bool oneVOne);
+
+        /// <summary>
+        /// Generates a map list for a Bo1 match
+        /// </summary>
+        List<string> GenerateMapListBo1(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null);
+
+        /// <summary>
+        /// Generates a map list for a Bo3 match
+        /// </summary>
+        List<string> GenerateMapListBo3(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null);
+
+        /// <summary>
+        /// Generates a map list for a Bo5 match
+        /// </summary>
+        List<string> GenerateMapListBo5(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null);
+
+        /// <summary>
+        /// Gets a random map with its visualization data
+        /// </summary>
+        (Map? map, DiscordEmbedBuilder embed) GetRandomMapWithVisualization();
+
+        /// <summary>
+        /// Gets a map by name
+        /// </summary>
+        Map? GetMapByName(string mapName);
+
+        /// <summary>
+        /// Gets map thumbnail data
+        /// </summary>
+        Task<(string? url, byte[]? data)> GetMapThumbnailAsync(string mapName);
     }
 }

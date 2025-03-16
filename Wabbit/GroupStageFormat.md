@@ -98,6 +98,62 @@
   - Playoffs: ~3 hours
   - **Total:** ~7.5 hours
 
+### **19 Players**
+- **Format:** 4 groups (5, 5, 5, 4).
+- **Advancement:** Top 2 from each group advance.
+- **Time Estimate:**
+  - Group stage: ~4 hours
+  - Playoffs: ~3 hours
+  - **Total:** ~7 hours
+
+### **20 Players**
+- **Format:** 4 groups of 5.
+- **Advancement:** Top 2 from each group advance.
+- **Time Estimate:**
+  - Group stage: ~4 hours
+  - Playoffs: ~3 hours
+  - **Total:** ~7 hours
+
+### **21-23 Players**
+- **Format:** 6 groups (4, 4, 4, 3, 3, 3) for 21 players, adjust as needed.
+- **Advancement:** Top 2 from each group + best 4 third-place players.
+- **Time Estimate:**
+  - Group stage: ~4 hours
+  - Playoffs: ~3.5 hours
+  - **Total:** ~7.5 hours
+
+### **24 Players**
+- **Format:** 6 groups of 4.
+- **Advancement:** Top 2 from each group + best 4 third-place players.
+- **Time Estimate:**
+  - Group stage: ~4 hours
+  - Playoffs: ~3.5 hours
+  - **Total:** ~7.5 hours
+
+### **25-27 Players**
+- **Format:** 6 groups (5, 5, 5, 4, 3, 3) for 25 players, adjust as needed.
+- **Advancement:** Top 2 from each group + best 4 third-place players.
+- **Time Estimate:**
+  - Group stage: ~4.5 hours
+  - Playoffs: ~3.5 hours
+  - **Total:** ~8 hours
+
+### **28-30 Players**
+- **Format:** 6 groups of 5 (adjust group sizes based on exact count).
+- **Advancement:** Top 2 from each group + best 4 third-place players.
+- **Time Estimate:**
+  - Group stage: ~5 hours
+  - Playoffs: ~3.5 hours
+  - **Total:** ~8.5 hours
+
+### **31-32 Players**
+- **Format:** 8 groups of 4 (adjust for 31).
+- **Advancement:** Top 2 from each group.
+- **Time Estimate:**
+  - Group stage: ~4 hours
+  - Playoffs: ~4 hours
+  - **Total:** ~8 hours
+
 ## **General Considerations**
 - **Odd numbers**: Prefer groups of 3 or 5 to balance match schedules.
 - **Minimize waiting**: Avoid groups of 7+ unless necessary.

@@ -21,6 +21,7 @@ namespace Wabbit.Services
         private readonly ITournamentGroupService _groupService;
         private readonly ITournamentStateService _stateService;
         private readonly ITournamentPlayoffService _playoffService;
+        private readonly ITournamentStateValidator _stateValidator;
 
         /// <summary>
         /// Constructor
@@ -30,13 +31,15 @@ namespace Wabbit.Services
             ITournamentManagerService tournamentManagerService,
             ITournamentGroupService groupService,
             ITournamentStateService stateService,
-            ITournamentPlayoffService playoffService)
+            ITournamentPlayoffService playoffService,
+            ITournamentStateValidator stateValidator)
         {
             _logger = logger;
             _tournamentManagerService = tournamentManagerService;
             _groupService = groupService;
             _stateService = stateService;
             _playoffService = playoffService;
+            _stateValidator = stateValidator;
         }
 
         /// <summary>
@@ -143,6 +146,13 @@ namespace Wabbit.Services
 
                 // Create groups - now using correct parameter count
                 _groupService.CreateGroups(tournament, players, playerSeeds);
+            }
+
+            // Validate state transition to playoffs
+            if (!_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
+            {
+                _logger.LogWarning($"Invalid state transition from {tournament.CurrentStage} to Playoffs for tournament {tournament.Name}");
+                return;
             }
 
             // Current stage to playoffs

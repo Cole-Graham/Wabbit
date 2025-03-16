@@ -26,7 +26,7 @@ namespace Wabbit.Services.Interfaces
         /// <summary>
         /// Loads the tournament state
         /// </summary>
-        void LoadTournamentState();
+        Task<Tournament?> LoadTournamentState();
 
         /// <summary>
         /// Links rounds to tournaments

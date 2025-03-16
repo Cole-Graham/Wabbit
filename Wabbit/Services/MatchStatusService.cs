@@ -25,8 +25,8 @@ namespace Wabbit.Services
             ILogger<MatchStatusService> logger,
             ITournamentMapService mapService)
         {
-            _logger = logger;
-            _mapService = mapService;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _mapService = mapService ?? throw new ArgumentNullException(nameof(mapService));
         }
 
         /// <summary>
@@ -34,7 +34,9 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage?> GetMatchStatusMessageAsync(DiscordChannel channel, DiscordClient client)
         {
-            // If we have a message ID for this channel, try to retrieve it
+            if (channel is null) throw new ArgumentNullException(nameof(channel));
+            if (client is null) throw new ArgumentNullException(nameof(client));
+
             if (_channelToMessageMap.TryGetValue(channel.Id, out ulong messageId))
             {
                 try
@@ -194,11 +196,12 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage> InitializeMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
+            if (channel is null) throw new ArgumentNullException(nameof(channel));
+            if (round is null) throw new ArgumentNullException(nameof(round));
+            if (client is null) throw new ArgumentNullException(nameof(client));
+
             // Remove any existing message mapping for this channel
-            if (_channelToMessageMap.ContainsKey(channel.Id))
-            {
-                _channelToMessageMap.Remove(channel.Id);
-            }
+            _channelToMessageMap.Remove(channel.Id);
 
             // Clear any existing status message ID
             round.StatusMessageId = null;
@@ -221,11 +224,12 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage> CreateNewMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
-            // Remove any existing message mapping for this channel to ensure we create a new one
-            if (_channelToMessageMap.ContainsKey(channel.Id))
-            {
-                _channelToMessageMap.Remove(channel.Id);
-            }
+            if (channel is null) throw new ArgumentNullException(nameof(channel));
+            if (round is null) throw new ArgumentNullException(nameof(round));
+            if (client is null) throw new ArgumentNullException(nameof(client));
+
+            // Remove any existing message mapping for this channel
+            _channelToMessageMap.Remove(channel.Id);
 
             // Clear any existing status message ID
             round.StatusMessageId = null;
@@ -681,7 +685,11 @@ namespace Wabbit.Services
         /// </summary>
         public async Task FinalizeMatchAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
-            if (round is null || round.Teams is null || round.Teams.Count < 2)
+            if (channel is null) throw new ArgumentNullException(nameof(channel));
+            if (round is null) throw new ArgumentNullException(nameof(round));
+            if (client is null) throw new ArgumentNullException(nameof(client));
+
+            if (round.Teams == null || round.Teams.Count < 2)
             {
                 _logger.LogWarning("Cannot finalize match: Invalid round data");
                 return;
@@ -692,10 +700,19 @@ namespace Wabbit.Services
                 await channel.GetMessageAsync(round.StatusMessageId.Value) is not null;
 
             // Calculate final scores
-            int team1Score = round.Teams[0].Wins;
-            int team2Score = round.Teams[1].Wins;
-            string team1Name = round.Teams[0].Name ?? "Team 1";
-            string team2Name = round.Teams[1].Name ?? "Team 2";
+            var team1 = round.Teams[0];
+            var team2 = round.Teams[1];
+
+            if (team1 == null || team2 == null)
+            {
+                _logger.LogWarning("Cannot finalize match: Invalid team data");
+                return;
+            }
+
+            int team1Score = team1.Wins;
+            int team2Score = team2.Wins;
+            string team1Name = team1.Name ?? "Team 1";
+            string team2Name = team2.Name ?? "Team 2";
 
             // Set the match result
             round.MatchResult = $"**{team1Name}** {team1Score} - {team2Score} **{team2Name}**";
@@ -703,19 +720,16 @@ namespace Wabbit.Services
             // Determine winner and award points
             if (team1Score > team2Score)
             {
-                // Team 1 wins
                 round.PointsAwarded = 3;
                 round.WinMsg = $"**{team1Name}** won the match ({team1Score} - {team2Score})";
             }
             else if (team2Score > team1Score)
             {
-                // Team 2 wins
-                round.PointsAwarded = 0; // From perspective of player 1
+                round.PointsAwarded = 0;
                 round.WinMsg = $"**{team2Name}** won the match ({team2Score} - {team1Score})";
             }
             else
             {
-                // Draw
                 round.PointsAwarded = 1;
                 round.WinMsg = $"The match ended in a draw ({team1Score} - {team2Score})";
             }
@@ -886,6 +900,8 @@ namespace Wabbit.Services
         /// </summary>
         private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round, List<string>? cachedMapPool = null)
         {
+            if (round == null) throw new ArgumentNullException(nameof(round));
+
             string matchLength = round.Length switch
             {
                 1 => "Best of 1",
@@ -895,7 +911,7 @@ namespace Wabbit.Services
                 _ => $"Best of {round.Length}"
             };
 
-            var teams = round.Teams?.Select(t => t.Name ?? "Unknown Team").ToList() ?? new List<string> { "Team 1", "Team 2" };
+            var teams = round.Teams?.Select(t => t?.Name ?? "Unknown Team").ToList() ?? new List<string> { "Team 1", "Team 2" };
             string matchTitle = string.Join(" vs ", teams);
 
             // Add group stage information if available

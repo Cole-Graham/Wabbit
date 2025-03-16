@@ -651,7 +651,7 @@ namespace Wabbit.Misc
             // Process tournament data with null checks
             var semifinals = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.Semifinal).ToList() ?? [];
             var finals = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.Final).ToList() ?? [];
-            var tiebreakers = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.ThirdPlaceTiebreaker).ToList() ?? [];
+            var tiebreakers = tournament.PlayoffMatches?.Where(m => m?.Type == TournamentMatchType.PlayoffThirdPlace).ToList() ?? [];
 
             // Draw tiebreakers if any exist
             if (tiebreakers.Any())
@@ -663,8 +663,8 @@ namespace Wabbit.Misc
                 yOffset += 30;
 
                 // Determine layout - arrange in grid if many matches
-                int matchesPerRow = Math.Min(tiebreakers.Count, 2); // Max 2 per row
-                int rowCount = (int)Math.Ceiling(tiebreakers.Count / (double)matchesPerRow);
+                int matchesPerRow = Math.Min(tiebreakers.Count(), 2); // Max 2 per row
+                int rowCount = (int)Math.Ceiling(tiebreakers.Count() / (double)matchesPerRow);
 
                 int matchHeight = 80;
                 int matchWidth = (width - ((matchesPerRow + 1) * Padding)) / matchesPerRow;
@@ -674,7 +674,7 @@ namespace Wabbit.Misc
                     for (int col = 0; col < matchesPerRow; col++)
                     {
                         int index = row * matchesPerRow + col;
-                        if (index >= tiebreakers.Count)
+                        if (index >= tiebreakers.Count())
                             break;
 
                         int xPos = Padding + col * (matchWidth + Padding);

@@ -10,6 +10,9 @@ tournament_state.json
 tournaments.json
 .env
 
+# Development data
+Data/dev/
+
 # terminal output
 nohup.out
 

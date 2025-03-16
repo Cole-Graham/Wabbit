@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
 using Wabbit.Models;
 using Wabbit.Data;
@@ -376,6 +378,41 @@ namespace Wabbit.Services
                 _logger.LogError(ex, "Error validating map bans");
                 return (false, new List<string>(), $"Error validating map bans: {ex.Message}");
             }
+        }
+
+        public List<string> GenerateMapListBo1(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null)
+        {
+            return GenerateMapList(oneVOne, team1Bans, team2Bans, 1);
+        }
+
+        public List<string> GenerateMapListBo3(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null)
+        {
+            return GenerateMapList(oneVOne, team1Bans, team2Bans, 3);
+        }
+
+        public List<string> GenerateMapListBo5(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null)
+        {
+            return GenerateMapList(oneVOne, team1Bans, team2Bans, 5);
+        }
+
+        public (Map? map, DiscordEmbedBuilder embed) GetRandomMapWithVisualization()
+        {
+            var map = Maps.MapCollection?.OrderBy(_ => _random.Next()).FirstOrDefault();
+            var embed = new DiscordEmbedBuilder()
+                .WithTitle(map?.Name ?? "Default Map")
+                .WithDescription("Random map selection");
+            return (map, embed);
+        }
+
+        public Map? GetMapByName(string mapName)
+        {
+            return Maps.MapCollection?.FirstOrDefault(m => m.Name == mapName);
+        }
+
+        public Task<(string? url, byte[]? data)> GetMapThumbnailAsync(string mapName)
+        {
+            // TODO: Implement thumbnail retrieval
+            return Task.FromResult<(string? url, byte[]? data)>((null, null));
         }
     }
 }

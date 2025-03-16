@@ -41,22 +41,19 @@ namespace Wabbit.Services
             ILogger<TournamentMatchService> logger,
             IMatchStatusService matchStatusService)
         {
-            _ongoingRounds = ongoingRounds;
-            _tournamentGameService = tournamentGameService;
-            _playoffService = playoffService;
-            _stateService = stateService;
-            _mapService = mapService;
-            _logger = logger;
-            _matchStatusService = matchStatusService;
+            _ongoingRounds = ongoingRounds ?? throw new ArgumentNullException(nameof(ongoingRounds));
+            _tournamentGameService = tournamentGameService ?? throw new ArgumentNullException(nameof(tournamentGameService));
+            _playoffService = playoffService ?? throw new ArgumentNullException(nameof(playoffService));
+            _stateService = stateService ?? throw new ArgumentNullException(nameof(stateService));
+            _mapService = mapService ?? throw new ArgumentNullException(nameof(mapService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _matchStatusService = matchStatusService ?? throw new ArgumentNullException(nameof(matchStatusService));
         }
 
         /// <inheritdoc/>
         public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
         {
             _logger.LogInformation($"Handling completion of match {match.Name} in tournament {tournament.Name}");
-
-            // This implementation delegates to the TournamentGameService
-            await _tournamentGameService.HandleMatchCompletion(tournament, match, client);
 
             // Save tournament state
             await _stateService.SaveTournamentStateAsync(client);
@@ -73,61 +70,14 @@ namespace Wabbit.Services
             }
 
             // Check if tournament is complete
-        }
+            bool allPlayoffMatchesComplete = tournament.PlayoffMatches.Count > 0 &&
+                tournament.PlayoffMatches.All(m => m.IsComplete);
 
-        /// <inheritdoc/>
-        public async Task StartPlayoffMatches(Tournament tournament, DiscordClient client)
-        {
-            _logger.LogInformation($"Starting playoff matches for tournament {tournament.Name}");
-
-            if (tournament.PlayoffMatches is null || !tournament.PlayoffMatches.Any())
+            if (tournament.CurrentStage == TournamentStage.Playoffs && allPlayoffMatchesComplete)
             {
-                _logger.LogWarning($"No playoff matches to start for tournament {tournament.Name}");
-                return;
-            }
-
-            // Find matches that need players and have all their participants assigned
-            var matchesToStart = tournament.PlayoffMatches
-                .Where(m => !m.IsComplete && m.Participants.Count >= 2 &&
-                            m.Participants.All(p => p.Player is not null))
-                .ToList();
-
-            foreach (var match in matchesToStart)
-            {
-                _logger.LogInformation($"Setting up playoff match: {match.Name}");
-
-                try
-                {
-                    // Get players as DiscordMembers
-                    var participants = match.Participants.Select(p => p.Player).ToList();
-                    if (participants.Count < 2)
-                    {
-                        _logger.LogWarning($"Not enough participants for match {match.Name}");
-                        continue;
-                    }
-
-                    // Ensure we have DiscordMember objects
-                    if (participants[0] is DiscordMember player1 && participants[1] is DiscordMember player2)
-                    {
-                        // Determine match length - finals can be longer
-                        int matchLength = 3; // Default Bo3
-                        if (match.Type == TournamentMatchType.Final)
-                        {
-                            matchLength = 5; // Finals are Bo5 by default
-                        }
-
-                        // Create and start the match
-                        await CreateAndStart1v1Match(tournament, null, player1, player2, client, matchLength, match);
-                    }
-                    else
-                    {
-                        _logger.LogWarning($"Cannot start match - players are not DiscordMember objects");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Error starting playoff match {match.Name}");
-                }
+                tournament.CurrentStage = TournamentStage.Complete;
+                tournament.IsComplete = true;
+                _logger.LogInformation($"Tournament {tournament.Name} is now complete");
             }
         }
 
@@ -138,7 +88,7 @@ namespace Wabbit.Services
             DiscordMember player1,
             DiscordMember player2,
             DiscordClient client,
-            int bestOf = 3,
+            int matchLength,
             Tournament.Match? existingMatch = null)
         {
             try
@@ -147,10 +97,7 @@ namespace Wabbit.Services
 
                 // Validate parameters
                 if (tournament is null)
-                {
-                    _logger.LogError("Tournament cannot be null");
-                    throw new ArgumentNullException(nameof(tournament));
-                }
+                    throw new ArgumentNullException(nameof(tournament), "Tournament cannot be null");
 
                 if (player1 is null || player2 is null)
                 {
@@ -171,8 +118,10 @@ namespace Wabbit.Services
                     match = new Tournament.Match
                     {
                         Name = $"{player1.DisplayName} vs {player2.DisplayName}",
-                        Type = TournamentMatchType.GroupStage,
-                        BestOf = bestOf,
+                        // Set match type based on context
+                        Type = DetermineMatchType(group, existingMatch),
+                        // Group stage is Bo1, playoffs and tiebreakers are Bo3
+                        BestOf = ShouldUseBestOfThree(group, existingMatch) ? 3 : 1,
                         Participants = new List<Tournament.MatchParticipant>
                         {
                             new Tournament.MatchParticipant { Player = player1, SourceGroup = group },
@@ -220,117 +169,59 @@ namespace Wabbit.Services
                     // Try to find any existing threads for either player in this tournament
                     if (tournament is not null)
                     {
-                        // For group stages, reuse player threads when possible
-                        if (match.Type == TournamentMatchType.GroupStage && group is not null)
+                        // Initialize CustomProperties and TeamThreads if they don't exist
+                        tournament.CustomProperties ??= new Dictionary<string, object>();
+                        if (!tournament.CustomProperties.ContainsKey("TeamThreads"))
                         {
-                            // Try to find existing player threads for this tournament
-                            foreach (var existingRound in _ongoingRounds.TourneyRounds)
-                            {
-                                if (existingRound.TournamentId == tournament.Name)
-                                {
-                                    foreach (var team in existingRound.Teams ?? Enumerable.Empty<Round.Team>())
-                                    {
-                                        foreach (var participant in team.Participants ?? Enumerable.Empty<Round.Participant>())
-                                        {
-                                            // Check for player1's thread
-                                            if (player1 is not null && participant?.Player?.Id == player1.Id && team.Thread is not null)
-                                            {
-                                                player1Thread = team.Thread;
-                                                break;
-                                            }
+                            tournament.CustomProperties["TeamThreads"] = new Dictionary<ulong, ulong>();
+                        }
 
-                                            // Check for player2's thread
-                                            if (player2 is not null && participant?.Player?.Id == player2.Id && team.Thread is not null)
-                                            {
-                                                player2Thread = team.Thread;
-                                                break;
-                                            }
-                                        }
+                        var teamThreads = tournament.CustomProperties["TeamThreads"] as Dictionary<ulong, ulong>;
+
+                        // Try to find existing threads for the players
+                        if (teamThreads is not null)
+                        {
+                            if (player1 is not null && teamThreads.ContainsKey(player1.Id))
+                            {
+                                try
+                                {
+                                    var threadChannel = await guild.GetChannelAsync(teamThreads[player1.Id]);
+                                    if (threadChannel is not null)
+                                    {
+                                        player1Thread = threadChannel as DiscordThreadChannel;
                                     }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning($"Could not find thread for player1: {ex.Message}");
                                 }
                             }
 
-                            // Prefer player1's thread for consistency
-                            if (player1Thread is not null)
+                            if (player2 is not null && teamThreads.ContainsKey(player2.Id))
                             {
-                                thread = player1Thread;
-
-                                // Add a visual separator if reusing a thread for a new match in group stage
-                                if (match.Type == TournamentMatchType.GroupStage)
+                                try
                                 {
-                                    // Calculate match information for the separator
-                                    int matchesPlayed = 0;
-                                    int totalMatches = 0;
-
-                                    if (group is not null && player1 is not null)
+                                    var threadChannel = await guild.GetChannelAsync(teamThreads[player2.Id]);
+                                    if (threadChannel is not null)
                                     {
-                                        // Get the group stage info for display
-                                        int groupSize = group.Participants?.Count ?? 0;
-                                        totalMatches = Math.Max(0, groupSize - 1); // Each player plays against every other player once
-
-                                        // Count matches player1 has already played
-                                        matchesPlayed = group.Matches?.Count(m =>
-                                            m?.Participants?.Any(p => p?.Player is DiscordMember member && member.Id == player1.Id) == true &&
-                                            m != match && m.IsComplete) ?? 0;
-                                    }
-
-                                    try
-                                    {
-                                        // Add a visual separator before starting the new match
-                                        await _matchStatusService.AddMatchSeparatorAsync(
-                                            thread,
-                                            client,
-                                            matchesPlayed + 1,
-                                            totalMatches,
-                                            player2?.DisplayName ?? "Unknown Player"
-                                        );
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogWarning(ex, "Could not add match separator");
+                                        player2Thread = threadChannel as DiscordThreadChannel;
                                     }
                                 }
-                            }
-                            else if (player2Thread is not null)
-                            {
-                                thread = player2Thread;
-
-                                // Add a visual separator if reusing a thread for a new match in group stage
-                                if (match.Type == TournamentMatchType.GroupStage)
+                                catch (Exception ex)
                                 {
-                                    // Calculate match information for the separator
-                                    int matchesPlayed = 0;
-                                    int totalMatches = 0;
-
-                                    if (group is not null && player2 is not null)
-                                    {
-                                        // Get the group stage info for display
-                                        int groupSize = group.Participants?.Count ?? 0;
-                                        totalMatches = Math.Max(0, groupSize - 1); // Each player plays against every other player once
-
-                                        // Count matches player2 has already played
-                                        matchesPlayed = group.Matches?.Count(m =>
-                                            m?.Participants?.Any(p => p?.Player is DiscordMember member && member.Id == player2.Id) == true &&
-                                            m != match && m.IsComplete) ?? 0;
-                                    }
-
-                                    try
-                                    {
-                                        // Add a visual separator before starting the new match
-                                        await _matchStatusService.AddMatchSeparatorAsync(
-                                            thread,
-                                            client,
-                                            matchesPlayed + 1,
-                                            totalMatches,
-                                            player1?.DisplayName ?? "Unknown Player"
-                                        );
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogWarning(ex, "Could not add match separator");
-                                    }
+                                    _logger.LogWarning($"Could not find thread for player2: {ex.Message}");
                                 }
                             }
+                        }
+
+                        // Prefer player1's thread for consistency
+                        if (player1Thread is not null)
+                        {
+                            thread = player1Thread;
+                        }
+                        else if (player2Thread is not null)
+                        {
+                            thread = player2Thread;
                         }
                     }
 
@@ -373,6 +264,21 @@ namespace Wabbit.Services
                                 DSharpPlus.Entities.DiscordAutoArchiveDuration.Week,
                                 DSharpPlus.Entities.DiscordChannelType.PrivateThread,
                                 "Tournament match thread");
+
+                            // Store the new thread ID in TeamThreads
+                            if (tournament is not null && thread is not null)
+                            {
+                                tournament.CustomProperties ??= new Dictionary<string, object>();
+                                tournament.CustomProperties["TeamThreads"] ??= new Dictionary<ulong, ulong>();
+                                var teamThreads = tournament.CustomProperties["TeamThreads"] as Dictionary<ulong, ulong>;
+                                if (teamThreads is not null)
+                                {
+                                    if (player1 is not null && !teamThreads.ContainsKey(player1.Id))
+                                    {
+                                        teamThreads[player1.Id] = thread.Id;
+                                    }
+                                }
+                            }
                         }
                         else
                         {
@@ -389,7 +295,7 @@ namespace Wabbit.Services
                 var round = new Round
                 {
                     Name = match.Name,
-                    Length = bestOf,
+                    Length = matchLength,
                     OneVOne = true,
                     Teams = new List<Round.Team>(),
                     TournamentId = tournament?.Name, // Use null conditional operator to avoid null reference
@@ -484,7 +390,7 @@ namespace Wabbit.Services
                     round.CustomProperties["Player1Wins"] = 0;
                     round.CustomProperties["Player2Wins"] = 0;
                     round.CustomProperties["Draws"] = 0;
-                    round.CustomProperties["MatchLength"] = bestOf;
+                    round.CustomProperties["MatchLength"] = matchLength;
                     round.CustomProperties["Player1Id"] = player1?.Id ?? 0;
                     round.CustomProperties["Player2Id"] = player2?.Id ?? 0;
                 }
@@ -526,31 +432,9 @@ namespace Wabbit.Services
 
                             if (round is not null)
                             {
-                                // Determine if this is a new match in an existing thread
-                                bool isReusingThread = false;
-                                if (round.TournamentRound && round.GroupStageMatchNumber > 0)
-                                {
-                                    // Check if we have previous matches in this thread
-                                    var previousMatches = _ongoingRounds.TourneyRounds
-                                        .Where(r => r != round &&
-                                                r.Teams?.Any(t => t.Thread?.Id == threadChannel.Id) == true)
-                                        .ToList();
-
-                                    isReusingThread = previousMatches.Any();
-                                }
-
-                                // If we're reusing a thread, create a new status message
-                                // Otherwise, update the existing one
-                                if (isReusingThread)
-                                {
-                                    // Create a fresh match status with transition context
-                                    await _matchStatusService.CreateNewMatchStatusAsync(threadChannel, round, client);
-                                }
-                                else
-                                {
-                                    // Create the base match status (first match in this thread)
-                                    await _matchStatusService.UpdateMatchStatusAsync(threadChannel, round, client);
-                                }
+                                // Always create a new match status for each match
+                                // This preserves match history in the thread
+                                await _matchStatusService.CreateNewMatchStatusAsync(threadChannel, round, client);
 
                                 // Set initial stage to map banning
                                 await _matchStatusService.UpdateToMapBanStageAsync(threadChannel, round, client);
@@ -562,8 +446,6 @@ namespace Wabbit.Services
                         {
                             _logger.LogError(ex, $"Failed to initialize match status for thread {threadChannel.Id}");
                         }
-
-                        // Don't send duplicate map ban dropdown - it's already included in the match status
                     }
                     catch (Exception ex)
                     {
@@ -591,7 +473,7 @@ namespace Wabbit.Services
                     tournament.Groups?.All(g => g.IsComplete) == true)
                 {
                     // Delegate to PlayoffService to set up the playoffs
-                    _playoffService.SetupPlayoffs(tournament);
+                    await _playoffService.SetupPlayoffsAsync(tournament, client);
 
                     // Update tournament visualization
                     if (tournament.AnnouncementChannel is not null)
@@ -612,13 +494,40 @@ namespace Wabbit.Services
             }
         }
 
+        /// <summary>
+        /// Determines the match type based on context
+        /// </summary>
+        private TournamentMatchType DetermineMatchType(Tournament.Group? group, Tournament.Match? existingMatch)
+        {
+            if (existingMatch?.IsTiebreakerMatch == true)
+            {
+                return TournamentMatchType.GroupStageTiebreaker;
+            }
+            return group is not null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal;
+        }
+
+        /// <summary>
+        /// Determines if the match should use Best-of-3 format
+        /// </summary>
+        private bool ShouldUseBestOfThree(Tournament.Group? group, Tournament.Match? existingMatch)
+        {
+            // Tiebreaker matches are always Bo3
+            if (existingMatch?.IsTiebreakerMatch == true)
+            {
+                return true;
+            }
+
+            // Group stage matches are Bo1, playoffs are Bo3
+            return group is null || existingMatch?.Type == TournamentMatchType.GroupStageTiebreaker;
+        }
+
         /// <inheritdoc/>
         public async Task SetupPlayoffStage(Tournament tournament, DiscordClient client)
         {
             _logger.LogInformation($"Setting up playoff stage for tournament {tournament.Name}");
 
             // Delegate playoff setup to the specialized playoff service
-            _playoffService.SetupPlayoffs(tournament);
+            await _playoffService.SetupPlayoffsAsync(tournament, client);
 
             // Post updated visualization through appropriate service
             // This could be an ITournamentVisualizationService or similar
@@ -630,7 +539,7 @@ namespace Wabbit.Services
             // Start the playoff matches
             if (tournament.CurrentStage == TournamentStage.Playoffs)
             {
-                await StartPlayoffMatches(tournament, client);
+                await _playoffService.StartPlayoffMatchesAsync(tournament, client);
             }
         }
 
@@ -765,11 +674,12 @@ namespace Wabbit.Services
         {
             try
             {
-                if (tournament is null || match is null || winner is null)
-                {
-                    _logger.LogError("Cannot update match result: tournament, match, or winner is null");
-                    return;
-                }
+                if (tournament is null)
+                    throw new ArgumentNullException(nameof(tournament), "Tournament cannot be null");
+                if (match is null)
+                    throw new ArgumentNullException(nameof(match), "Match cannot be null");
+                if (winner is null)
+                    throw new ArgumentNullException(nameof(winner), "Winner cannot be null");
 
                 _logger.LogInformation($"Updating match result for {match.Name} in tournament {tournament.Name}");
 
@@ -795,15 +705,15 @@ namespace Wabbit.Services
             int winnerScore,
             int loserScore)
         {
-            // Verify required objects are not null
-            if (tournament is null || match is null || winner is null)
-            {
-                _logger.LogError("Cannot update match result: tournament, match, or winner is null");
-                return;
-            }
+            if (tournament is null)
+                throw new ArgumentNullException(nameof(tournament), "Tournament cannot be null");
+            if (match is null)
+                throw new ArgumentNullException(nameof(match), "Match cannot be null");
+            if (winner is null)
+                throw new ArgumentNullException(nameof(winner), "Winner cannot be null");
 
             // Check if participants collection exists
-            if (match.Participants is null)
+            if (match.Participants == null)
             {
                 _logger.LogError("Cannot update match result: match participants collection is null");
                 return;
@@ -816,7 +726,7 @@ namespace Wabbit.Services
             var loserParticipant = match.Participants.FirstOrDefault(p =>
                 p?.Player is DiscordMember member && member.Id != winner.Id);
 
-            if (winnerParticipant is null || loserParticipant is null)
+            if (winnerParticipant == null || loserParticipant == null)
             {
                 _logger.LogError("Could not find winner or loser participants in match");
                 return;
@@ -826,48 +736,14 @@ namespace Wabbit.Services
             winnerParticipant.Score = winnerScore;
             loserParticipant.Score = loserScore;
 
-            // Set winner flag
-            winnerParticipant.IsWinner = true;
-            loserParticipant.IsWinner = false;
+            // Create or update result
+            match.Result ??= new Tournament.MatchResult();
+            match.Result.Winner = winner;
+            match.Result.WinnerScore = winnerScore;
+            match.Result.LoserScore = loserScore;
+            match.Result.CompletedAt = DateTime.Now;
 
-            // Create result if it doesn't exist
-            if (match.Result is null)
-            {
-                match.Result = new Tournament.MatchResult
-                {
-                    CompletedAt = DateTime.Now,
-                    Winner = winner
-                };
-            }
-            else
-            {
-                match.Result.Winner = winner;
-            }
-
-            // Mark match as complete
-            // For the IsComplete property, we need to examine the Tournament.Match class
-            // Since it's read-only, we might need a different approach
-            try
-            {
-                // Option 1: Check if the class has a SetComplete method
-                var setCompleteMethod = match.GetType().GetMethod("SetComplete", BindingFlags.Public | BindingFlags.Instance);
-                if (setCompleteMethod != null)
-                {
-                    setCompleteMethod.Invoke(match, null);
-                }
-                else
-                {
-                    // Option 2: Check if there's another way to mark it complete
-                    // Check if setting Result is enough to mark it complete automatically
-                    _logger.LogInformation($"Match {match.Name} marked as complete through result assignment");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Cannot mark match {match.Name} as complete: {ex.Message}");
-            }
-
-            // Update stats for group participants if this is a group stage match
+            // Update group stats if this is a group stage match
             if (match.Type == TournamentMatchType.GroupStage)
             {
                 UpdateGroupStats(match, winnerParticipant, loserParticipant);
@@ -875,31 +751,29 @@ namespace Wabbit.Services
 
             // Check for group completion
             if (match.Type == TournamentMatchType.GroupStage &&
-                winnerParticipant.SourceGroup is not null)
+                winnerParticipant.SourceGroup != null)
             {
                 var group = winnerParticipant.SourceGroup;
 
-                if (group.Matches is null)
+                if (group.Matches == null)
                 {
                     _logger.LogWarning($"Cannot check group completion: matches list is null for group {group.Name}");
                 }
                 else
                 {
                     // Check if all matches in the group are complete
-                    bool allMatchesComplete = group.Matches.All(m => m is not null && m.IsComplete);
+                    bool allMatchesComplete = group.Matches.All(m => m != null && m.Result != null);
 
                     if (allMatchesComplete)
                     {
                         group.IsComplete = true;
-
-                        // Sort participants by points
                         SortGroupParticipants(group);
                     }
                 }
             }
 
             // Update next match if this is part of a bracket
-            if (match.NextMatch is not null && match.Result?.Winner is not null)
+            if (match.NextMatch != null && match.Result?.Winner != null)
             {
                 UpdateNextMatch(tournament, match);
             }
@@ -913,208 +787,112 @@ namespace Wabbit.Services
             Tournament.MatchParticipant winnerParticipant,
             Tournament.MatchParticipant loserParticipant)
         {
-            if (match is null || winnerParticipant is null || loserParticipant is null)
-            {
-                _logger.LogWarning("Cannot update group stats: match or participants are null");
-                return;
-            }
+            if (match is null)
+                throw new ArgumentNullException(nameof(match));
+            if (winnerParticipant is null)
+                throw new ArgumentNullException(nameof(winnerParticipant));
+            if (loserParticipant is null)
+                throw new ArgumentNullException(nameof(loserParticipant));
 
             _logger.LogInformation($"Updating group stats for match {match.Name}");
 
             // Find participants in their respective groups
-            if (winnerParticipant.SourceGroup?.Participants is null ||
-                loserParticipant.SourceGroup?.Participants is null)
+            if (winnerParticipant.SourceGroup?.Participants == null ||
+                loserParticipant.SourceGroup?.Participants == null)
             {
                 _logger.LogWarning("Cannot update group stats: source groups or their participant lists are null");
                 return;
             }
 
-            // Find the group participants that match these players
-            var winnerInGroup = winnerParticipant.SourceGroup.Participants.FirstOrDefault(
-                p => p is not null && ComparePlayerIds(p.Player, winnerParticipant.Player));
+            var winnerInGroup = winnerParticipant.SourceGroup.Participants.FirstOrDefault(p =>
+                p?.Player is DiscordMember member &&
+                member.Id == (winnerParticipant.Player as DiscordMember)?.Id);
 
-            var loserInGroup = loserParticipant.SourceGroup.Participants.FirstOrDefault(
-                p => p is not null && ComparePlayerIds(p.Player, loserParticipant.Player));
+            var loserInGroup = loserParticipant.SourceGroup.Participants.FirstOrDefault(p =>
+                p?.Player is DiscordMember member &&
+                member.Id == (loserParticipant.Player as DiscordMember)?.Id);
 
-            if (winnerInGroup is null || loserInGroup is null)
+            if (winnerInGroup == null || loserInGroup == null)
             {
-                _logger.LogWarning("Could not find one or both participants in their groups");
+                _logger.LogError("Could not find participants in their groups");
                 return;
             }
 
-            // Update win/loss records
+            // Update stats
             winnerInGroup.Wins++;
             loserInGroup.Losses++;
-
-            // Update game scores
-            winnerInGroup.GamesWon += winnerParticipant.Score;
-            winnerInGroup.GamesLost += loserParticipant.Score;
-            loserInGroup.GamesWon += loserParticipant.Score;
-            loserInGroup.GamesLost += winnerParticipant.Score;
-
-            _logger.LogInformation($"Updated group stats: {GetPlayerName(winnerInGroup.Player)} now {winnerInGroup.Wins}W-{winnerInGroup.Losses}L");
+            winnerInGroup.GamesWon += match.Result?.WinnerScore ?? 0;
+            loserInGroup.GamesWon += match.Result?.LoserScore ?? 0;
+            winnerInGroup.GamesLost += match.Result?.LoserScore ?? 0;
+            loserInGroup.GamesLost += match.Result?.WinnerScore ?? 0;
         }
 
         /// <summary>
         /// Sorts participants in a group by their points and game differential
         /// </summary>
-        private void SortGroupParticipants(Tournament.Group? group)
+        private void SortGroupParticipants(Tournament.Group group)
         {
             if (group is null)
+                throw new ArgumentNullException(nameof(group));
+            if (group.Participants == null)
             {
-                _logger.LogWarning("Cannot sort participants: group is null");
+                _logger.LogWarning($"Cannot sort participants: participant list is null for group {group.Name}");
                 return;
             }
 
-            if (group.Participants is null)
-            {
-                _logger.LogWarning($"Cannot sort participants: group {group.Name} has null participants list");
-                return;
-            }
-
-            // Sort by points (3 for win, 1 for draw) then by game differential
             group.Participants = group.Participants
-                .Where(p => p is not null) // Filter out potential null participants
-                .OrderByDescending(p => p.Wins * 3 + p.Draws)
-                .ThenByDescending(p => p.GamesWon - p.GamesLost)
+                .OrderByDescending(p => p?.Points ?? 0)
+                .ThenByDescending(p => p?.GamesWon ?? 0)
+                .ThenByDescending(p => (p?.GamesWon ?? 0) - (p?.GamesLost ?? 0))
                 .ToList();
 
-            _logger.LogInformation($"Sorted participants in group {group.Name}");
+            // Update positions
+            for (int i = 0; i < group.Participants.Count; i++)
+            {
+                if (group.Participants[i] != null)
+                {
+                    group.Participants[i].Position = i + 1;
+                }
+            }
         }
 
         /// <summary>
         /// Updates the next match in a bracket with the winner of this match
         /// </summary>
-        private void UpdateNextMatch(Tournament? tournament, Tournament.Match? match)
+        private void UpdateNextMatch(Tournament tournament, Tournament.Match match)
         {
-            if (tournament is null || match is null)
+            if (tournament is null)
+                throw new ArgumentNullException(nameof(tournament));
+            if (match is null)
+                throw new ArgumentNullException(nameof(match));
+            if (match.NextMatch == null)
             {
-                _logger.LogWarning("Cannot update next match: tournament or match is null");
+                _logger.LogWarning($"Cannot update next match: no next match defined for {match.Name}");
+                return;
+            }
+            if (match.Result?.Winner == null)
+            {
+                _logger.LogWarning($"Cannot update next match: no winner defined for {match.Name}");
                 return;
             }
 
-            if (match.NextMatch is null || match.Result?.Winner is null)
+            var nextMatch = match.NextMatch;
+            var winner = match.Result.Winner;
+
+            // Find the slot in the next match where this winner should go
+            var slot = nextMatch.Participants?.FirstOrDefault(p => p?.SourceMatch == match);
+            if (slot == null)
             {
+                _logger.LogError($"Could not find slot in next match {nextMatch.Name} for winner of {match.Name}");
                 return;
             }
 
-            _logger.LogInformation($"Updating next match after {match.Name}");
+            // Update the slot with the winner
+            slot.Player = winner;
+            slot.SourceMatch = match;
+            slot.Score = 0; // Reset score for new match
 
-            // Check if match.NextMatch.Participants is null or empty
-            if (match.NextMatch.Participants is null || match.NextMatch.Participants.Count == 0)
-            {
-                _logger.LogWarning($"Cannot update next match: participants list is null or empty in next match");
-                return;
-            }
-
-            // Check if the Tournament.Match class has NextMatchPlayerSlot property
-            // If not, we need a different approach to determine the player slot
-            try
-            {
-                // Try to get the slot property if it exists
-                var slotProperty = match.GetType().GetProperty("NextMatchPlayerSlot");
-
-                if (slotProperty is not null)
-                {
-                    var propertyValue = slotProperty.GetValue(match);
-                    if (propertyValue is not null)
-                    {
-                        // Safely cast to int, with a fallback of 0 if cast fails
-                        int slot;
-                        try
-                        {
-                            slot = Convert.ToInt32(propertyValue);
-                        }
-                        catch
-                        {
-                            _logger.LogWarning("NextMatchPlayerSlot value could not be converted to int, using default slot 0");
-                            slot = 0;
-                        }
-
-                        // Ensure the slot is valid
-                        if (slot >= 0 && slot < match.NextMatch.Participants.Count)
-                        {
-                            var participant = match.NextMatch.Participants[slot];
-                            if (participant is not null)
-                            {
-                                // Set the player in the appropriate slot
-                                participant.Player = match.Result.Winner;
-                                _logger.LogInformation($"Updated player slot {slot} in next match with {GetPlayerName(match.Result.Winner)}");
-                            }
-                            else
-                            {
-                                _logger.LogWarning($"Participant at slot {slot} is null in next match");
-                            }
-                        }
-                        else
-                        {
-                            _logger.LogWarning($"Invalid slot index {slot} for next match with {match.NextMatch.Participants.Count} participants");
-                        }
-                    }
-                }
-                else
-                {
-                    // Fallback: Assume the slot is 0 or try to determine it by other means
-                    _logger.LogWarning("NextMatchPlayerSlot property not found, using default slot 0");
-
-                    if (match.NextMatch.Participants.Count > 0)
-                    {
-                        var participant = match.NextMatch.Participants[0];
-                        if (participant is not null)
-                        {
-                            participant.Player = match.Result.Winner;
-                            _logger.LogInformation($"Updated player slot 0 in next match with {GetPlayerName(match.Result.Winner)}");
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Participant at slot 0 is null in next match");
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Cannot update next match: no participants in the next match");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error updating next match: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Compares player IDs to determine if they are the same player
-        /// </summary>
-        private bool ComparePlayerIds(object? player1, object? player2)
-        {
-            if (player1 is null || player2 is null)
-                return false;
-
-            // If both are DiscordMember, compare IDs
-            if (player1 is DiscordMember member1 && player2 is DiscordMember member2)
-            {
-                return member1.Id == member2.Id;
-            }
-
-            // Otherwise compare by ToString or another method
-            return player1.ToString() == player2.ToString();
-        }
-
-        /// <summary>
-        /// Gets a player's name for display purposes
-        /// </summary>
-        private string GetPlayerName(object? player)
-        {
-            if (player is null)
-                return "Unknown";
-
-            if (player is DiscordMember member)
-                return member.DisplayName ?? member.Username ?? "Unknown Member";
-
-            if (player is DiscordUser user)
-                return user.Username ?? "Unknown User";
-
-            return player.ToString() ?? "Unknown";
+            _logger.LogInformation($"Updated next match {nextMatch.Name} with winner {(winner as DiscordMember)?.Username ?? "Unknown"} from {match.Name}");
         }
 
         /// <summary>
@@ -1271,6 +1049,55 @@ namespace Wabbit.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling deck submission");
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task ArchiveMatchThreadsAsync(
+            Tournament.Match match,
+            DiscordClient client,
+            TimeSpan? archiveDuration = null)
+        {
+            try
+            {
+                _logger.LogInformation($"Archiving threads for match {match.Name}");
+
+                // Convert TimeSpan to DiscordAutoArchiveDuration
+                var archiveDurationEnum = archiveDuration?.TotalMinutes switch
+                {
+                    <= 60 => DiscordAutoArchiveDuration.Hour,
+                    <= 1440 => DiscordAutoArchiveDuration.Day,
+                    <= 10080 => DiscordAutoArchiveDuration.Week,
+                    _ => DiscordAutoArchiveDuration.Week // Default to a week for longer durations
+                };
+
+                // Find and archive team threads
+                if (match.LinkedRound?.Teams != null)
+                {
+                    foreach (var team in match.LinkedRound.Teams)
+                    {
+                        try
+                        {
+                            if (team.Thread is not null)
+                            {
+                                await team.Thread.ModifyAsync(props =>
+                                {
+                                    props.Locked = true;
+                                    props.AutoArchiveDuration = archiveDurationEnum;
+                                });
+                                _logger.LogInformation($"Archived team thread {team.Thread.Name}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Error archiving team thread: {ex.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error archiving match threads: {ex.Message}");
             }
         }
 

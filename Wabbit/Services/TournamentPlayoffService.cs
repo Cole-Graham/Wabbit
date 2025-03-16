@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.Logging;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using System.Threading.Tasks;
+using Wabbit.Services.ServiceHelpers;
 
 namespace Wabbit.Services
 {
@@ -16,18 +18,35 @@ namespace Wabbit.Services
     {
         private readonly ILogger<TournamentPlayoffService> _logger;
         private readonly ITournamentGroupService _groupService;
+        private readonly ITournamentStateValidator _stateValidator;
+        private readonly ITournamentBracketManager _bracketManager;
 
         /// <summary>
         /// Constructor with required dependencies
         /// </summary>
         /// <param name="groupService">Service for accessing group data</param>
         /// <param name="logger">Logger for logging events</param>
+        /// <param name="stateValidator">Service for validating tournament state transitions</param>
+        /// <param name="bracketManager">Service for managing tournament brackets</param>
         public TournamentPlayoffService(
             ITournamentGroupService groupService,
-            ILogger<TournamentPlayoffService> logger)
+            ILogger<TournamentPlayoffService> logger,
+            ITournamentStateValidator stateValidator,
+            ITournamentBracketManager bracketManager)
         {
             _groupService = groupService;
             _logger = logger;
+            _stateValidator = stateValidator;
+            _bracketManager = bracketManager;
+        }
+
+        /// <summary>
+        /// Implements the async interface method by wrapping the synchronous implementation
+        /// </summary>
+        public Task SetupPlayoffsAsync(Tournament tournament, DiscordClient client)
+        {
+            SetupPlayoffs(tournament);
+            return Task.CompletedTask;
         }
 
         /// <summary>
@@ -50,35 +69,30 @@ namespace Wabbit.Services
 
             _logger.LogInformation($"Advancement criteria: {groupWinners} group winners + {bestThirdPlace} best third-place");
 
+            // Validate state transition
+            if (!_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
+            {
+                _logger.LogWarning($"Invalid state transition from {tournament.CurrentStage} to Playoffs for tournament {tournament.Name}");
+                return;
+            }
+
             // Mark the tournament as being in the playoff stage
             tournament.CurrentStage = TournamentStage.Playoffs;
 
             // Clear existing playoff matches
             tournament.PlayoffMatches.Clear();
 
-            // Calculate total playoff participants
-            int playoffParticipants = (groupWinners * groupCount) + bestThirdPlace;
-
-            // Determine bracket size (next power of 2)
-            int bracketSize = 1;
-            while (bracketSize < playoffParticipants)
-            {
-                bracketSize *= 2;
-            }
-
-            _logger.LogInformation($"Creating playoff bracket with size {bracketSize}");
-
             try
             {
                 // Get qualified participants
                 var qualifiedParticipants = GetQualifiedParticipants(tournament, groupWinners, bestThirdPlace);
 
-                // Create the playoff bracket
-                List<Tournament.Match> roundMatches = CreateFirstRoundMatches(qualifiedParticipants, bracketSize, tournament);
-                tournament.PlayoffMatches.AddRange(roundMatches);
+                // Create the playoff bracket using the bracket manager
+                var matches = _bracketManager.CreatePlayoffBracket(tournament, qualifiedParticipants);
+                tournament.PlayoffMatches.AddRange(matches);
 
-                // Create the rest of the bracket
-                CreateSubsequentRounds(tournament, roundMatches, bracketSize);
+                // Link the matches in the bracket
+                _bracketManager.LinkBracketMatches(tournament, matches);
 
                 // Create third place match if tournament settings require it
                 if (tournament.Settings?.IncludeThirdPlaceMatch == true)
@@ -91,7 +105,7 @@ namespace Wabbit.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error setting up playoffs for tournament {TournamentName}", tournament.Name);
-                throw; // Re-throw after logging to allow caller to handle the exception
+                throw;
             }
         }
 
@@ -110,174 +124,67 @@ namespace Wabbit.Services
 
                 _logger.LogInformation($"Updating bracket advancement for match {match.Name} in tournament {tournament.Name}");
 
-                // Verify the match has a result and a winner
-                if (match.Result == null || match.Result.Winner == null)
+                // Use the bracket manager to handle advancement
+                bool success = _bracketManager.UpdateBracketAdvancement(tournament, match);
+
+                // Handle third place match advancement if this is a semifinal
+                if (success && match.ThirdPlaceMatch != null)
                 {
-                    _logger.LogWarning("Cannot update bracket: match has no result or winner");
-                    return false;
+                    HandleThirdPlaceAdvancement(tournament, match);
                 }
 
-                // Find the winning participant by checking ID based on player type
-                var winningParticipant = match.Participants.FirstOrDefault(p =>
-                {
-                    if (p.Player == null) return false;
-
-                    // Handle different player types
-                    if (p.Player is DiscordUser discordUser && match.Result.Winner is DiscordUser winner1)
-                    {
-                        return discordUser.Id == winner1.Id;
-                    }
-                    else if (p.Player is DiscordMember discordMember && match.Result.Winner is DiscordMember winner2)
-                    {
-                        return discordMember.Id == winner2.Id;
-                    }
-                    else if (p.Player is DiscordUser playerUser && match.Result.Winner is DiscordMember winner3)
-                    {
-                        return playerUser.Id == winner3.Id;
-                    }
-                    else if (p.Player is DiscordMember playerMember && match.Result.Winner is DiscordUser winner4)
-                    {
-                        return playerMember.Id == winner4.Id;
-                    }
-
-                    // Fallback to regular equality check
-                    return p.Player.Equals(match.Result.Winner);
-                });
-
-                if (winningParticipant == null)
-                {
-                    _logger.LogWarning("Cannot update bracket: winning participant not found in match");
-                    return false;
-                }
-
-                // Mark the participant as winner
-                winningParticipant.IsWinner = true;
-
-                // Get the next match
-                var nextMatch = match.NextMatch;
-                if (nextMatch == null)
-                {
-                    _logger.LogInformation("Match is final, no next match to update");
-                    return true; // Final match, no advancement needed
-                }
-
-                // Find the index of this match in the previous matches leading to nextMatch
-                // This determines which slot in nextMatch to fill
-                var prevMatches = tournament.PlayoffMatches
-                    .Where(m => m.NextMatch == nextMatch)
-                    .ToList();
-
-                int matchIndex = prevMatches.IndexOf(match);
-                if (matchIndex == -1)
-                {
-                    _logger.LogWarning("Cannot update bracket: match not found in previous matches leading to next match");
-                    return false;
-                }
-
-                // Advance the winner to the next match
-                int nextMatchSlot = matchIndex % 2; // 0 for first slot, 1 for second slot
-                nextMatch.Participants[nextMatchSlot] = new Tournament.MatchParticipant
-                {
-                    Player = match.Result.Winner,
-                    SourceMatch = match
-                };
-
-                // Update the next match name if both participants are known
-                if (nextMatch.Participants[0]?.Player != null && nextMatch.Participants[1]?.Player != null)
-                {
-                    nextMatch.Name = $"{_groupService.GetPlayerDisplayName(nextMatch.Participants[0].Player)} vs {_groupService.GetPlayerDisplayName(nextMatch.Participants[1].Player)}";
-                }
-                else if (nextMatch.Participants[0]?.Player != null)
-                {
-                    nextMatch.Name = $"{_groupService.GetPlayerDisplayName(nextMatch.Participants[0].Player)} vs TBD";
-                }
-                else if (nextMatch.Participants[1]?.Player != null)
-                {
-                    nextMatch.Name = $"TBD vs {_groupService.GetPlayerDisplayName(nextMatch.Participants[1].Player)}";
-                }
-
-                // Check if this is a semifinal match (match has a ThirdPlaceMatch property set)
-                // If so, we need to advance the loser to the third place match
-                if (match.ThirdPlaceMatch != null)
-                {
-                    _logger.LogInformation($"Advancing loser to third place match for semifinal {match.Name}");
-
-                    // Find the losing participant
-                    var losingParticipant = match.Participants.FirstOrDefault(p =>
-                    {
-                        if (p.Player == null) return false;
-                        if (p == winningParticipant) return false;
-
-                        // Handle different player types
-                        if (p.Player is DiscordUser discordUser && match.Result.Winner is DiscordUser winnerA)
-                        {
-                            return discordUser.Id != winnerA.Id;
-                        }
-                        else if (p.Player is DiscordMember discordMember && match.Result.Winner is DiscordMember winnerB)
-                        {
-                            return discordMember.Id != winnerB.Id;
-                        }
-                        else if (p.Player is DiscordUser playerUser && match.Result.Winner is DiscordMember winnerC)
-                        {
-                            return playerUser.Id != winnerC.Id;
-                        }
-                        else if (p.Player is DiscordMember playerMember && match.Result.Winner is DiscordUser winnerD)
-                        {
-                            return playerMember.Id != winnerD.Id;
-                        }
-
-                        // Fallback to regular equality check
-                        return !p.Player.Equals(match.Result.Winner);
-                    });
-
-                    if (losingParticipant != null)
-                    {
-                        // Determine which slot in third place match to fill
-                        // First semifinal loser goes to slot 0, second to slot 1
-                        int thirdPlaceSlot = prevMatches.IndexOf(match);
-                        if (thirdPlaceSlot >= 0 && thirdPlaceSlot < 2)
-                        {
-                            match.ThirdPlaceMatch.Participants[thirdPlaceSlot] = new Tournament.MatchParticipant
-                            {
-                                Player = losingParticipant.Player,
-                                SourceMatch = match
-                            };
-
-                            // Update third place match name if both participants known
-                            if (match.ThirdPlaceMatch.Participants[0]?.Player != null && match.ThirdPlaceMatch.Participants[1]?.Player != null)
-                            {
-                                match.ThirdPlaceMatch.Name = $"{_groupService.GetPlayerDisplayName(match.ThirdPlaceMatch.Participants[0].Player)} vs {_groupService.GetPlayerDisplayName(match.ThirdPlaceMatch.Participants[1].Player)}";
-                            }
-                            else if (match.ThirdPlaceMatch.Participants[0]?.Player != null)
-                            {
-                                match.ThirdPlaceMatch.Name = $"{_groupService.GetPlayerDisplayName(match.ThirdPlaceMatch.Participants[0].Player)} vs TBD";
-                            }
-                            else if (match.ThirdPlaceMatch.Participants[1]?.Player != null)
-                            {
-                                match.ThirdPlaceMatch.Name = $"TBD vs {_groupService.GetPlayerDisplayName(match.ThirdPlaceMatch.Participants[1].Player)}";
-                            }
-
-                            _logger.LogInformation($"Successfully updated third place match with loser {_groupService.GetPlayerDisplayName(losingParticipant.Player)}");
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Cannot determine third place match slot for semifinal loser");
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Cannot find losing participant in semifinal match");
-                    }
-                }
-
-                _logger.LogInformation($"Successfully updated bracket advancement for match {match.Name}");
-                return true;
+                return success;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error updating bracket advancement for match {MatchName} in tournament {TournamentName}",
-                    match?.Name ?? "unknown", tournament?.Name ?? "unknown");
+                _logger.LogError(ex, $"Error updating bracket advancement for match {match.Id}");
                 return false;
+            }
+        }
+
+        private void HandleThirdPlaceAdvancement(Tournament tournament, Tournament.Match semifinalMatch)
+        {
+            if (semifinalMatch.Result?.Winner == null) return;
+
+            // Find the losing participant
+            var losingParticipant = semifinalMatch.Participants.FirstOrDefault(p =>
+                (p.Player as DiscordUser)?.Id != (semifinalMatch.Result.Winner as DiscordUser)?.Id);
+
+            if (losingParticipant == null) return;
+
+            // Find the slot in the third place match
+            var semifinals = tournament.PlayoffMatches
+                .Where(m => m.Type == TournamentMatchType.Semifinal)
+                .OrderBy(m => m.DisplayPosition)
+                .ToList();
+
+            int slot = semifinals.IndexOf(semifinalMatch);
+            if (slot >= 0 && slot < 2 && semifinalMatch.ThirdPlaceMatch?.Participants != null)
+            {
+                semifinalMatch.ThirdPlaceMatch.Participants[slot] = new Tournament.MatchParticipant
+                {
+                    Player = losingParticipant.Player,
+                    SourceMatch = semifinalMatch
+                };
+
+                // Update third place match name
+                UpdateThirdPlaceMatchName(semifinalMatch.ThirdPlaceMatch);
+            }
+        }
+
+        private void UpdateThirdPlaceMatchName(Tournament.Match thirdPlaceMatch)
+        {
+            if (thirdPlaceMatch.Participants[0]?.Player != null && thirdPlaceMatch.Participants[1]?.Player != null)
+            {
+                thirdPlaceMatch.Name = $"{_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[0].Player)} vs {_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[1].Player)}";
+            }
+            else if (thirdPlaceMatch.Participants[0]?.Player != null)
+            {
+                thirdPlaceMatch.Name = $"{_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[0].Player)} vs TBD";
+            }
+            else if (thirdPlaceMatch.Participants[1]?.Player != null)
+            {
+                thirdPlaceMatch.Name = $"TBD vs {_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[1].Player)}";
             }
         }
 
@@ -317,7 +224,7 @@ namespace Wabbit.Services
 
                 // Check if a third place match already exists
                 var existingThirdPlaceMatch = tournament.PlayoffMatches
-                    .FirstOrDefault(m => m.Type == TournamentMatchType.ThirdPlaceTiebreaker);
+                    .FirstOrDefault(m => m.Type == TournamentMatchType.PlayoffThirdPlace);
 
                 if (existingThirdPlaceMatch != null)
                 {
@@ -335,7 +242,7 @@ namespace Wabbit.Services
                 var thirdPlaceMatch = new Tournament.Match
                 {
                     Name = "Third Place Match",
-                    Type = TournamentMatchType.ThirdPlaceTiebreaker,
+                    Type = TournamentMatchType.PlayoffThirdPlace,
                     DisplayPosition = "3rd Place",
                     BestOf = bestOf,
                     Participants = new List<Tournament.MatchParticipant>
@@ -504,270 +411,43 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Creates first round matches for playoffs
-        /// </summary>
-        private List<Tournament.Match> CreateFirstRoundMatches(
-            List<Tournament.MatchParticipant> qualifiedParticipants,
-            int bracketSize,
-            Tournament tournament)
-        {
-            var matches = new List<Tournament.Match>();
-
-            // Fill in the bracket with the qualified participants
-            // and add byes for empty spots
-            for (int i = 0; i < bracketSize / 2; i++)
-            {
-                // Determine match type
-                var matchType = DetermineTournamentMatchType(i, bracketSize);
-
-                // Determine best-of based on match type and settings
-                int bestOf = 3; // Default if settings not available
-                if (tournament.Settings != null)
-                {
-                    if (matchType == TournamentMatchType.Final)
-                    {
-                        bestOf = tournament.Settings.BestOfFinals;
-                    }
-                    else if (matchType == TournamentMatchType.Semifinal)
-                    {
-                        bestOf = tournament.Settings.BestOfSemifinals;
-                    }
-                    else if (matchType == TournamentMatchType.Quarterfinal)
-                    {
-                        bestOf = tournament.Settings.BestOfQuarterfinals;
-                    }
-                }
-
-                var match = new Tournament.Match
-                {
-                    Name = $"Playoff Match {i + 1}",
-                    Type = matchType,
-                    DisplayPosition = $"Match {i + 1}",
-                    BestOf = bestOf,
-                    Participants = new List<Tournament.MatchParticipant>()
-                };
-
-                // Add participants or placeholders based on seeding
-                // This uses a simple bracket ordering
-                if (i < qualifiedParticipants.Count)
-                {
-                    match.Participants.Add(qualifiedParticipants[i]);
-                }
-                else
-                {
-                    match.Participants.Add(new Tournament.MatchParticipant { Player = null });
-                }
-
-                // Add opponent based on bracket position
-                int oppositeIndex = bracketSize / 2 - 1 - i;
-                if (oppositeIndex < qualifiedParticipants.Count)
-                {
-                    match.Participants.Add(qualifiedParticipants[oppositeIndex]);
-                }
-                else
-                {
-                    match.Participants.Add(new Tournament.MatchParticipant { Player = null });
-                }
-
-                // Set appropriate match name based on participant information
-                if (match.Participants[0].Player != null && match.Participants[1].Player != null)
-                {
-                    match.Name = $"{_groupService.GetPlayerDisplayName(match.Participants[0].Player)} vs {_groupService.GetPlayerDisplayName(match.Participants[1].Player)}";
-                }
-                else if (match.Participants[0].Player != null)
-                {
-                    match.Name = $"{_groupService.GetPlayerDisplayName(match.Participants[0].Player)} - Bye";
-
-                    // Auto-advance single player with bye
-                    match.Participants[0].IsWinner = true;
-                    match.Result = new Tournament.MatchResult
-                    {
-                        Winner = match.Participants[0].Player,
-                        CompletedAt = DateTime.Now,
-                        Status = MatchStatus.Completed,
-                        ResultType = MatchResultType.Default // Bye is treated as a default win
-                    };
-                }
-                else if (match.Participants[1]?.Player != null)
-                {
-                    match.Name = $"{_groupService.GetPlayerDisplayName(match.Participants[1].Player)} - Bye";
-
-                    // Auto-advance single player with bye
-                    match.Participants[1].IsWinner = true;
-                    match.Result = new Tournament.MatchResult
-                    {
-                        Winner = match.Participants[1].Player,
-                        CompletedAt = DateTime.Now,
-                        Status = MatchStatus.Completed,
-                        ResultType = MatchResultType.Default // Bye is treated as a default win
-                    };
-                }
-
-                matches.Add(match);
-            }
-
-            return matches;
-        }
-
-        /// <summary>
-        /// Determines the match type for a playoff match
-        /// </summary>
-        private TournamentMatchType DetermineTournamentMatchType(int matchIndex, int bracketSize)
-        {
-            // For simplicity, use PlayoffStage for all matches except finals
-            if (bracketSize == 2)
-            {
-                return TournamentMatchType.Final;
-            }
-            else if (bracketSize == 4)
-            {
-                if (matchIndex == 0 || matchIndex == 1)
-                {
-                    return TournamentMatchType.Semifinal;
-                }
-            }
-            else if (bracketSize == 8)
-            {
-                if (matchIndex >= 0 && matchIndex <= 3)
-                {
-                    return TournamentMatchType.Quarterfinal;
-                }
-            }
-            else if (bracketSize == 16)
-            {
-                if (matchIndex >= 0 && matchIndex <= 7)
-                {
-                    return TournamentMatchType.RoundOf16;
-                }
-            }
-
-            return TournamentMatchType.PlayoffStage;
-        }
-
-        /// <summary>
-        /// Creates subsequent rounds in the playoff bracket
-        /// </summary>
-        private void CreateSubsequentRounds(Tournament tournament, List<Tournament.Match> currentRound, int bracketSize)
-        {
-            // No need to continue if we're at the final
-            if (bracketSize <= 2) return;
-
-            int nextRoundSize = bracketSize / 2;
-            var nextRound = new List<Tournament.Match>();
-
-            // Create the next round of matches
-            for (int i = 0; i < nextRoundSize / 2; i++)
-            {
-                // Determine match type
-                var matchType = DetermineTournamentMatchType(i, nextRoundSize);
-
-                // Determine best-of based on match type and settings
-                int bestOf = 3; // Default if settings not available
-                if (tournament.Settings != null)
-                {
-                    if (matchType == TournamentMatchType.Final)
-                    {
-                        bestOf = tournament.Settings.BestOfFinals;
-                    }
-                    else if (matchType == TournamentMatchType.Semifinal)
-                    {
-                        bestOf = tournament.Settings.BestOfSemifinals;
-                    }
-                    else if (matchType == TournamentMatchType.Quarterfinal)
-                    {
-                        bestOf = tournament.Settings.BestOfQuarterfinals;
-                    }
-                }
-
-                var match = new Tournament.Match
-                {
-                    Name = $"TBD vs TBD",
-                    Type = matchType,
-                    DisplayPosition = nextRoundSize == 2 ? "Final" : $"Match {i + 1}",
-                    BestOf = bestOf,
-                    Participants = new List<Tournament.MatchParticipant>
-                    {
-                        new Tournament.MatchParticipant { Player = null },
-                        new Tournament.MatchParticipant { Player = null }
-                    }
-                };
-
-                // Link the previous round matches to this one
-                currentRound[i * 2].NextMatch = match;
-                currentRound[i * 2 + 1].NextMatch = match;
-
-                nextRound.Add(match);
-            }
-
-            // Add the matches to the tournament's playoff matches
-            tournament.PlayoffMatches.AddRange(nextRound);
-
-            // Recursively create subsequent rounds
-            CreateSubsequentRounds(tournament, nextRound, nextRoundSize);
-        }
-
-        /// <summary>
-        /// Gets advancement criteria for playoff stage
+        /// Gets advancement criteria for playoff stage based on player and group count
         /// </summary>
         public (int groupWinners, int bestThirdPlace) GetAdvancementCriteria(int playerCount, int groupCount)
         {
-            // Default values
-            int groupWinners = 2;
-            int bestThirdPlace = 0;
+            return (playerCount, groupCount) switch
+            {
+                // Single group formats
+                (7, 1) => (4, 0),  // Top 4 advance to playoffs
 
-            // Adjust based on player count and group count
-            if (groupCount == 1)
-            {
-                // Special case for single group tournaments
-                if (playerCount <= 4)
-                {
-                    groupWinners = 2;
-                }
-                else if (playerCount <= 8)
-                {
-                    groupWinners = 4;
-                }
-                else
-                {
-                    groupWinners = 8;
-                }
-            }
-            else if (groupCount == 2)
-            {
-                // For 2 groups, advance 2 from each
-                groupWinners = 2;
-            }
-            else if (groupCount == 3)
-            {
-                // For 3 groups, advance 2 from each + best third
-                groupWinners = 2;
-                bestThirdPlace = 2;
-            }
-            else if (groupCount == 4)
-            {
-                // For 4 groups, advance 2 from each
-                groupWinners = 2;
-            }
-            else if (groupCount == 5 || groupCount == 6)
-            {
-                // For 5-6 groups, advance 1 from each + best seconds
-                groupWinners = 1;
-                bestThirdPlace = 8 - groupCount;
-            }
-            else if (groupCount == 7 || groupCount == 8)
-            {
-                // For 7-8 groups, advance 1 from each + best seconds
-                groupWinners = 1;
-                bestThirdPlace = 8 - groupCount;
-            }
-            else
-            {
-                // For many groups, advance only the winners
-                groupWinners = 1;
-                bestThirdPlace = 0;
-            }
+                // Two group formats
+                (8, 2) => (2, 0),  // Top 2 from each group
+                (10, 2) => (2, 0), // Top 2 from each group
+                (14, 2) => (4, 0), // Top 4 from each group
 
-            return (groupWinners, bestThirdPlace);
+                // Three group formats
+                (9, 3) => (2, 2),   // Top 2 + best 2 third-place
+                (11, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (12, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (13, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (15, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (17, 3) => (2, 2),  // Top 2 + best 2 third-place
+                (18, 3) => (2, 2),  // Top 2 + best 2 third-place
+
+                // Four group formats
+                (16, 4) => (2, 0),  // Top 2 from each group
+                (19, 4) => (2, 0),  // Top 2 from each group
+                (20, 4) => (2, 0),  // Top 2 from each group
+
+                // Six group formats (21-30 players)
+                ( >= 21 and <= 30, 6) => (2, 4),  // Top 2 + best 4 third-place
+
+                // Eight group formats (31-32 players)
+                ( >= 31 and <= 32, 8) => (2, 0),  // Top 2 from each group
+
+                // Default case - use standard criteria
+                _ => (2, 0)  // Default to top 2 from each group
+            };
         }
 
         /// <summary>
@@ -851,9 +531,6 @@ namespace Wabbit.Services
                     return false;
                 }
 
-                // Mark opponent as winner
-                opponentParticipant.IsWinner = true;
-
                 // Create match result
                 match.Result = new Tournament.MatchResult
                 {
@@ -914,8 +591,8 @@ namespace Wabbit.Services
                 visualizationData["RoundCount"] = rounds.Count;
 
                 // Track if there's a third place match
-                bool hasThirdPlaceMatch = rounds.ContainsKey(TournamentMatchType.ThirdPlaceTiebreaker) &&
-                                         rounds[TournamentMatchType.ThirdPlaceTiebreaker].Count > 0;
+                bool hasThirdPlaceMatch = rounds.ContainsKey(TournamentMatchType.PlayoffThirdPlace) &&
+                                         rounds[TournamentMatchType.PlayoffThirdPlace].Count > 0;
 
                 visualizationData["HasThirdPlaceMatch"] = hasThirdPlaceMatch;
 
@@ -933,7 +610,7 @@ namespace Wabbit.Services
 
                 // Add third place match (if it exists)
                 var thirdPlaceMatch = tournament.PlayoffMatches.FirstOrDefault(m =>
-                    m.Type == TournamentMatchType.ThirdPlaceTiebreaker);
+                    m.Type == TournamentMatchType.PlayoffThirdPlace);
 
                 if (thirdPlaceMatch != null)
                 {
@@ -1043,7 +720,7 @@ namespace Wabbit.Services
 
                 // Check if third place match already exists
                 var thirdPlaceExists = tournament.PlayoffMatches
-                    .Any(m => m != null && m.Type == TournamentMatchType.ThirdPlaceTiebreaker);
+                    .Any(m => m != null && m.Type == TournamentMatchType.PlayoffThirdPlace);
 
                 if (thirdPlaceExists)
                 {
@@ -1117,6 +794,73 @@ namespace Wabbit.Services
                 _logger.LogError(ex, "Error creating third place match on demand for tournament {TournamentName}", tournament.Name);
                 return Task.FromResult(false);
             }
+        }
+
+        /// <summary>
+        /// Starts playoff matches asynchronously
+        /// </summary>
+        public async Task StartPlayoffMatchesAsync(Tournament tournament, DiscordClient client)
+        {
+            // This is a placeholder that needs to be implemented with actual playoff match starting logic
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Updates bracket advancement asynchronously
+        /// </summary>
+        public async Task<bool> UpdateBracketAdvancementAsync(Tournament tournament, Tournament.Match match)
+        {
+            return await Task.Run(() => UpdateBracketAdvancement(tournament, match));
+        }
+
+        /// <summary>
+        /// Processes a forfeit asynchronously
+        /// </summary>
+        public async Task<bool> ProcessForfeitAsync(Tournament tournament, Tournament.Match match, object forfeitingPlayer)
+        {
+            return await Task.Run(() => ProcessForfeit(tournament, match, forfeitingPlayer));
+        }
+
+        /// <summary>
+        /// Creates a third place match asynchronously
+        /// </summary>
+        public async Task<bool> CreateThirdPlaceMatchAsync(Tournament tournament, ulong requestedByUserId)
+        {
+            return await CreateThirdPlaceMatchOnDemand(tournament, requestedByUserId);
+        }
+
+        /// <summary>
+        /// Determines if a match is a playoff match
+        /// </summary>
+        public bool IsPlayoffMatch(Tournament.Match match)
+        {
+            return match.Type is TournamentMatchType.Quarterfinal or
+                               TournamentMatchType.Semifinal or
+                               TournamentMatchType.Final or
+                               TournamentMatchType.PlayoffThirdPlace;
+        }
+
+        /// <summary>
+        /// Gets the playoff stage for a match
+        /// </summary>
+        public TournamentMatchType GetPlayoffStage(Tournament tournament, Tournament.Match match)
+        {
+            return match.Type;
+        }
+
+        /// <summary>
+        /// Gets the default match length for a playoff stage
+        /// </summary>
+        public int GetDefaultMatchLength(TournamentMatchType matchType)
+        {
+            return matchType switch
+            {
+                TournamentMatchType.Quarterfinal => 3,  // Best of 3
+                TournamentMatchType.Semifinal => 3,     // Best of 3
+                TournamentMatchType.Final => 3,         // Best of 3
+                TournamentMatchType.PlayoffThirdPlace => 3,    // Best of 3
+                _ => 3                                  // Default to Best of 3
+            };
         }
     }
 }

@@ -46,7 +46,7 @@ namespace Wabbit.Services.Interfaces
         /// <summary>
         /// Updates a match result
         /// </summary>
-        Task UpdateMatchResult(Tournament tournament, Tournament.Match match, DiscordMember winner, int winnerScore, int loserScore);
+        Task UpdateMatchResult(Tournament tournament, Tournament.Match match, DiscordMember winner, int winnerScore, int loserScore, DiscordClient client);
 
         /// <summary>
         /// Starts a match round

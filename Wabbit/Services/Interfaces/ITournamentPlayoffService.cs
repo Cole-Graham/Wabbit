@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using DSharpPlus;
+using DSharpPlus.Entities;
 using Wabbit.Models;
 
 namespace Wabbit.Services.Interfaces
@@ -12,8 +14,12 @@ namespace Wabbit.Services.Interfaces
         /// <summary>
         /// Sets up playoffs for a tournament
         /// </summary>
-        /// <param name="tournament">The tournament to set up playoffs for</param>
-        void SetupPlayoffs(Tournament tournament);
+        Task SetupPlayoffsAsync(Tournament tournament, DiscordClient client);
+
+        /// <summary>
+        /// Starts playoff matches for a tournament
+        /// </summary>
+        Task StartPlayoffMatchesAsync(Tournament tournament, DiscordClient client);
 
         /// <summary>
         /// Gets advancement criteria for playoff stage
@@ -29,7 +35,7 @@ namespace Wabbit.Services.Interfaces
         /// <param name="tournament">The tournament to update</param>
         /// <param name="match">The match that was completed</param>
         /// <returns>True if advancement was successful, false otherwise</returns>
-        bool UpdateBracketAdvancement(Tournament tournament, Tournament.Match match);
+        Task<bool> UpdateBracketAdvancementAsync(Tournament tournament, Tournament.Match match);
 
         /// <summary>
         /// Processes a forfeit in a playoff match
@@ -38,7 +44,7 @@ namespace Wabbit.Services.Interfaces
         /// <param name="match">The match to forfeit</param>
         /// <param name="forfeitingPlayer">The player forfeiting the match</param>
         /// <returns>True if the forfeit was processed successfully, false otherwise</returns>
-        bool ProcessForfeit(Tournament tournament, Tournament.Match match, object forfeitingPlayer);
+        Task<bool> ProcessForfeitAsync(Tournament tournament, Tournament.Match match, object forfeitingPlayer);
 
         /// <summary>
         /// Gets visualization data for a tournament bracket
@@ -67,6 +73,21 @@ namespace Wabbit.Services.Interfaces
         /// <param name="tournament">The tournament to create the third place match for</param>
         /// <param name="requestedByUserId">The Discord ID of the admin/moderator who requested the match</param>
         /// <returns>True if the match was created successfully, false otherwise</returns>
-        Task<bool> CreateThirdPlaceMatchOnDemand(Tournament tournament, ulong requestedByUserId);
+        Task<bool> CreateThirdPlaceMatchAsync(Tournament tournament, ulong requestedByUserId);
+
+        /// <summary>
+        /// Determines if a match is a playoff match
+        /// </summary>
+        bool IsPlayoffMatch(Tournament.Match match);
+
+        /// <summary>
+        /// Gets the playoff stage for a match (quarterfinal, semifinal, etc.)
+        /// </summary>
+        TournamentMatchType GetPlayoffStage(Tournament tournament, Tournament.Match match);
+
+        /// <summary>
+        /// Gets the default match length for a playoff stage
+        /// </summary>
+        int GetDefaultMatchLength(TournamentMatchType stage);
     }
 }

@@ -124,6 +124,10 @@ namespace Wabbit.BotClient.Commands
 
                 // Start all group matches to create threads for each match
                 _logger.LogInformation($"Starting group matches for tournament {tournament.Name}");
+
+                // Track players who already have a match created
+                HashSet<ulong> playersWithMatches = new();
+
                 foreach (var group in tournament.Groups)
                 {
                     foreach (var match in group.Matches)
@@ -134,16 +138,25 @@ namespace Wabbit.BotClient.Commands
                             var player1 = match.Participants[0].Player as DiscordMember;
                             var player2 = match.Participants[1].Player as DiscordMember;
 
-                            if (player1 is not null && player2 is not null)
-                            {
-                                // Start the match round which will create a thread
-                                await _tournamentService.StartMatchRoundAsync(tournament, match, context.Channel, context.Client);
-                                _logger.LogInformation($"Started match {match.Name} in tournament {tournament.Name}");
-                            }
-                            else
+                            if (player1 is null || player2 is null)
                             {
                                 _logger.LogWarning($"Could not start match {match.Name}: players are not valid DiscordMembers");
+                                continue;
                             }
+
+                            // Skip if both players already have matches
+                            if (playersWithMatches.Contains(player1.Id) && playersWithMatches.Contains(player2.Id))
+                            {
+                                continue;
+                            }
+
+                            // Start the match round which will create a thread
+                            await _tournamentService.StartMatchRoundAsync(tournament, match, context.Channel, context.Client);
+                            _logger.LogInformation($"Started match {match.Name} in tournament {tournament.Name}");
+
+                            // Track that these players now have matches
+                            playersWithMatches.Add(player1.Id);
+                            playersWithMatches.Add(player2.Id);
                         }
                         catch (Exception ex)
                         {
@@ -1620,7 +1633,7 @@ namespace Wabbit.BotClient.Commands
             // After playoff setup and state save
             if (tournament.CurrentStage == TournamentStage.Playoffs)
             {
-                await _tournamentMatchService.StartPlayoffMatches(tournament, client);
+                await _playoffService.StartPlayoffMatchesAsync(tournament, client);
             }
 
         }

@@ -253,7 +253,6 @@ namespace Wabbit.Services
                 {
                     Player = CleanPlayerForSerialization(p.Player),
                     Score = p.Score,
-                    IsWinner = p.IsWinner,
                     SourceGroupPosition = p.SourceGroupPosition
                 }).ToList()
             };

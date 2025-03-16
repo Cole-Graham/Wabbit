@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Wabbit.Models;
 using Wabbit.Misc;
 using Wabbit.Services.Interfaces;
+using Wabbit.Services.ServiceHelpers;
 
 namespace Wabbit.Services
 {
@@ -63,15 +64,24 @@ namespace Wabbit.Services
         private readonly JsonSerializerOptions _serializerOptions;
         private readonly ILogger<TournamentStateService> _logger;
         private readonly ITournamentMapService _mapService;
+        private readonly ITournamentStateValidator _stateValidator;
+        private readonly ITournamentScoreManager _scoreManager;
+        private readonly ITournamentProgressTracker _progressTracker;
 
         public TournamentStateService(
             OngoingRounds ongoingRounds,
             ILogger<TournamentStateService> logger,
-            ITournamentMapService mapService)
+            ITournamentMapService mapService,
+            ITournamentStateValidator stateValidator,
+            ITournamentScoreManager scoreManager,
+            ITournamentProgressTracker progressTracker)
         {
             _ongoingRounds = ongoingRounds;
             _logger = logger;
             _mapService = mapService;
+            _stateValidator = stateValidator;
+            _scoreManager = scoreManager;
+            _progressTracker = progressTracker;
 
             // Setup data directory
             _dataDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Data");
@@ -85,9 +95,15 @@ namespace Wabbit.Services
                 ReferenceHandler = ReferenceHandler.Preserve,
                 WriteIndented = true
             };
+        }
 
-            // Load tournament state
-            LoadTournamentState();
+        /// <summary>
+        /// Initializes the tournament state service by loading the state.
+        /// Should be called immediately after construction.
+        /// </summary>
+        public async Task InitializeAsync()
+        {
+            await LoadTournamentState();
         }
 
         /// <summary>
@@ -119,13 +135,13 @@ namespace Wabbit.Services
         /// <summary>
         /// Loads the tournament state
         /// </summary>
-        public void LoadTournamentState()
+        public async Task<Tournament?> LoadTournamentState()
         {
             try
             {
                 if (File.Exists(_tournamentStateFilePath))
                 {
-                    string json = File.ReadAllText(_tournamentStateFilePath);
+                    string json = await File.ReadAllTextAsync(_tournamentStateFilePath);
                     _logger.LogInformation($"Loading tournament state from {_tournamentStateFilePath}");
 
                     if (!string.IsNullOrEmpty(json))
@@ -142,6 +158,9 @@ namespace Wabbit.Services
                             _ongoingRounds.TourneyRounds = rounds;
 
                             _logger.LogInformation($"Loaded {rounds.Count} rounds from tournament state");
+
+                            // Return the first tournament if any exists
+                            return _ongoingRounds.Tournaments.FirstOrDefault();
                         }
                     }
                 }
@@ -150,15 +169,12 @@ namespace Wabbit.Services
                     _logger.LogInformation($"No tournament state file found at {_tournamentStateFilePath}");
                 }
 
-                // Link rounds to tournaments
-                LinkRoundsToTournaments();
+                return null;
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Error loading tournament state: {ex.Message}");
-
-                // Initialize empty list if loading fails
-                _ongoingRounds.TourneyRounds = new List<Round>();
+                return null;
             }
         }
 
@@ -581,251 +597,124 @@ namespace Wabbit.Services
 
             if (tournament.CurrentStage == TournamentStage.Playoffs && allPlayoffMatchesComplete)
             {
-                tournament.CurrentStage = TournamentStage.Complete;
-                tournament.IsComplete = true;
+                // Validate state transition
+                if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Complete))
+                {
+                    tournament.CurrentStage = TournamentStage.Complete;
+                    tournament.IsComplete = true;
 
-                _logger.LogInformation($"Tournament {tournament.Name} is now complete");
+                    _logger.LogInformation($"Tournament {tournament.Name} is now complete");
+                }
+                else
+                {
+                    _logger.LogWarning($"Invalid state transition from {tournament.CurrentStage} to Complete for tournament {tournament.Name}");
+                }
             }
         }
 
         /// <summary>
-        /// Updates a match from a round
+        /// Updates a match from its linked round
         /// </summary>
         private void UpdateMatchFromRound(Tournament.Match match, Round round)
         {
-            if (match == null || round == null) return;
+            if (round == null || !round.CustomProperties.ContainsKey("IsCompleted"))
+            {
+                _logger.LogWarning($"Cannot update match {match.Name}: round is null or incomplete");
+                return;
+            }
 
-            // Create match result if it doesn't exist
-            if (match.Result == null)
+            // Get winner from round properties
+            if (round.CustomProperties.ContainsKey("Winner") &&
+                Convert.ToInt32(round.CustomProperties["Winner"]) != 0)
             {
                 match.Result = new Tournament.MatchResult
                 {
+                    Winner = round.CustomProperties.ContainsKey("Winner") && Convert.ToInt32(round.CustomProperties["Winner"]) == 1 ?
+                        match.Participants[0].Player : match.Participants[1].Player,
+                    WinnerScore = round.CustomProperties.ContainsKey("Player1Score") ?
+                        Convert.ToInt32(round.CustomProperties["Player1Score"]) : 0,
+                    LoserScore = round.CustomProperties.ContainsKey("Player2Score") ?
+                        Convert.ToInt32(round.CustomProperties["Player2Score"]) : 0,
                     CompletedAt = round.CustomProperties.ContainsKey("CompletedAt") ?
-                        Convert.ToDateTime(round.CustomProperties["CompletedAt"]) : DateTime.Now,
-                    MapResults = round.Maps?.ToList() ?? new List<string>()
+                        Convert.ToDateTime(round.CustomProperties["CompletedAt"]) : DateTime.UtcNow
                 };
-            }
 
-            // Update scores
-            if (match.Participants.Count >= 2)
-            {
-                int player1Score = round.Teams?.FirstOrDefault()?.Wins ?? 0;
-                int player2Score = round.Teams?.Skip(1).FirstOrDefault()?.Wins ?? 0;
-
-                match.Participants[0].Score = player1Score;
-                match.Participants[1].Score = player2Score;
-
-                // Get winner from custom properties
-                int winner = round.CustomProperties.ContainsKey("Winner") ?
-                    Convert.ToInt32(round.CustomProperties["Winner"]) : 0;
-
-                // Update winner
-                if (winner == 1)
-                {
-                    match.Participants[0].IsWinner = true;
-                    match.Participants[1].IsWinner = false;
-                    match.Result.Winner = match.Participants[0].Player;
-                }
-                else if (winner == 2)
-                {
-                    match.Participants[0].IsWinner = false;
-                    match.Participants[1].IsWinner = true;
-                    match.Result.Winner = match.Participants[1].Player;
-                }
-
-                // Update stats for group participants
+                // Update group scores if this is a group stage match
                 if (match.Type == TournamentMatchType.GroupStage &&
-                    match.Participants[0]?.SourceGroup != null &&
-                    match.Participants[0]?.SourceGroup?.Participants?.Count > 0 &&
-                    match.Participants[1]?.SourceGroup != null &&
-                    match.Participants[1]?.SourceGroup?.Participants?.Count > 0)
+                    match.Participants[0].SourceGroup != null)
                 {
-                    var player1 = match.Participants[0]?.Player;
-                    var player2 = match.Participants[1]?.Player;
-
-                    var group1 = match.Participants[0]?.SourceGroup;
-                    var group2 = match.Participants[1]?.SourceGroup;
-
-                    // Find participants in groups
-                    var groupParticipant1 = group1?.Participants?.FirstOrDefault(p =>
-                        ArePlayersEqual(p?.Player, player1));
-
-                    var groupParticipant2 = group2?.Participants?.FirstOrDefault(p =>
-                        ArePlayersEqual(p?.Player, player2));
-
-                    if (groupParticipant1 != null && groupParticipant2 != null)
+                    var group = match.Participants[0].SourceGroup;
+                    if (group != null)
                     {
-                        // Update wins/losses
-                        if (winner == 1)
-                        {
-                            groupParticipant1.Wins++;
-                            groupParticipant2.Losses++;
-                        }
-                        else if (winner == 2)
-                        {
-                            groupParticipant1.Losses++;
-                            groupParticipant2.Wins++;
-                        }
-                        else
-                        {
-                            // Draw
-                            groupParticipant1.Draws++;
-                            groupParticipant2.Draws++;
-                        }
-
-                        // Update game counts
-                        groupParticipant1.GamesWon += player1Score;
-                        groupParticipant1.GamesLost += player2Score;
-
-                        groupParticipant2.GamesWon += player2Score;
-                        groupParticipant2.GamesLost += player1Score;
+                        _scoreManager.UpdateGroupScores(group, match);
                     }
                 }
 
-                // Update next match if this is part of a bracket
-                if (match.NextMatch != null && match.Result != null && match.Result.Winner != null)
+                // Update tournament progress
+                var tournament = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == match.TournamentId);
+                if (tournament != null)
                 {
-                    // Find index of this match in the previous round
-                    var tournament = FindTournamentByMatch(match);
-                    if (tournament != null)
-                    {
-                        int matchIndex = tournament.PlayoffMatches.IndexOf(match);
-                        if (matchIndex >= 0)
-                        {
-                            // Determine if this is the first or second match feeding into next match
-                            bool isFirstMatch = matchIndex % 2 == 0;
+                    var stageProgress = _progressTracker.GetStageProgress(tournament);
+                    bool canProgress = _progressTracker.CanProgressToNextStage(tournament);
+                }
+            }
+        }
 
-                            // Update the appropriate participant in the next match
-                            if (isFirstMatch && match.NextMatch.Participants.Count > 0)
-                            {
-                                match.NextMatch.Participants[0].Player = match.Result.Winner;
-                                match.NextMatch.Name = UpdateMatchName(match.NextMatch);
-                            }
-                            else if (!isFirstMatch && match.NextMatch.Participants.Count > 1)
-                            {
-                                match.NextMatch.Participants[1].Player = match.Result.Winner;
-                                match.NextMatch.Name = UpdateMatchName(match.NextMatch);
-                            }
-                        }
+        /// <summary>
+        /// Updates tournament state from completed rounds
+        /// </summary>
+        public void UpdateTournamentFromRounds(Tournament tournament)
+        {
+            _logger.LogInformation($"Updating tournament {tournament.Name} from rounds");
+
+            // Update group stage matches
+            foreach (var group in tournament.Groups)
+            {
+                foreach (var match in group.Matches)
+                {
+                    if (match.LinkedRound != null &&
+                        match.LinkedRound.CustomProperties.ContainsKey("IsCompleted") &&
+                        Convert.ToBoolean(match.LinkedRound.CustomProperties["IsCompleted"]))
+                    {
+                        UpdateMatchFromRound(match, match.LinkedRound);
                     }
                 }
             }
-        }
 
-        /// <summary>
-        /// Updates a match name based on its participants
-        /// </summary>
-        private string UpdateMatchName(Tournament.Match match)
-        {
-            if (match.Participants.Count < 2) return "TBD vs TBD";
-
-            string player1Name = match.Participants[0].Player != null ?
-                GetPlayerName(match.Participants[0].Player) : "TBD";
-
-            string player2Name = match.Participants[1].Player != null ?
-                GetPlayerName(match.Participants[1].Player) : "TBD";
-
-            return $"{player1Name} vs {player2Name}";
-        }
-
-        /// <summary>
-        /// Gets a player's name
-        /// </summary>
-        private string GetPlayerName(object? player)
-        {
-            if (player == null) return "TBD";
-
-            if (player is Dictionary<string, object> dict)
+            // Update playoff matches
+            foreach (var match in tournament.PlayoffMatches)
             {
-                if (dict.TryGetValue("Username", out var username))
+                if (match.LinkedRound != null &&
+                    match.LinkedRound.CustomProperties.ContainsKey("IsCompleted") &&
+                    Convert.ToBoolean(match.LinkedRound.CustomProperties["IsCompleted"]))
                 {
-                    return username.ToString() ?? "Unknown";
-                }
-                return "Unknown";
-            }
-
-            if (player is DiscordMember member)
-                return member.DisplayName;
-
-            if (player is DiscordUser user)
-                return user.Username;
-
-            return player.ToString() ?? "Unknown";
-        }
-
-        /// <summary>
-        /// Checks if two player objects refer to the same player
-        /// </summary>
-        private bool ArePlayersEqual(object? player1, object? player2)
-        {
-            if (player1 == null || player2 == null) return false;
-
-            // Get IDs if possible
-            ulong? id1 = GetPlayerId(player1);
-            ulong? id2 = GetPlayerId(player2);
-
-            // Compare IDs if available
-            if (id1.HasValue && id2.HasValue)
-            {
-                return id1.Value == id2.Value;
-            }
-
-            // Fallback to string comparison
-            return GetPlayerName(player1) == GetPlayerName(player2);
-        }
-
-        /// <summary>
-        /// Gets a player's ID
-        /// </summary>
-        private ulong? GetPlayerId(object? player)
-        {
-            if (player == null) return null;
-
-            if (player is DiscordMember member)
-            {
-                return member.Id;
-            }
-
-            if (player is DiscordUser user)
-            {
-                return user.Id;
-            }
-
-            if (player is Dictionary<string, object> dict)
-            {
-                if (dict.TryGetValue("Id", out var idObj) && idObj != null)
-                {
-                    return Convert.ToUInt64(idObj);
+                    UpdateMatchFromRound(match, match.LinkedRound);
                 }
             }
 
-            return null;
-        }
+            // Check tournament progress and update state
+            var stageProgress = _progressTracker.GetStageProgress(tournament);
+            bool canProgress = _progressTracker.CanProgressToNextStage(tournament);
 
-        /// <summary>
-        /// Finds the tournament containing a match
-        /// </summary>
-        private Tournament? FindTournamentByMatch(Tournament.Match match)
-        {
-            foreach (var tournament in _ongoingRounds.Tournaments)
+            if (canProgress && tournament.CurrentStage == TournamentStage.Complete)
             {
-                // Check group stage matches
-                foreach (var group in tournament.Groups)
+                // Validate state transition
+                if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Complete))
                 {
-                    if (group.Matches.Contains(match))
-                    {
-                        return tournament;
-                    }
-                }
-
-                // Check playoff matches
-                if (tournament.PlayoffMatches.Contains(match))
-                {
-                    return tournament;
+                    tournament.CurrentStage = TournamentStage.Complete;
+                    tournament.IsComplete = true;
+                    _logger.LogInformation($"Tournament {tournament.Name} is now complete");
                 }
             }
-
-            return null;
+            else if (canProgress && tournament.CurrentStage == TournamentStage.Groups)
+            {
+                // Validate state transition
+                if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
+                {
+                    tournament.CurrentStage = TournamentStage.Playoffs;
+                    _logger.LogInformation($"Tournament {tournament.Name} is ready for playoffs");
+                }
+            }
         }
 
         /// <summary>

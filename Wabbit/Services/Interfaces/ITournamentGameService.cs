@@ -1,12 +1,14 @@
 using DSharpPlus;
 using DSharpPlus.Entities;
-using Wabbit.Data;
 using Wabbit.Models;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 
 namespace Wabbit.Services.Interfaces
 {
+    /// <summary>
+    /// Service for managing individual games within tournament matches
+    /// </summary>
     public interface ITournamentGameService
     {
         /// <summary>
@@ -15,22 +17,43 @@ namespace Wabbit.Services.Interfaces
         Task HandleGameResultAsync(Round round, DiscordChannel thread, string winnerId, DiscordClient client);
 
         /// <summary>
-        /// Handles match completion, including scheduling new matches or advancing tournaments
+        /// Records a game result within a match
         /// </summary>
-        Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client);
+        Task RecordGameResultAsync(Round round, string winnerId, int gameNumber, DiscordClient client);
 
         /// <summary>
-        /// Gets available maps for the next game in a match
+        /// Validates and processes a deck submission for a game
         /// </summary>
-        /// <param name="round">The current round</param>
-        /// <returns>List of available map names</returns>
-        List<string> GetAvailableMapsForNextGame(Round round);
+        Task<bool> ProcessDeckSubmissionAsync(Round round, ulong playerId, string deckCode, int gameNumber);
 
         /// <summary>
-        /// Gets a random map for the next game, considering banned and played maps
+        /// Checks if both players have submitted decks for the current game
         /// </summary>
-        /// <param name="round">The current round</param>
-        /// <returns>A random map name, or null if no maps are available</returns>
-        string? GetRandomMapForNextGame(Round round);
+        bool AreDeckSubmissionsComplete(Round round, int gameNumber);
+
+        /// <summary>
+        /// Gets the current game number in a match
+        /// </summary>
+        int GetCurrentGameNumber(Round round);
+
+        /// <summary>
+        /// Gets the score for a specific player in the match
+        /// </summary>
+        int GetPlayerScore(Round round, ulong playerId);
+
+        /// <summary>
+        /// Determines if a match is complete based on game results
+        /// </summary>
+        bool IsMatchComplete(Round round);
+
+        /// <summary>
+        /// Gets the match winner if the match is complete
+        /// </summary>
+        DiscordMember? GetMatchWinner(Round round);
+
+        /// <summary>
+        /// Gets the final match score
+        /// </summary>
+        (int winner, int loser) GetFinalScore(Round round);
     }
 }

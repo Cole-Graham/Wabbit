@@ -131,7 +131,7 @@ namespace Wabbit.Services
         /// <summary>
         /// Updates a match result
         /// </summary>
-        public async Task UpdateMatchResult(Tournament tournament, Tournament.Match match, DiscordMember winner, int winnerScore, int loserScore)
+        public async Task UpdateMatchResult(Tournament tournament, Tournament.Match match, DiscordMember winner, int winnerScore, int loserScore, DiscordClient client)
         {
             // Call match service to update the result
             await _matchService.UpdateMatchResultAsync(tournament, match, winner, winnerScore, loserScore);
@@ -144,7 +144,7 @@ namespace Wabbit.Services
                 // If all groups are completed, set up playoffs
                 if (tournament.Groups.All(g => g.IsComplete) && tournament.CurrentStage == TournamentStage.Groups)
                 {
-                    _playoffService.SetupPlayoffs(tournament);
+                    await _playoffService.SetupPlayoffsAsync(tournament, client);
                 }
             }
 

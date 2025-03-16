@@ -25,6 +25,10 @@ namespace Wabbit.Services
         private readonly ILogger<TournamentGameService> _logger;
         private readonly IMatchStatusService _matchStatusService;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ITournamentMatchService _matchService;
+        private readonly ITournamentStateValidator _stateValidator;
+        private readonly ITournamentScoreManager _scoreManager;
+        private readonly ITournamentProgressTracker _progressTracker;
 
         // Track matches being processed to prevent concurrent updates
         private readonly HashSet<string> _processingMatches = new HashSet<string>();
@@ -37,7 +41,11 @@ namespace Wabbit.Services
             ITournamentMapService mapService,
             ILogger<TournamentGameService> logger,
             IMatchStatusService matchStatusService,
-            IServiceScopeFactory scopeFactory)
+            IServiceScopeFactory scopeFactory,
+            ITournamentMatchService matchService,
+            ITournamentStateValidator stateValidator,
+            ITournamentScoreManager scoreManager,
+            ITournamentProgressTracker progressTracker)
         {
             _ongoingRounds = ongoingRounds;
             _repositoryService = repositoryService;
@@ -47,6 +55,10 @@ namespace Wabbit.Services
             _logger = logger;
             _matchStatusService = matchStatusService;
             _scopeFactory = scopeFactory;
+            _matchService = matchService;
+            _stateValidator = stateValidator;
+            _scoreManager = scoreManager;
+            _progressTracker = progressTracker;
         }
 
         /// <summary>
@@ -80,18 +92,16 @@ namespace Wabbit.Services
         /// <summary>
         /// Handles match completion, including scheduling new matches or advancing tournaments
         /// </summary>
-        public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
+        public async Task HandleMatchCompletionAsync(string matchId, DiscordClient client)
         {
             try
             {
-                string matchId = match.Name ?? Guid.NewGuid().ToString();
-
                 // Prevent concurrent processing of the same match
                 lock (_processingMatches)
                 {
                     if (_processingMatches.Contains(matchId))
                     {
-                        _logger.LogWarning($"Match {matchId} is already being processed. Skipping.");
+                        _logger.LogWarning($"Match {matchId} is already being processed");
                         return;
                     }
                     _processingMatches.Add(matchId);
@@ -99,135 +109,104 @@ namespace Wabbit.Services
 
                 try
                 {
-                    _logger.LogInformation($"Handling completion of match {match.Name} in tournament {tournament.Name}");
-
-                    // Update next match if defined
-                    if (match.NextMatch is not null && match.Result?.Winner is not null)
+                    var round = _ongoingRounds.TourneyRounds.FirstOrDefault(r =>
+                        r.CustomProperties != null &&
+                        r.CustomProperties.ContainsKey("RoundId") &&
+                        r.CustomProperties["RoundId"].ToString() == matchId);
+                    if (round == null)
                     {
-                        // Find the next match and add the winner to it
-                        var nextMatch = match.NextMatch;
+                        _logger.LogError($"Round {matchId} not found");
+                        return;
+                    }
 
-                        // Create a new participant for the next match
-                        var advancingParticipant = new Tournament.MatchParticipant
-                        {
-                            Player = match.Result.Winner
-                        };
+                    // Get tournament and match
+                    var tournament = _ongoingRounds.Tournaments.FirstOrDefault(t => t.Name == round.TournamentId);
+                    if (tournament == null)
+                    {
+                        _logger.LogError($"Tournament not found for round {matchId}");
+                        return;
+                    }
 
-                        // Add the advancing participant if they're not already there
-                        if (!nextMatch.Participants.Any(p => p.Player == match.Result.Winner))
+                    Tournament.Match? match = null;
+                    Tournament.Group? group = null;
+
+                    // Find the match in groups
+                    foreach (var g in tournament.Groups)
+                    {
+                        match = g.Matches.FirstOrDefault(m =>
+                            m.LinkedRound?.CustomProperties != null &&
+                            m.LinkedRound.CustomProperties.ContainsKey("RoundId") &&
+                            m.LinkedRound.CustomProperties["RoundId"].ToString() == matchId);
+                        if (match != null)
                         {
-                            nextMatch.Participants.Add(advancingParticipant);
+                            group = g;
+                            break;
                         }
                     }
 
-                    // Save tournament state
-                    await _stateService.SaveTournamentStateAsync(client);
-
-                    // Check if tournament is complete
-                    bool allPlayoffMatchesComplete = true;
-                    if (tournament.PlayoffMatches != null && tournament.PlayoffMatches.Any())
+                    // If not in groups, check playoff matches
+                    if (match == null)
                     {
-                        allPlayoffMatchesComplete = tournament.PlayoffMatches.All(m => m.IsComplete);
+                        match = tournament.PlayoffMatches.FirstOrDefault(m =>
+                            m.LinkedRound?.CustomProperties != null &&
+                            m.LinkedRound.CustomProperties.ContainsKey("RoundId") &&
+                            m.LinkedRound.CustomProperties["RoundId"].ToString() == matchId);
                     }
 
-                    if (allPlayoffMatchesComplete && tournament.CurrentStage == TournamentStage.Playoffs)
+                    if (match == null)
                     {
-                        // Find the final match to determine the winner
-                        var finalMatch = tournament.PlayoffMatches?
-                            .OrderByDescending(m => m.DisplayPosition)
-                            .FirstOrDefault();
+                        _logger.LogError($"Match not found for round {matchId}");
+                        return;
+                    }
 
-                        if (finalMatch?.Result?.Winner != null)
+                    // Update group scores and check completion
+                    if (group != null)
+                    {
+                        _scoreManager.UpdateGroupScores(group, match);
+                        bool isComplete = _scoreManager.IsGroupComplete(group);
+
+                        if (isComplete && !group.IsComplete)
                         {
-                            tournament.IsComplete = true;
-                            // Set the tournament stage to Complete
-                            tournament.CurrentStage = TournamentStage.Complete;
-
-                            _logger.LogInformation($"Tournament {tournament.Name} completed with winner: {finalMatch.Result.Winner}");
-
-                            // Get winner display name
-                            string winnerName = "Unknown";
-                            if (finalMatch.Result.Winner is DiscordMember member)
-                            {
-                                winnerName = member.DisplayName ?? member.Username;
-                            }
-                            else if (finalMatch.Result.Winner is DiscordUser user)
-                            {
-                                winnerName = user.Username;
-                            }
-
-                            // Announce the champion in the announcement channel if available
-                            if (tournament.AnnouncementChannel is not null)
-                            {
-                                try
-                                {
-                                    var winnerEmbed = new DiscordEmbedBuilder()
-                                        .WithTitle($"🏆 Tournament Champion: {tournament.Name}")
-                                        .WithDescription($"**{winnerName}** has won the tournament!")
-                                        .WithColor(DiscordColor.Gold)
-                                        .WithTimestamp(DateTime.Now);
-
-                                    await tournament.AnnouncementChannel.SendMessageAsync(winnerEmbed);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, $"Error announcing tournament winner: {ex.Message}");
-                                }
-                            }
-
-                            // Generate final standings visualization
-                            try
-                            {
-                                await Wabbit.Misc.TournamentVisualization.GenerateStandingsImage(tournament, client, _stateService);
-                                _logger.LogInformation($"Generated final standings visualization for tournament {tournament.Name}");
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, $"Error generating final standings visualization: {ex.Message}");
-                            }
-
-                            // Archive all tournament threads
-                            try
-                            {
-                                if (BotClient.Config.ConfigManager.Config?.Tournament?.AutoArchiveThreads == true)
-                                {
-                                    using (var scope = _scopeFactory.CreateScope())
-                                    {
-                                        var tournamentService = scope.ServiceProvider.GetService<ITournamentService>();
-                                        if (tournamentService is not null)
-                                        {
-                                            await tournamentService.ArchiveAllTournamentThreadsAsync(tournament, client);
-                                            _logger.LogInformation($"Archived all threads for completed tournament {tournament.Name}");
-                                        }
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Error archiving tournament threads");
-                            }
+                            group.IsComplete = true;
+                            _logger.LogInformation($"Group {group.Name} is now complete");
                         }
                     }
 
-                    // Save tournament data
-                    await _repositoryService.SaveTournamentsAsync();
+                    // Update tournament progress
+                    var stageProgress = _progressTracker.GetStageProgress(tournament);
+                    bool canProgress = _progressTracker.CanProgressToNextStage(tournament);
 
-                    // If tournament is still ongoing, check for playoff start
-                    if (!tournament.IsComplete)
+                    // Check if we can transition to playoffs
+                    if (canProgress && tournament.CurrentStage == TournamentStage.Groups)
                     {
-                        // If all groups are complete, set up playoffs (if not already in playoffs)
-                        bool allGroupsComplete = tournament.Groups.All(g => g.IsComplete);
-                        if (allGroupsComplete && tournament.CurrentStage == TournamentStage.Groups)
+                        // Validate state transition
+                        if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
                         {
-                            _playoffService.SetupPlayoffs(tournament);
+                            await _playoffService.SetupPlayoffsAsync(tournament, client);
                             tournament.CurrentStage = TournamentStage.Playoffs;
-
                             _logger.LogInformation($"Setting up playoffs for tournament {tournament.Name}");
-
-                            // Save changes after playoff setup
-                            await _repositoryService.SaveTournamentsAsync();
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"Invalid state transition from {tournament.CurrentStage} to Playoffs for tournament {tournament.Name}");
                         }
                     }
+                    // Check if tournament is complete
+                    else if (tournament.CurrentStage == TournamentStage.Playoffs &&
+                           stageProgress.GetValueOrDefault("PlayoffProgress", 0) == 100)
+                    {
+                        // Validate state transition
+                        if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Complete))
+                        {
+                            tournament.CurrentStage = TournamentStage.Complete;
+                            tournament.IsComplete = true;
+                            _logger.LogInformation($"Tournament {tournament.Name} is now complete");
+                        }
+                    }
+
+                    // Save changes
+                    await _repositoryService.SaveTournamentsAsync();
+                    await _stateService.SaveTournamentStateAsync(client);
                 }
                 finally
                 {
@@ -356,6 +335,198 @@ namespace Wabbit.Services
                 _logger.LogError(ex, "Error getting random map for next game");
                 return null;
             }
+        }
+
+        public async Task RecordGameResultAsync(Round round, string winnerId, int gameNumber, DiscordClient client)
+        {
+            try
+            {
+                if (round?.Teams == null || !round.Teams.Any())
+                {
+                    _logger.LogError("Cannot record game result: round or teams are null");
+                    return;
+                }
+
+                // Find the winning team
+                var winningTeam = round.Teams.FirstOrDefault(t =>
+                    t.Participants?.Any(p => p.Player?.Id.ToString() == winnerId) ?? false);
+
+                if (winningTeam == null)
+                {
+                    _logger.LogError($"Cannot find winning team for player {winnerId}");
+                    return;
+                }
+
+                // Update scores
+                if (round.CustomProperties != null)
+                {
+                    string winnerKey = winningTeam == round.Teams[0] ? "Player1Wins" : "Player2Wins";
+                    round.CustomProperties[winnerKey] = ((int)round.CustomProperties[winnerKey]) + 1;
+                }
+
+                // Handle match completion if needed
+                var threadId = round?.Teams?.FirstOrDefault()?.Thread?.Id;
+                if (threadId.HasValue && round is not null)
+                {
+                    await HandleGameResultAsync(round, await client.GetChannelAsync(threadId.Value), winnerId, client);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recording game result");
+            }
+        }
+
+        public async Task<bool> ProcessDeckSubmissionAsync(Round round, ulong playerId, string deckCode, int gameNumber)
+        {
+            try
+            {
+                // Initialize deck codes dictionary if needed
+                if (!round.CustomProperties.ContainsKey("DeckCodes"))
+                {
+                    round.CustomProperties["DeckCodes"] = new Dictionary<string, Dictionary<string, string>>();
+                }
+
+                var deckCodes = round.CustomProperties["DeckCodes"] as Dictionary<string, Dictionary<string, string>>;
+                if (deckCodes == null)
+                {
+                    _logger.LogError("Failed to initialize deck codes dictionary");
+                    return false;
+                }
+
+                // Initialize game dictionary if needed
+                string gameKey = $"Game{gameNumber}";
+                if (!deckCodes.ContainsKey(gameKey))
+                {
+                    deckCodes[gameKey] = new Dictionary<string, string>();
+                }
+
+                // Store the deck code
+                deckCodes[gameKey][playerId.ToString()] = deckCode;
+
+                // Save state after updating deck codes
+                await _stateService.SaveTournamentStateAsync();
+
+                // Handle deck submission completion
+                if (round.Teams?.FirstOrDefault()?.Thread is not null)
+                {
+                    // Check if both players have submitted decks
+                    if (AreDeckSubmissionsComplete(round, gameNumber))
+                    {
+                        _logger.LogInformation("Both players have submitted decks");
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing deck submission");
+                return false;
+            }
+        }
+
+        public bool AreDeckSubmissionsComplete(Round round, int gameNumber)
+        {
+            if (round.CustomProperties?.ContainsKey("DeckCodes") != true)
+                return false;
+
+            var deckCodes = round.CustomProperties["DeckCodes"] as Dictionary<string, Dictionary<string, string>>;
+            if (deckCodes == null)
+                return false;
+
+            string gameKey = $"Game{gameNumber}";
+            if (!deckCodes.ContainsKey(gameKey))
+                return false;
+
+            // Check if both players have submitted decks for this game
+            int submissionCount = 0;
+            foreach (var team in round.Teams ?? Enumerable.Empty<Round.Team>())
+            {
+                foreach (var participant in team.Participants ?? Enumerable.Empty<Round.Participant>())
+                {
+                    if (participant?.Player is null) continue;
+
+                    string userId = participant.Player.Id.ToString();
+                    if (deckCodes[gameKey].ContainsKey(userId))
+                    {
+                        submissionCount++;
+                    }
+                }
+            }
+
+            return submissionCount >= 2;
+        }
+
+        public int GetCurrentGameNumber(Round round)
+        {
+            // The current game number is the count of maps played plus 1
+            return (round.Maps?.Count ?? 0) + 1;
+        }
+
+        public int GetPlayerScore(Round round, ulong playerId)
+        {
+            if (round.CustomProperties == null)
+                return 0;
+
+            string playerKey = playerId.ToString();
+            if (round.Teams?.FirstOrDefault()?.Participants?.FirstOrDefault()?.Player?.Id.ToString() == playerKey)
+            {
+                return round.CustomProperties.ContainsKey("Player1Wins") ?
+                    Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
+            }
+            else if (round.Teams?.LastOrDefault()?.Participants?.FirstOrDefault()?.Player?.Id.ToString() == playerKey)
+            {
+                return round.CustomProperties.ContainsKey("Player2Wins") ?
+                    Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
+            }
+
+            return 0;
+        }
+
+        public bool IsMatchComplete(Round round)
+        {
+            if (round.CustomProperties == null)
+                return false;
+
+            int player1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
+                Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
+            int player2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
+                Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
+
+            int winsNeeded = (round.Length + 1) / 2;
+            return player1Wins >= winsNeeded || player2Wins >= winsNeeded;
+        }
+
+        public DiscordMember? GetMatchWinner(Round round)
+        {
+            if (!IsMatchComplete(round) || round.Teams == null)
+                return null;
+
+            int player1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
+                Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
+            int player2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
+                Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
+
+            if (player1Wins > player2Wins)
+                return round.Teams.FirstOrDefault()?.Participants?.FirstOrDefault()?.Player as DiscordMember;
+            else if (player2Wins > player1Wins)
+                return round.Teams.LastOrDefault()?.Participants?.FirstOrDefault()?.Player as DiscordMember;
+
+            return null;
+        }
+
+        public (int winner, int loser) GetFinalScore(Round round)
+        {
+            if (round.CustomProperties == null)
+                return (0, 0);
+
+            int player1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
+                Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
+            int player2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
+                Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
+
+            return player1Wins > player2Wins ? (player1Wins, player2Wins) : (player2Wins, player1Wins);
         }
     }
 }

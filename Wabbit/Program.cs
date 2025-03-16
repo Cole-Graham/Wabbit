@@ -169,7 +169,7 @@ namespace Wabbit
 
                 // Load tournament state using the state service
                 var stateService = client.ServiceProvider.GetRequiredService<ITournamentStateService>();
-                stateService.LoadTournamentState();
+                await stateService.LoadTournamentState();
 
                 // Load tournament participants
                 var tournamentManagerService = client.ServiceProvider.GetRequiredService<ITournamentManagerService>();
