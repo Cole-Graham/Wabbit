@@ -19,6 +19,7 @@ using Wabbit.Misc;
 using Wabbit.Data;
 using Wabbit.Services;
 using Wabbit.Services.Interfaces;
+using Wabbit.Services.ServiceHelpers;
 
 namespace Wabbit
 {
@@ -96,6 +97,7 @@ namespace Wabbit
                     services.AddSingleton<ITournamentService, TournamentService>();
                     services.AddSingleton<ITournamentManagerService, TournamentManagerService>();
                     services.AddSingleton<IMatchStatusService, MatchStatusService>();
+                    services.AddSingleton<ITournamentStateValidator, TournamentStateValidator>();
 
                     // Register existing services
                     services.AddSingleton<IRandomProvider, RandomProvider>();
