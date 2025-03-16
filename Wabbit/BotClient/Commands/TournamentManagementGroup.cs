@@ -514,67 +514,87 @@ namespace Wabbit.BotClient.Commands
             [Description("Game type (1v1 or 2v2)")][SlashChoiceProvider<GameTypeChoiceProvider>] string gameType = "OneVsOne",
             [Description("Scheduled start time (Unix timestamp, 0 for none)")] long startTimeUnix = 0)
         {
-            await context.DeferResponseAsync();
-
             await SafeExecute(context, async () =>
             {
-                // Check if a signup with this name already exists
-                if (_signupService.GetAllSignups().Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                _logger.LogInformation($"Starting signup creation process for tournament '{name}'");
+
+                // Check if signup already exists
+                var existingSignup = _signupService.GetSignup(name);
+                if (existingSignup != null)
                 {
-                    await context.EditResponseAsync($"A signup with the name '{name}' already exists.");
-                    return;
+                    _logger.LogWarning($"Signup '{name}' already exists");
+                    throw new InvalidOperationException($"A signup with the name '{name}' already exists.");
                 }
 
-                // Get the signup channel ID
-                ulong? signupChannelId = GetSignupChannelId(context);
+                // Get signup channel ID
+                var signupChannelId = GetSignupChannelId(context);
                 if (!signupChannelId.HasValue)
                 {
-                    await context.EditResponseAsync("No signup channel configured. Using current channel.");
-                    signupChannelId = context.Channel.Id;
+                    _logger.LogError("Failed to get signup channel ID");
+                    throw new InvalidOperationException("Could not determine signup channel. Please ensure the command is used in the correct channel.");
                 }
+                _logger.LogInformation($"Using signup channel ID: {signupChannelId}");
+
+                // Parse format
+                if (!Enum.TryParse<TournamentFormat>(format, out var tournamentFormat))
+                {
+                    _logger.LogError($"Invalid tournament format: {format}");
+                    throw new InvalidOperationException($"Invalid tournament format: {format}");
+                }
+                _logger.LogInformation($"Parsed tournament format: {tournamentFormat}");
+
+                // Parse game type
+                if (!Enum.TryParse<GameType>(gameType, out var parsedGameType))
+                {
+                    _logger.LogError($"Invalid game type: {gameType}");
+                    throw new InvalidOperationException($"Invalid game type: {gameType}");
+                }
+                _logger.LogInformation($"Parsed game type: {parsedGameType}");
 
                 // Convert Unix timestamp to DateTime if provided
                 DateTime? scheduledStartTime = null;
                 if (startTimeUnix > 0)
                 {
-                    // Convert Unix timestamp to UTC DateTime
-                    DateTimeOffset utcTime = DateTimeOffset.FromUnixTimeSeconds(startTimeUnix);
-                    scheduledStartTime = utcTime.UtcDateTime;
-
-                    Console.WriteLine($"Signup timestamp conversion: Unix {startTimeUnix} -> UTC {scheduledStartTime.Value.ToString("yyyy-MM-dd HH:mm:ss")}");
+                    try
+                    {
+                        scheduledStartTime = DateTimeOffset.FromUnixTimeSeconds(startTimeUnix).DateTime;
+                        _logger.LogInformation($"Parsed scheduled start time: {scheduledStartTime}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Failed to parse Unix timestamp: {startTimeUnix}");
+                        throw new InvalidOperationException($"Invalid start time timestamp: {startTimeUnix}");
+                    }
                 }
 
-                // Parse game type
-                GameType parsedGameType;
-                try
-                {
-                    parsedGameType = Enum.Parse<GameType>(gameType);
-                }
-                catch (Exception)
-                {
-                    await context.EditResponseAsync($"Invalid game type: {gameType}. Valid options are 'OneVsOne' or 'TwoVsTwo'.");
-                    return;
-                }
+                _logger.LogInformation($"Creating signup with parameters: Name='{name}', Format={tournamentFormat}, GameType={parsedGameType}, ScheduledStartTime={scheduledStartTime}");
 
-                // Create the signup using the new SignupService
+                // Create the signup
                 var signup = _signupService.CreateSignup(
                     name,
-                    Enum.Parse<TournamentFormat>(format),
+                    tournamentFormat,
                     context.User,
                     signupChannelId.Value,
                     parsedGameType,
                     scheduledStartTime
                 );
 
+                _logger.LogInformation($"Created signup object with name: {signup.Name}");
+
+                // Get the signup channel
+                var signupChannel = await context.Client.GetChannelAsync(signupChannelId.Value);
+                if (signupChannel is null)
+                {
+                    _logger.LogError($"Failed to get channel with ID {signupChannelId.Value}");
+                    throw new InvalidOperationException("Could not access signup channel.");
+                }
+
+                _logger.LogInformation("Creating signup embed and message builder");
+                // Create and send the signup message
                 try
                 {
-                    // Ensure signup is saved before proceeding
-                    _signupService.UpdateSignup(signup);
-                    await _signupService.SaveSignupsAsync();
-
-                    // Create and send the signup message
-                    var signupChannel = await context.Client.GetChannelAsync(signupChannelId.Value);
                     var embed = _signupService.CreateSignupEmbed(signup);
+                    _logger.LogInformation("Created signup embed successfully");
 
                     var builder = new DiscordMessageBuilder()
                         .AddEmbed(embed)
@@ -590,15 +610,20 @@ namespace Wabbit.BotClient.Commands
                                 "Withdraw"
                             )
                         );
+                    _logger.LogInformation("Created message builder with embed and buttons");
 
+                    _logger.LogInformation($"Attempting to send message to channel {signupChannel.Name} ({signupChannel.Id})");
                     var message = await signupChannel.SendMessageAsync(builder);
+                    _logger.LogInformation($"Successfully sent message with ID: {message.Id}");
 
                     // Store the message ID
                     signup.MessageId = message.Id;
                     _logger.LogInformation($"Set MessageId to {message.Id} for signup '{name}'");
 
                     // Save updated MessageId - this is critical for future updates
+                    _logger.LogInformation("Updating signup with new message ID");
                     _signupService.UpdateSignup(signup);
+                    _logger.LogInformation("Saving signups to persistent storage");
                     await _signupService.SaveSignupsAsync();
 
                     // Verify the MessageId was saved
@@ -617,10 +642,10 @@ namespace Wabbit.BotClient.Commands
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error sending signup message: {ex.Message}\n{ex.StackTrace}");
-                    await SafeResponse(context, $"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}", null, true, 10);
+                    _logger.LogError(ex, "Failed to create or send signup message");
+                    throw;
                 }
-            }, "Failed to create tournament signup");
+            });
         }
 
         [Command("signup_close")]
