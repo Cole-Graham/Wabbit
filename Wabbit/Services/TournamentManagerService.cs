@@ -405,21 +405,26 @@ namespace Wabbit.Services
 
             if (tournament.Groups == null)
             {
+                _logger.LogError("Cannot generate matches: tournament has no groups");
                 return pendingMatches;
             }
+
+            _logger.LogInformation($"Generating matches for tournament {tournament.Name} with game type {tournament.GameType}");
 
             // Handle different game types
             switch (tournament.GameType)
             {
                 case GameType.OneVsOne:
+                    _logger.LogInformation("Using 1v1 match generation");
                     return Generate1v1Matches(tournament);
 
                 case GameType.TwoVsTwo:
+                    _logger.LogInformation("Using 2v2 match generation");
                     return Generate2v2Matches(tournament);
 
                 default:
-                    _logger.LogWarning($"Unsupported game type: {tournament.GameType}");
-                    return pendingMatches;
+                    _logger.LogWarning($"Unrecognized game type: {tournament.GameType}, falling back to 1v1 matches");
+                    return Generate1v1Matches(tournament);
             }
         }
 
@@ -429,19 +434,32 @@ namespace Wabbit.Services
         private List<(Tournament.Group Group, List<DiscordMember> TeamA, List<DiscordMember> TeamB)> Generate1v1Matches(Tournament tournament)
         {
             var pendingMatches = new List<(Tournament.Group Group, List<DiscordMember> TeamA, List<DiscordMember> TeamB)>();
+
             if (tournament.Groups == null)
             {
                 _logger.LogError("Tournament has no groups, cannot generate 1v1 matches");
                 return pendingMatches;
             }
 
+            // Log the total number of groups
+            _logger.LogInformation($"Generating matches for {tournament.Groups.Count} groups");
+
             // Process each group
             foreach (var group in tournament.Groups)
             {
-                if (group.Participants == null || group.Matches == null)
+                if (group.Participants == null)
                 {
+                    _logger.LogWarning($"Group {group.Name} has no participants, skipping");
                     continue;
                 }
+
+                if (group.Matches == null)
+                {
+                    // Initialize the matches collection if it's null
+                    group.Matches = new List<Tournament.Match>();
+                }
+
+                _logger.LogInformation($"Group {group.Name} has {group.Participants.Count} participants");
 
                 // Create matches for each player pair in this group
                 for (int i = 0; i < group.Participants.Count; i++)
@@ -463,13 +481,19 @@ namespace Wabbit.Services
 
                             if (!matchExists)
                             {
+                                _logger.LogInformation($"Adding pending match: {player1.DisplayName} vs {player2.DisplayName}");
                                 pendingMatches.Add((group, new List<DiscordMember> { player1 }, new List<DiscordMember> { player2 }));
                             }
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"Invalid player pair in group {group.Name}: Player1={player1?.DisplayName ?? "null"}, Player2={player2?.DisplayName ?? "null"}");
                         }
                     }
                 }
             }
 
+            _logger.LogInformation($"Generated {pendingMatches.Count} pending 1v1 matches");
             return pendingMatches;
         }
 
