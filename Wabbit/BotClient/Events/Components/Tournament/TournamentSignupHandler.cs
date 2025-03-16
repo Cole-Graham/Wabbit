@@ -62,6 +62,13 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         {
             try
             {
+                // Immediately defer the response if not already deferred
+                if (!hasBeenDeferred)
+                {
+                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredChannelMessageWithSource);
+                    hasBeenDeferred = true;
+                }
+
                 if (e.Id.StartsWith("signup_tournament_"))
                 {
                     await HandleSignupButton(client, e, hasBeenDeferred);
@@ -98,73 +105,58 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         /// <param name="hasBeenDeferred">Whether the interaction has already been deferred</param>
         private async Task HandleSignupButton(DiscordClient client, ComponentInteractionCreatedEventArgs e, bool hasBeenDeferred)
         {
-            // Only try to defer if not already deferred
-            if (!hasBeenDeferred)
-            {
-                try
-                {
-                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredChannelMessageWithSource);
-                    hasBeenDeferred = true;
-                }
-                catch (Exception ex)
-                {
-                    // Failed to defer signup button response, will try to continue
-                    _logger.LogWarning($"Failed to defer signup button response: {ex.Message}");
-                }
-            }
-
-            // Extract the tournament name from the button ID (format: signup_tournament_TournamentName)
-            string tournamentName = e.Id.Substring("signup_tournament_".Length);
-
-            // Find the signup using the SignupService and ensure participants are loaded
-            var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, client);
-
-            if (signup is null)
-            {
-                await SendErrorResponseAsync(e, $"Signup '{tournamentName}' not found. It may have been removed.", hasBeenDeferred);
-                return;
-            }
-
-            if (!signup.IsOpen)
-            {
-                await SendErrorResponseAsync(e, $"Signup for '{tournamentName}' is closed.", hasBeenDeferred);
-                return;
-            }
-
-            // Get the user as a Discord member
-            var member = e.User as DiscordMember;
-            if (member is null)
-            {
-                await SendErrorResponseAsync(e, "Unable to retrieve your member information.", hasBeenDeferred);
-                return;
-            }
-
-            // Check if the user is already signed up
-            var existingParticipant = signup.Participants.FirstOrDefault(p => p.Id == member.Id);
-            if (existingParticipant is not null)
-            {
-                // User is already signed up, ask if they want to withdraw
-                var withdrawConfirmBuilder = new DiscordWebhookBuilder()
-                    .WithContent($"You are already signed up for tournament '{tournamentName}'. Would you like to cancel your signup?")
-                    .AddComponents(
-                        new DiscordButtonComponent(DiscordButtonStyle.Danger, $"cancel_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Cancel Signup"),
-                        new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"keep_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Keep Signup")
-                    );
-
-                if (hasBeenDeferred)
-                {
-                    await e.Interaction.EditOriginalResponseAsync(withdrawConfirmBuilder);
-                }
-                else
-                {
-                    await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
-                        new DiscordInteractionResponseBuilder(withdrawConfirmBuilder).AsEphemeral());
-                }
-                return;
-            }
-
             try
             {
+                // Extract the tournament name from the button ID (format: signup_tournament_TournamentName)
+                string tournamentName = e.Id.Substring("signup_tournament_".Length);
+
+                // Find the signup using the SignupService and ensure participants are loaded
+                var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, client);
+
+                if (signup is null)
+                {
+                    await SendErrorResponseAsync(e, $"Signup '{tournamentName}' not found. It may have been removed.", hasBeenDeferred);
+                    return;
+                }
+
+                if (!signup.IsOpen)
+                {
+                    await SendErrorResponseAsync(e, $"Signup for '{tournamentName}' is closed.", hasBeenDeferred);
+                    return;
+                }
+
+                // Get the user as a Discord member
+                var member = e.User as DiscordMember;
+                if (member is null)
+                {
+                    await SendErrorResponseAsync(e, "Unable to retrieve your member information.", hasBeenDeferred);
+                    return;
+                }
+
+                // Check if the user is already signed up
+                var existingParticipant = signup.Participants.FirstOrDefault(p => p.Id == member.Id);
+                if (existingParticipant is not null)
+                {
+                    // User is already signed up, ask if they want to withdraw
+                    var withdrawConfirmBuilder = new DiscordWebhookBuilder()
+                        .WithContent($"You are already signed up for tournament '{tournamentName}'. Would you like to cancel your signup?")
+                        .AddComponents(
+                            new DiscordButtonComponent(DiscordButtonStyle.Danger, $"cancel_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Cancel Signup"),
+                            new DiscordButtonComponent(DiscordButtonStyle.Secondary, $"keep_signup_{tournamentName.Replace(" ", "_")}_{member.Id}", "Keep Signup")
+                        );
+
+                    if (hasBeenDeferred)
+                    {
+                        await e.Interaction.EditOriginalResponseAsync(withdrawConfirmBuilder);
+                    }
+                    else
+                    {
+                        await e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.ChannelMessageWithSource,
+                            new DiscordInteractionResponseBuilder(withdrawConfirmBuilder).AsEphemeral());
+                    }
+                    return;
+                }
+
                 // Add the user to the signup
                 var newParticipantsList = new List<DiscordMember>(signup.Participants);
                 newParticipantsList.Add(member);
@@ -184,15 +176,8 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 // Update the signup message
                 await UpdateSignupMessage(client, signup);
 
-                // Send confirmation message to the user (ephemeral)
-                if (hasBeenDeferred)
-                {
-                    await SendResponseAsync(e, $"You have successfully signed up for the '{signup.Name}' tournament!", hasBeenDeferred, DiscordColor.Green);
-                }
-                else
-                {
-                    await SendResponseAsync(e, $"You have successfully signed up for the '{signup.Name}' tournament!", hasBeenDeferred, DiscordColor.Green);
-                }
+                // Send confirmation message to the user
+                await SendResponseAsync(e, $"You have successfully signed up for the '{signup.Name}' tournament!", hasBeenDeferred, DiscordColor.Green);
             }
             catch (Exception ex)
             {
