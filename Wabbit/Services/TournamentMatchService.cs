@@ -22,35 +22,35 @@ namespace Wabbit.Services
     public class TournamentMatchService : ITournamentMatchService
     {
         private readonly OngoingRounds _ongoingRounds;
-        private readonly ITournamentGameService _tournamentGameService;
-        private readonly ITournamentPlayoffService _playoffService;
         private readonly ITournamentStateService _stateService;
         private readonly ITournamentMapService _mapService;
         private readonly ILogger<TournamentMatchService> _logger;
         private readonly IMatchStatusService _matchStatusService;
         private readonly ITournamentMatchOperationsService _matchOperations;
+        private readonly ITournamentStateValidator _stateValidator;
+        private readonly ITournamentScoreManager _scoreManager;
 
         private const int autoDeleteSeconds = 30;
         private const int mapThumbnailDurationMinutes = 5;
 
         public TournamentMatchService(
             OngoingRounds ongoingRounds,
-            ITournamentGameService tournamentGameService,
-            ITournamentPlayoffService playoffService,
             ITournamentStateService stateService,
             ITournamentMapService mapService,
             ILogger<TournamentMatchService> logger,
             IMatchStatusService matchStatusService,
-            ITournamentMatchOperationsService matchOperations)
+            ITournamentMatchOperationsService matchOperations,
+            ITournamentStateValidator stateValidator,
+            ITournamentScoreManager scoreManager)
         {
             _ongoingRounds = ongoingRounds ?? throw new ArgumentNullException(nameof(ongoingRounds));
-            _tournamentGameService = tournamentGameService ?? throw new ArgumentNullException(nameof(tournamentGameService));
-            _playoffService = playoffService ?? throw new ArgumentNullException(nameof(playoffService));
             _stateService = stateService ?? throw new ArgumentNullException(nameof(stateService));
             _mapService = mapService ?? throw new ArgumentNullException(nameof(mapService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _matchStatusService = matchStatusService ?? throw new ArgumentNullException(nameof(matchStatusService));
             _matchOperations = matchOperations ?? throw new ArgumentNullException(nameof(matchOperations));
+            _stateValidator = stateValidator ?? throw new ArgumentNullException(nameof(stateValidator));
+            _scoreManager = scoreManager ?? throw new ArgumentNullException(nameof(scoreManager));
         }
 
         /// <inheritdoc/>
@@ -102,7 +102,8 @@ namespace Wabbit.Services
                     Teams = new List<Round.Team>(),
                     TournamentId = tournament?.Name,
                     MsgToDel = new List<DiscordMessage>(),
-                    TournamentRound = true
+                    TournamentRound = true,
+                    CustomProperties = new Dictionary<string, object>()
                 };
 
                 // Set group stage match information
@@ -113,41 +114,15 @@ namespace Wabbit.Services
                     int totalMatchesPerPlayer = Math.Max(0, groupSize - 1); // Each player plays against every other player once
 
                     // Calculate match number for this specific match in player1's sequence
-                    int player1MatchesPlayed = 0;
+                    int player1MatchesPlayed = group.Matches?
+                        .Count(m => m.Participants
+                            .Any(p => (p.Player as DiscordMember)?.Id == player1.Id)) ?? 0;
 
-                    if (player1 is not null && group.Matches is not null)
-                    {
-                        player1MatchesPlayed = group.Matches.Count(m =>
-                            m?.Participants?.Any(p =>
-                                p?.Player != null &&
-                                player1 is not null &&
-                                p.Player.ToString() == player1.Id.ToString() &&
-                                m != match) ?? false);
-                    }
-
-                    round.GroupStageMatchNumber = player1MatchesPlayed + 1;
-                    round.TotalGroupStageMatches = totalMatchesPerPlayer;
+                    round.CustomProperties["GroupMatchNumber"] = player1MatchesPlayed + 1;
+                    round.CustomProperties["TotalGroupMatches"] = totalMatchesPerPlayer;
                 }
 
-                // Initialize CustomProperties if needed
-                if (round.CustomProperties is null)
-                {
-                    round.CustomProperties = new Dictionary<string, object>();
-                }
-
-                // Store the match in the round's custom properties
-                round.CustomProperties["TournamentMatch"] = match;
-                round.CustomProperties["CreatedAt"] = DateTime.Now;
-                round.CustomProperties["RoundId"] = Guid.NewGuid().ToString();
-
-                // Create map ban dropdown options
-                _logger.LogInformation("Getting map pool for match");
-                string[] maps1v1 = _mapService.GetTournamentMapPool(true).ToArray();
-
-                // Initialize the Maps collection
-                round.Maps = new List<string>();
-
-                // Create teams
+                // Create team objects
                 var team1 = new Round.Team
                 {
                     Name = player1?.DisplayName ?? "Player 1",
@@ -173,19 +148,16 @@ namespace Wabbit.Services
                 round.Teams.Add(team2);
 
                 // Set up metadata for the match
-                if (round.CustomProperties is not null)
-                {
-                    round.CustomProperties["Player1Name"] = player1?.DisplayName ?? "Player 1";
-                    round.CustomProperties["Player2Name"] = player2?.DisplayName ?? "Player 2";
-                    round.CustomProperties["Player1Score"] = 0;
-                    round.CustomProperties["Player2Score"] = 0;
-                    round.CustomProperties["Player1Wins"] = 0;
-                    round.CustomProperties["Player2Wins"] = 0;
-                    round.CustomProperties["Draws"] = 0;
-                    round.CustomProperties["MatchLength"] = matchLength;
-                    round.CustomProperties["Player1Id"] = player1?.Id ?? 0;
-                    round.CustomProperties["Player2Id"] = player2?.Id ?? 0;
-                }
+                round.CustomProperties["Player1Name"] = player1?.DisplayName ?? "Player 1";
+                round.CustomProperties["Player2Name"] = player2?.DisplayName ?? "Player 2";
+                round.CustomProperties["Player1Score"] = 0;
+                round.CustomProperties["Player2Score"] = 0;
+                round.CustomProperties["Player1Wins"] = 0;
+                round.CustomProperties["Player2Wins"] = 0;
+                round.CustomProperties["Draws"] = 0;
+                round.CustomProperties["MatchLength"] = matchLength;
+                round.CustomProperties["Player1Id"] = player1?.Id ?? 0;
+                round.CustomProperties["Player2Id"] = player2?.Id ?? 0;
 
                 // Add the round to ongoing rounds
                 _ongoingRounds.TourneyRounds.Add(round);
@@ -236,45 +208,37 @@ namespace Wabbit.Services
 
             await _matchOperations.UpdateMatchResultAsync(tournament, match, winner, winnerScore, loserScore);
 
-            // Handle match completion
-            await HandleMatchCompletion(tournament, match, null);
+            // Update group stats if this is a group stage match
+            var winnerParticipant = match.Participants.FirstOrDefault(p =>
+                (p.Player as DiscordMember)?.Id == winner.Id);
+
+            if (match.Type == TournamentMatchType.GroupStage &&
+                winnerParticipant?.SourceGroup != null)
+            {
+                _scoreManager.UpdateGroupScores(winnerParticipant.SourceGroup, match);
+            }
         }
 
         /// <inheritdoc/>
         public async Task HandleMatchCompletion(
             Tournament tournament,
             Tournament.Match match,
-            DiscordClient? client)
+            DiscordClient client)
         {
-            _logger.LogInformation($"Handling completion of match {match.Name} in tournament {tournament.Name}");
-
-            // Save tournament state
-            if (client != null)
+            try
             {
+                // Archive match threads if client is provided
+                if (client != null)
+                {
+                    await ArchiveMatchThreadsAsync(match, client);
+                }
+
+                // Save tournament state
                 await _stateService.SaveTournamentStateAsync(client);
-
-                // Generate a new visualization
-                try
-                {
-                    await Misc.TournamentVisualization.GenerateStandingsImage(tournament, client, _stateService);
-                    _logger.LogInformation($"Generated updated standings visualization for tournament {tournament.Name}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Error generating standings visualization for tournament {tournament.Name}: {ex.Message}");
-                }
             }
-
-            // Check if tournament is complete
-            bool allPlayoffMatchesComplete = tournament.PlayoffMatches != null &&
-                tournament.PlayoffMatches.Count > 0 &&
-                tournament.PlayoffMatches.All(m => m.IsComplete);
-
-            if (tournament.CurrentStage == TournamentStage.Playoffs && allPlayoffMatchesComplete)
+            catch (Exception ex)
             {
-                tournament.CurrentStage = TournamentStage.Complete;
-                tournament.IsComplete = true;
-                _logger.LogInformation($"Tournament {tournament.Name} is now complete");
+                _logger.LogError(ex, $"Error handling match completion for {match.Name}");
             }
         }
 
@@ -286,44 +250,43 @@ namespace Wabbit.Services
         {
             try
             {
-                _logger.LogInformation($"Archiving threads for match {match.Name}");
-
-                // Convert TimeSpan to DiscordAutoArchiveDuration
-                var archiveDurationEnum = archiveDuration?.TotalMinutes switch
+                if (match.LinkedRound?.Teams == null || !match.LinkedRound.Teams.Any())
                 {
-                    <= 60 => DiscordAutoArchiveDuration.Hour,
-                    <= 1440 => DiscordAutoArchiveDuration.Day,
-                    <= 10080 => DiscordAutoArchiveDuration.Week,
-                    _ => DiscordAutoArchiveDuration.Week // Default to a week for longer durations
-                };
+                    _logger.LogInformation($"No threads to archive for match {match.Name}");
+                    return;
+                }
 
-                // Find and archive team threads
-                if (match.LinkedRound?.Teams != null)
+                foreach (var team in match.LinkedRound.Teams)
                 {
-                    foreach (var team in match.LinkedRound.Teams)
+                    try
                     {
-                        try
+                        if (team.Thread is not null)
                         {
-                            if (team.Thread is not null)
+                            await team.Thread.ModifyAsync(props =>
                             {
-                                await team.Thread.ModifyAsync(props =>
+                                props.IsArchived = true;
+                                if (archiveDuration.HasValue)
                                 {
-                                    props.Locked = true;
-                                    props.AutoArchiveDuration = archiveDurationEnum;
-                                });
-                                _logger.LogInformation($"Archived team thread {team.Thread.Name}");
-                            }
+                                    props.AutoArchiveDuration = archiveDuration.Value switch
+                                    {
+                                        var d when d.TotalMinutes <= 60 => DiscordAutoArchiveDuration.Hour,
+                                        var d when d.TotalMinutes <= 1440 => DiscordAutoArchiveDuration.Day,
+                                        _ => DiscordAutoArchiveDuration.Week
+                                    };
+                                }
+                            });
+                            _logger.LogInformation($"Archived thread {team.Thread.Name} for match {match.Name}");
                         }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, $"Error archiving team thread: {ex.Message}");
-                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Error archiving thread for team {team.Name} in match {match.Name}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error archiving match threads: {ex.Message}");
+                _logger.LogError(ex, $"Error archiving threads for match {match.Name}");
             }
         }
 
@@ -489,20 +452,15 @@ namespace Wabbit.Services
         {
             _logger.LogInformation($"Setting up playoff stage for tournament {tournament.Name}");
 
-            // Delegate playoff setup to the specialized playoff service
-            await _playoffService.SetupPlayoffsAsync(tournament, client);
-
-            // Post updated visualization through appropriate service
-            // This could be an ITournamentVisualizationService or similar
-            if (tournament.AnnouncementChannel is not null)
+            // Instead of delegating to playoff service, we'll just validate the state transition
+            if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
             {
-                _logger.LogInformation("Tournament playoff stage ready for visualization");
+                tournament.CurrentStage = TournamentStage.Playoffs;
+                await _stateService.SaveTournamentStateAsync(client);
             }
-
-            // Start the playoff matches
-            if (tournament.CurrentStage == TournamentStage.Playoffs)
+            else
             {
-                await _playoffService.StartPlayoffMatchesAsync(tournament, client);
+                _logger.LogWarning($"Invalid state transition from {tournament.CurrentStage} to Playoffs for tournament {tournament.Name}");
             }
         }
 
@@ -650,6 +608,60 @@ namespace Wabbit.Services
 
             // Group stage matches are Bo1, playoffs are Bo3
             return group is null || existingMatch?.Type == TournamentMatchType.GroupStageTiebreaker;
+        }
+
+        /// <summary>
+        /// Checks if the tournament can progress to the next stage
+        /// </summary>
+        private bool CanProgressToNextStage(Tournament tournament)
+        {
+            // Implement the logic to determine if the tournament can progress to the next stage
+            // This is a placeholder and should be replaced with the actual implementation
+            return true; // Placeholder return, actual implementation needed
+        }
+
+        /// <summary>
+        /// Handles the progression of the tournament to the next stage
+        /// </summary>
+        public async Task HandleTournamentProgressionAsync(Tournament tournament, DiscordClient client)
+        {
+            try
+            {
+                // Check if we can transition to playoffs
+                if (tournament.CurrentStage == TournamentStage.Groups &&
+                    tournament.Groups?.All(g => g.IsComplete) == true)
+                {
+                    // Validate state transition
+                    if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
+                    {
+                        tournament.CurrentStage = TournamentStage.Playoffs;
+                        _logger.LogInformation($"Tournament {tournament.Name} is transitioning to playoffs");
+                    }
+                    else
+                    {
+                        _logger.LogWarning($"Invalid state transition from {tournament.CurrentStage} to Playoffs for tournament {tournament.Name}");
+                    }
+                }
+                // Check if tournament is complete
+                else if (tournament.CurrentStage == TournamentStage.Playoffs &&
+                        tournament.PlayoffMatches?.All(m => m.IsComplete) == true)
+                {
+                    // Validate state transition
+                    if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Complete))
+                    {
+                        tournament.CurrentStage = TournamentStage.Complete;
+                        tournament.IsComplete = true;
+                        _logger.LogInformation($"Tournament {tournament.Name} is now complete");
+                    }
+                }
+
+                // Save tournament state
+                await _stateService.SaveTournamentStateAsync(client);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling tournament progression");
+            }
         }
 
         // ... other methods ...

@@ -16,14 +16,11 @@ namespace Wabbit.Services.ServiceHelpers
     public class TournamentMatchOperationsService : ITournamentMatchOperationsService
     {
         private readonly ILogger<TournamentMatchOperationsService> _logger;
-        private readonly ITournamentScoreManager _scoreManager;
 
         public TournamentMatchOperationsService(
-            ILogger<TournamentMatchOperationsService> logger,
-            ITournamentScoreManager scoreManager)
+            ILogger<TournamentMatchOperationsService> logger)
         {
             _logger = logger;
-            _scoreManager = scoreManager;
         }
 
         /// <inheritdoc/>
@@ -93,13 +90,6 @@ namespace Wabbit.Services.ServiceHelpers
                 CompletedAt = DateTime.Now,
                 Status = MatchStatus.Completed
             };
-
-            // Update group stats if this is a group stage match
-            if (match.Type == TournamentMatchType.GroupStage &&
-                winnerParticipant.SourceGroup != null)
-            {
-                _scoreManager.UpdateGroupScores(winnerParticipant.SourceGroup, match);
-            }
 
             await Task.CompletedTask;
         }

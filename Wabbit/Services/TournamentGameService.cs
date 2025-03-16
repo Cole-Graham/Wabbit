@@ -20,12 +20,10 @@ namespace Wabbit.Services
         private readonly OngoingRounds _ongoingRounds;
         private readonly ITournamentRepositoryService _repositoryService;
         private readonly ITournamentStateService _stateService;
-        private readonly ITournamentPlayoffService _playoffService;
         private readonly ITournamentMapService _mapService;
         private readonly ILogger<TournamentGameService> _logger;
         private readonly IMatchStatusService _matchStatusService;
-        private readonly IServiceScopeFactory _scopeFactory;
-        private readonly ITournamentMatchService _matchService;
+        private readonly ITournamentMatchOperationsService _matchOperations;
         private readonly ITournamentStateValidator _stateValidator;
         private readonly ITournamentScoreManager _scoreManager;
         private readonly ITournamentProgressTracker _progressTracker;
@@ -37,12 +35,10 @@ namespace Wabbit.Services
             OngoingRounds ongoingRounds,
             ITournamentRepositoryService repositoryService,
             ITournamentStateService stateService,
-            ITournamentPlayoffService playoffService,
             ITournamentMapService mapService,
             ILogger<TournamentGameService> logger,
             IMatchStatusService matchStatusService,
-            IServiceScopeFactory scopeFactory,
-            ITournamentMatchService matchService,
+            ITournamentMatchOperationsService matchOperations,
             ITournamentStateValidator stateValidator,
             ITournamentScoreManager scoreManager,
             ITournamentProgressTracker progressTracker)
@@ -50,12 +46,10 @@ namespace Wabbit.Services
             _ongoingRounds = ongoingRounds;
             _repositoryService = repositoryService;
             _stateService = stateService;
-            _playoffService = playoffService;
             _mapService = mapService;
             _logger = logger;
             _matchStatusService = matchStatusService;
-            _scopeFactory = scopeFactory;
-            _matchService = matchService;
+            _matchOperations = matchOperations;
             _stateValidator = stateValidator;
             _scoreManager = scoreManager;
             _progressTracker = progressTracker;
@@ -186,9 +180,8 @@ namespace Wabbit.Services
                         // Validate state transition
                         if (_stateValidator.IsValidStateTransition(tournament, TournamentStage.Playoffs))
                         {
-                            await _playoffService.SetupPlayoffsAsync(tournament, client);
                             tournament.CurrentStage = TournamentStage.Playoffs;
-                            _logger.LogInformation($"Setting up playoffs for tournament {tournament.Name}");
+                            _logger.LogInformation($"Tournament {tournament.Name} is transitioning to playoffs");
                         }
                         else
                         {
@@ -248,57 +241,22 @@ namespace Wabbit.Services
                 var initialMapPool = _mapService.GetTournamentMapPool(round.OneVOne);
 
                 // Get all banned maps from both teams
-                var bannedMaps = new HashSet<string>();
+                var bannedMaps = round.Teams
+                    .SelectMany(t => t.MapBans ?? new List<string>())
+                    .ToList();
 
-                // Add maps from global bans stored in CustomProperties
-                if (round.CustomProperties.ContainsKey("BannedMaps") && round.CustomProperties["BannedMaps"] is List<string> globalBannedMaps)
-                {
-                    foreach (var map in globalBannedMaps)
-                    {
-                        bannedMaps.Add(map);
-                    }
-                }
+                // Get maps that have already been played in this round
+                var playedMaps = round.Maps ?? new List<string>();
 
-                // Add team-specific bans
-                if (round.Teams != null)
-                {
-                    foreach (var team in round.Teams)
-                    {
-                        if (team?.MapBans != null)
-                        {
-                            foreach (var map in team.MapBans)
-                            {
-                                bannedMaps.Add(map);
-                            }
-                        }
-                    }
-                }
-
-                // Filter out banned maps
-                var availableMaps = initialMapPool.Where(map => !bannedMaps.Contains(map)).ToList();
-
-                // For games after the first, also remove already played maps
-                if (round.Maps != null && round.Maps.Count > 0)
-                {
-                    availableMaps = availableMaps.Where(map => !round.Maps.Contains(map)).ToList();
-
-                    _logger.LogInformation($"Filtered out {round.Maps.Count} already played maps");
-                }
-
-                _logger.LogInformation($"Found {availableMaps.Count} available maps for next game");
-
-                // If no maps available (all banned or played), return the initial pool with a warning
-                if (availableMaps.Count == 0)
-                {
-                    _logger.LogWarning("No maps available after filtering. Using initial map pool.");
-                    return initialMapPool;
-                }
-
-                return availableMaps;
+                // Remove banned and played maps from the pool
+                return initialMapPool
+                    .Except(bannedMaps)
+                    .Except(playedMaps)
+                    .ToList();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting available maps for next game");
+                _logger.LogError(ex, "Error getting available maps");
                 return new List<string>();
             }
         }

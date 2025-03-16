@@ -98,27 +98,33 @@ namespace Wabbit
                     services.AddSingleton<TournamentScoreManager>();
                     services.AddSingleton<ITournamentScoreManager>(sp => sp.GetRequiredService<TournamentScoreManager>());
 
+                    // Register base services
+                    services.AddSingleton<ITournamentRepositoryService, TournamentRepositoryService>();
+                    services.AddSingleton<ITournamentSignupService, TournamentSignupService>();
+                    services.AddSingleton<ITournamentStateService, TournamentStateService>();
+                    services.AddSingleton<ITournamentMapService, TournamentMapService>();
+                    services.AddSingleton<IMatchStatusService, MatchStatusService>();
+                    services.AddSingleton<ITournamentProgressTracker, TournamentProgressTracker>();
+
+                    // Register group and playoff services
                     services.AddSingleton<TournamentGroupService>();
                     services.AddSingleton<ITournamentGroupService>(sp => sp.GetRequiredService<TournamentGroupService>());
 
                     services.AddSingleton<TournamentPlayoffService>();
                     services.AddSingleton<ITournamentPlayoffService>(sp => sp.GetRequiredService<TournamentPlayoffService>());
 
+                    // Register game and match services
+                    services.AddSingleton<TournamentGameService>();
+                    services.AddSingleton<ITournamentGameService>(sp => sp.GetRequiredService<TournamentGameService>());
+
                     services.AddSingleton<TournamentMatchService>();
                     services.AddSingleton<ITournamentMatchService>(sp => sp.GetRequiredService<TournamentMatchService>());
 
-                    // Register tournament services
-                    services.AddSingleton<ITournamentRepositoryService, TournamentRepositoryService>();
-                    services.AddSingleton<ITournamentSignupService, TournamentSignupService>();
-                    services.AddSingleton<ITournamentStateService, TournamentStateService>();
-                    services.AddSingleton<ITournamentGameService, TournamentGameService>();
-                    services.AddSingleton<ITournamentMapService, TournamentMapService>();
+                    // Register tournament manager service last
                     services.AddSingleton<ITournamentService, TournamentService>();
                     services.AddSingleton<ITournamentManagerService, TournamentManagerService>();
-                    services.AddSingleton<IMatchStatusService, MatchStatusService>();
-                    services.AddSingleton<ITournamentProgressTracker, TournamentProgressTracker>();
 
-                    // Register existing services
+                    // Register utility services
                     services.AddSingleton<IRandomProvider, RandomProvider>();
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
