@@ -457,6 +457,16 @@ namespace Wabbit.Services
                 {
                     // Initialize the matches collection if it's null
                     group.Matches = new List<Tournament.Match>();
+                    _logger.LogInformation($"Initialized empty matches collection for group {group.Name}");
+                }
+                else
+                {
+                    _logger.LogInformation($"Group {group.Name} already has {group.Matches.Count} matches");
+                    // Debug existing matches
+                    foreach (var match in group.Matches)
+                    {
+                        _logger.LogInformation($"Existing match: {match.Name ?? "Unnamed"}, ParticipantCount: {match.Participants?.Count ?? 0}");
+                    }
                 }
 
                 _logger.LogInformation($"Group {group.Name} has {group.Participants.Count} participants");
@@ -482,12 +492,16 @@ namespace Wabbit.Services
                         if (player1 is not null && player2 is not null)
                         {
                             // Check if a match already exists between these players
-                            bool matchExists = group.Matches.Any(m =>
-                                m.Participants?.Count == 2 &&
-                                ((m.Participants[0].Player is DiscordMember p1 && p1.Id == player1.Id &&
-                                  m.Participants[1].Player is DiscordMember p2 && p2.Id == player2.Id) ||
-                                 (m.Participants[0].Player is DiscordMember p3 && p3.Id == player2.Id &&
-                                  m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id)));
+                            bool matchExists = false;
+                            if (group.Matches != null && group.Matches.Count > 0)
+                            {
+                                matchExists = group.Matches.Any(m =>
+                                    m.Participants?.Count == 2 &&
+                                    ((m.Participants[0].Player is DiscordMember p1 && p1.Id == player1.Id &&
+                                      m.Participants[1].Player is DiscordMember p2 && p2.Id == player2.Id) ||
+                                     (m.Participants[0].Player is DiscordMember p3 && p3.Id == player2.Id &&
+                                      m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id)));
+                            }
 
                             _logger.LogInformation($"Match already exists for {player1.DisplayName} vs {player2.DisplayName}: {matchExists}");
 
