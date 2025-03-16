@@ -1,0 +1,15 @@
+   @startuml name
+   ' C# specific styles
+   skinparam class {
+     BackgroundColor<<Service>> LightBlue
+     BackgroundColor<<Interface>> LightGray
+     BackgroundColor<<Model>> LightGreen
+     BackgroundColor<<Helper>> LightYellow
+   }
+
+   ' Common stereotypes
+   !define Service(name) class name <<Service>>
+   !define Interface(name) interface name <<Interface>>
+   !define Model(name) class name <<Model>>
+   !define Helper(name) class name <<Helper>>
+   @enduml

@@ -1,0 +1,318 @@
+@startuml Tournament System - Restructured Architecture
+
+' Layout settings
+top to bottom direction
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 60
+skinparam classAttributeIconSize 0
+skinparam maxMessageSize 100
+skinparam wrapWidth 200
+
+skinparam class {
+    BackgroundColor White
+    ArrowColor #333
+    BorderColor #333
+    Padding 5
+    Style strictuml
+}
+
+skinparam package {
+    BackgroundColor transparent
+    BorderColor gray
+    FontColor gray
+    FontSize 11
+}
+
+' ===== Domain Layer =====
+package "Domain Layer" as DomainLayer {
+    ' Core domain entities with behavior
+    class Tournament {
+        -id: string
+        -name: string
+        -status: TournamentStatus
+        -format: TournamentFormat
+        -gameType: GameType
+        -settings: TournamentSettings
+        +Create(name, format, gameType, settings)
+        +StartGroupStage()
+        +AdvanceToPlayoffs()
+        +Complete()
+        +IsEligibleForPlayoffs(): bool
+    }
+    
+    class Group {
+        -id: string
+        -name: string
+        -participants: List<GroupParticipant>
+        -matches: List<Match>
+        +AddParticipant(participant)
+        +GenerateMatches()
+        +UpdateStandings()
+        +DetermineAdvancingParticipants(): List<GroupParticipant>
+        +IsComplete(): bool
+    }
+    
+    class Match {
+        -id: string
+        -participants: List<MatchParticipant>
+        -status: MatchStatus
+        -result: MatchResult
+        -round: Round
+        +Start()
+        +RecordResult(winner, score)
+        +CanProceedToStage(stage): bool
+        +Forfeit(participant)
+    }
+    
+    class Round {
+        -id: string
+        -teams: List<Team>
+        -maps: List<string>
+        -stage: MatchStage
+        +SubmitMapBans(team, maps)
+        +SubmitDeck(team, deck)
+        +RecordGameResult(winner, score)
+        +AdvanceToNextStage(): bool
+    }
+
+    ' Value objects
+    class TournamentSettings {
+        +minPlayers: int
+        +maxPlayers: int
+        +includeThirdPlaceMatch: bool
+        +bestOfSettings: Dictionary<MatchType, int>
+    }
+    
+    ' Rich domain enums
+    enum TournamentStatus {
+        SignupOpen
+        GroupStage
+        Playoffs
+        Completed
+    }
+    
+    enum MatchStage {
+        Created
+        MapBan
+        DeckSubmission
+        InProgress
+        Completed
+    }
+}
+
+' ===== Event Layer =====
+package "Event System" as EventLayer {
+    class EventBus {
+        +PublishEvent(event)
+        +Subscribe<T>(handler)
+    }
+    
+    ' Domain events
+    abstract class DomainEvent {
+        +timestamp: DateTime
+        +aggregateId: string
+    }
+    
+    class TournamentCreatedEvent extends DomainEvent {
+        +tournamentName: string
+        +format: TournamentFormat
+    }
+    
+    class GroupStageCompletedEvent extends DomainEvent {
+        +tournamentId: string
+    }
+    
+    class MatchCompletedEvent extends DomainEvent {
+        +matchId: string
+        +winnerId: string
+        +score: string
+    }
+    
+    class RoundStageChangedEvent extends DomainEvent {
+        +roundId: string
+        +previousStage: MatchStage
+        +newStage: MatchStage
+    }
+}
+
+' ===== Application Layer =====
+package "Application Layer" as ApplicationLayer {
+    ' Command handlers
+    class TournamentCommandHandler {
+        +CreateTournament(command)
+        +StartTournament(command)
+        +AdvanceToPlayoffs(command)
+    }
+    
+    class MatchCommandHandler {
+        +StartMatch(command)
+        +RecordMatchResult(command)
+        +ForfeitMatch(command)
+    }
+    
+    class RoundCommandHandler {
+        +StartMapBanStage(command)
+        +SubmitMapBans(command)
+        +SubmitDeck(command)
+        +RecordGameResult(command)
+    }
+    
+    ' Query handlers
+    class TournamentQueryHandler {
+        +GetTournamentById(id)
+        +GetTournamentsByStatus(status)
+        +GetCurrentMatches(tournamentId)
+    }
+    
+    class GroupQueryHandler {
+        +GetGroupStandings(groupId)
+        +GetAdvancingParticipants(tournamentId)
+    }
+    
+    class MatchQueryHandler {
+        +GetMatchById(id)
+        +GetMatchesByParticipant(participantId)
+    }
+}
+
+' ===== Infrastructure Layer =====
+package "Infrastructure Layer" as InfrastructureLayer {
+    ' Repository implementations
+    class TournamentRepository {
+        +Save(tournament)
+        +GetById(id)
+        +GetByStatus(status)
+    }
+    
+    class EventStore {
+        +AppendEvents(events)
+        +GetEventsByAggregateId(id)
+    }
+    
+    ' External integrations
+    class DiscordIntegration {
+        +SendTournamentAnnouncement(tournament)
+        +CreateMatchThread(match)
+        +UpdateMatchStatus(match)
+    }
+    
+    ' Cross-cutting concerns
+    class Logger {
+        +LogInformation(message)
+        +LogWarning(message)
+        +LogError(error)
+    }
+    
+    class StateSnapshotManager {
+        +CreateSnapshot(aggregate)
+        +RestoreFromSnapshot(id)
+    }
+}
+
+' ===== Presentation Layer =====
+package "UI Layer" as UILayer {
+    ' Discord Command Handlers
+    class TournamentCommands {
+        +HandleCreateTournament(interaction)
+        +HandleStartTournament(interaction)
+        +HandleSignup(interaction)
+    }
+    
+    class MatchCommands {
+        +HandleStartMatch(interaction)
+        +HandleSubmitScore(interaction)
+    }
+    
+    ' Component Handlers
+    class MatchInteractionHandlers {
+        +HandleMapBan(interaction)
+        +HandleDeckSubmission(interaction)
+        +HandleResultSubmission(interaction)
+    }
+}
+
+' ===== Relationships =====
+' Domain relationships
+Tournament "1" *-- "0..*" Group
+Group "1" *-- "0..*" Match
+Match "1" *-- "0..1" Round
+Tournament *-- TournamentSettings
+
+' Event system relationships
+EventBus -- TournamentCreatedEvent
+EventBus -- GroupStageCompletedEvent
+EventBus -- MatchCompletedEvent
+EventBus -- RoundStageChangedEvent
+
+' Application layer to domain
+TournamentCommandHandler --> Tournament
+MatchCommandHandler --> Match
+RoundCommandHandler --> Round
+TournamentQueryHandler --> Tournament
+GroupQueryHandler --> Group
+MatchQueryHandler --> Match
+
+' Application layer to event system
+TournamentCommandHandler --> EventBus
+MatchCommandHandler --> EventBus
+RoundCommandHandler --> EventBus
+
+' Infrastructure to domain
+TournamentRepository --> Tournament
+EventStore --> DomainEvent
+StateSnapshotManager --> Tournament
+StateSnapshotManager --> Match
+DiscordIntegration --> Tournament
+DiscordIntegration --> Match
+
+' UI to application
+TournamentCommands --> TournamentCommandHandler
+TournamentCommands --> TournamentQueryHandler
+MatchCommands --> MatchCommandHandler
+MatchCommands --> MatchQueryHandler
+MatchInteractionHandlers --> RoundCommandHandler
+
+' Arrange components vertically
+Tournament -[hidden]d-> Group
+Group -[hidden]d-> Match
+Match -[hidden]d-> Round
+
+EventBus -[hidden]d-> TournamentCreatedEvent
+TournamentCreatedEvent -[hidden]d-> GroupStageCompletedEvent
+GroupStageCompletedEvent -[hidden]d-> MatchCompletedEvent
+
+TournamentCommandHandler -[hidden]d-> MatchCommandHandler
+MatchCommandHandler -[hidden]d-> RoundCommandHandler
+RoundCommandHandler -[hidden]d-> TournamentQueryHandler
+
+TournamentRepository -[hidden]d-> EventStore
+EventStore -[hidden]d-> DiscordIntegration
+DiscordIntegration -[hidden]d-> Logger
+
+TournamentCommands -[hidden]d-> MatchCommands
+MatchCommands -[hidden]d-> MatchInteractionHandlers
+
+' Add notes for key improvements
+note right of DomainLayer
+  Domain entities contain business logic
+  rather than being anemic data holders.
+  This follows the principle of
+  "behaviors where the data is".
+end note
+
+note right of EventLayer
+  Event-driven approach decouples components
+  and provides a clear history of system changes.
+  Services react to events rather than
+  calling each other directly.
+end note
+
+note right of ApplicationLayer
+  Clear separation of commands (write)
+  and queries (read) following CQRS pattern.
+  This simplifies testing and reasoning
+  about the system.
+end note
+
+@enduml 

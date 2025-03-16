@@ -331,7 +331,15 @@ namespace Wabbit.Services
             }
 
             round.CurrentStage = MatchStage.MapBan;
-            return await UpdateMatchStatusAsync(channel, round, client);
+            var message = await UpdateMatchStatusAsync(channel, round, client);
+
+            // Also update in all team threads if this is not a team thread
+            if (round.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
+            {
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
+
+            return message;
         }
 
         /// <summary>
@@ -342,49 +350,16 @@ namespace Wabbit.Services
             // Update the round's current stage
             round.CurrentStage = MatchStage.DeckSubmission;
 
-            var message = await GetMatchStatusMessageAsync(channel, client);
-            var embed = CreateMatchStatusEmbed(round);
+            // Update the status message
+            var message = await UpdateMatchStatusAsync(channel, round, client);
 
-            // Add deck submission instructions with emoji
-            embed.AddField("🃏 Current Stage: Deck Submission",
-                "Submit your deck using the `/tournament submit_deck` command.");
-
-            // Add progress bar to show current stage
-            embed.AddField("Match Progress",
-                "✅ Map Bans\n" +
-                "▶️ Deck Submission\n" +
-                "⬜ Game Results",
-                false);
-
-            // Use orange color for deck submission stage
-            embed.WithColor(new DiscordColor(255, 140, 0));
-
-            string description = embed.Description ?? "";
-            embed.Description = $"{description}\n\n**Deck Submission Stage**\n" +
-                               "Use `/tournament submit_deck` to submit your deck for the upcoming match.";
-
-            // Add submit deck button for direct access to the command
-            var submitDeckButton = new DiscordButtonComponent(
-                DiscordButtonStyle.Primary,
-                "submit_deck_button",
-                "Submit Deck");
-
-            if (message is not null)
+            // Also update in all team threads if this is not a team thread
+            if (round.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
             {
-                await message.ModifyAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(submitDeckButton));
-                return message;
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
             }
-            else
-            {
-                var newMessage = await channel.SendMessageAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(submitDeckButton));
 
-                _channelToMessageMap[channel.Id] = newMessage.Id;
-                return newMessage;
-            }
+            return message;
         }
 
         /// <summary>
@@ -474,59 +449,42 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Records a map ban selection and shows confirmation UI
+        /// Records a map ban selection in the match status
         /// </summary>
         public async Task RecordMapBanAsync(DiscordChannel channel, Round round, string teamName, List<string> bannedMaps, DiscordClient client)
         {
-            // Ensure the message exists before trying to update it
-            var message = await EnsureMatchStatusMessageExistsAsync(channel, round, client);
-            if (message is null) return;
-
-            var embed = message.Embeds.FirstOrDefault();
-            if (embed is null) return;
-
-            // Create a new embed builder with the same base properties
-            var builder = new DiscordEmbedBuilder()
-                .WithTitle(embed.Title ?? "Match Status")
-                .WithDescription(embed.Description ?? "")
-                .WithColor(embed.Color ?? DiscordColor.NotQuiteBlack)
-                .WithTimestamp(embed.Timestamp);
-
-            // Add progress bar field
-            builder.AddField("Progress", GetMatchProgressBar(round.CurrentStage), false);
-
-            // Add confirmation instructions
-            builder.AddField("Review Your Selections",
-                "Click Confirm to lock in your choices or Revise to make changes.",
-                false);
-
-            // Show selected maps
-            var selectedMapsField = new StringBuilder();
-            for (int i = 0; i < bannedMaps.Count; i++)
+            if (round.CurrentStage != MatchStage.MapBan)
             {
-                selectedMapsField.AppendLine($"Priority #{i + 1}: {bannedMaps[i]}");
+                throw new InvalidOperationException($"Cannot record map ban in stage {round.CurrentStage}");
             }
-            builder.AddField("Selected Maps", selectedMapsField.ToString(), false);
 
-            // Update map pool and other sections
-            AddMapPoolField(builder, round, bannedMaps);
-            AddTeamMapBansField(builder, round);
-            AddGameResultsArea(builder, round);
-            AddDeckSubmissionsArea(builder, round);
+            // Find the team by name
+            var team = round.Teams.FirstOrDefault(t => string.Equals(t.Name, teamName, StringComparison.OrdinalIgnoreCase));
+            if (team == null)
+            {
+                throw new ArgumentException($"Team '{teamName}' not found in round", nameof(teamName));
+            }
 
-            // Create confirmation buttons
-            var confirmBtn = new DiscordButtonComponent(
-                DiscordButtonStyle.Success,
-                $"confirm_map_bans_{teamName}",
-                "Confirm Bans");
-            var reviseBtn = new DiscordButtonComponent(
-                DiscordButtonStyle.Secondary,
-                $"revise_map_bans_{teamName}",
-                "Revise Bans");
+            // Update the team's map bans
+            team.MapBans = bannedMaps;
 
-            await message.ModifyAsync(new DiscordMessageBuilder()
-                .AddEmbed(builder.Build())
-                .AddComponents(confirmBtn, reviseBtn));
+            // Check if all teams have submitted map bans
+            bool allTeamsSubmitted = round.Teams.All(t => t.MapBans?.Any() ?? false);
+
+            // If all teams have submitted, move to deck submission stage
+            if (allTeamsSubmitted)
+            {
+                round.CurrentStage = MatchStage.DeckSubmission;
+            }
+
+            // Update the status message
+            await UpdateMatchStatusAsync(channel, round, client);
+
+            // Also update all team threads if this is not a team thread
+            if (round.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
+            {
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
         }
 
         /// <summary>
@@ -552,10 +510,12 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Records a deck submission
+        /// Records a deck submission and updates the match status
         /// </summary>
         public async Task RecordDeckSubmissionAsync(DiscordChannel channel, Round round, ulong playerId, string deckCode, int gameNumber, DiscordClient client)
         {
+            if (round is null) throw new ArgumentNullException(nameof(round));
+
             // Ensure the message exists before trying to update it
             var message = await EnsureMatchStatusMessageExistsAsync(channel, round, client);
             if (message is null) return;
@@ -619,10 +579,16 @@ namespace Wabbit.Services
             newBuilder.AddField("Deck Submissions", deckContent.ToString() ?? "No submissions yet", false);
 
             await message.ModifyAsync(new DiscordMessageBuilder().AddEmbed(newBuilder.Build()));
+
+            // Also update in all team threads if this is not a team thread
+            if (round?.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
+            {
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
         }
 
         /// <summary>
-        /// Records a game result
+        /// Records a game result and updates match status
         /// </summary>
         public async Task RecordGameResultAsync(DiscordChannel channel, Round round, string winnerName, int gameNumber, DiscordClient client)
         {
@@ -678,6 +644,12 @@ namespace Wabbit.Services
             newBuilder.AddField("Game Results", resultsContent.ToString() ?? "No results yet", false);
 
             await message.ModifyAsync(new DiscordMessageBuilder().AddEmbed(newBuilder.Build()));
+
+            // Also update in all team threads if this is not a team thread
+            if (round.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
+            {
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
         }
 
         /// <summary>
@@ -1271,6 +1243,33 @@ namespace Wabbit.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error updating map information");
+            }
+        }
+
+        /// <summary>
+        /// Updates the match status embed in all team threads
+        /// </summary>
+        public async Task UpdateMatchStatusInAllThreadsAsync(Round round, DiscordClient client)
+        {
+            if (round is null) throw new ArgumentNullException(nameof(round));
+            if (client is null) throw new ArgumentNullException(nameof(client));
+
+            foreach (var team in round.Teams)
+            {
+                if (team.Thread is null)
+                {
+                    _logger.LogWarning($"Cannot update match status: no thread for team {team.Name}");
+                    continue;
+                }
+
+                try
+                {
+                    await UpdateMatchStatusAsync(team.Thread, round, client);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Error updating match status in thread for team {team.Name}");
+                }
             }
         }
     }

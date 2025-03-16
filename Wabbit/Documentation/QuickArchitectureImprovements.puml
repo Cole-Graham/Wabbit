@@ -1,0 +1,162 @@
+@startuml Quick Architecture Improvements
+
+' Focus on improvements that can be implemented in under an hour
+
+package "Current Issues" {
+  class "1. Service Coupling" as Issue1 #ffcccc
+  class "2. Anemic Domain Models" as Issue2 #ffcccc
+  class "3. Complex Dependencies" as Issue3 #ffcccc
+  class "4. Handler Indirection" as Issue4 #ffcccc
+  class "5. Interface Pollution" as Issue5 #ffcccc
+}
+
+package "Quick Improvements" {
+  class "A. Add Domain Events" as Solution1 #ccffcc {
+    +Create simple events for key state changes
+    +Implement basic pub/sub mechanism
+    +Example: TournamentStateChangedEvent
+  }
+  
+  class "B. Move Core Logic to Models" as Solution2 #ccffcc {
+    +Add key methods to Tournament class:
+      void AdvanceToPlayoffs()
+      bool IsComplete()
+      bool CanCreateThirdPlaceMatch()
+    +Add validation logic to Match class
+  }
+  
+  class "C. Simplify Service Dependencies" as Solution3 #ccffcc {
+    +Consolidate related services
+    +Extract common functionality
+    +Introduce facades for cross-cutting concerns
+  }
+  
+  class "D. Streamline Handler Registry" as Solution4 #ccffcc {
+    +Replace factory pattern with simple registry
+    +Reduce layers of indirection
+    +Use attribute-based registration
+  }
+  
+  class "E. Reduce Interface Count" as Solution5 #ccffcc {
+    +Merge related interfaces
+    +Example: Combine ITournamentBracketManager
+      and ITournamentScoreManager
+    +Focus on cohesive responsibilities
+  }
+}
+
+package "Key Dependencies to Consider" #fff2cc {
+  class "Factory References" as Dependency1 {
+    +Program.cs uses factories for DI registration
+    +Multiple handlers depend on factory patterns
+    +Main event handlers use factories
+  }
+  
+  class "Service Interface Usage" as Dependency2 {
+    +Services are referenced across multiple handlers
+    +Cross-cutting dependencies between services
+    +Direct usage in ComponentHandlerBase
+  }
+  
+  class "Handler Registrations" as Dependency3 {
+    +Handlers are registered in Program.cs
+    +Handlers have diverse dependencies
+    +Event flow depends on handler chain
+  }
+}
+
+package "Implementation Steps" {
+  class "1. Create Tournament Events" as Step1 {
+    1. Create TournamentEvent base class
+    2. Add 2-3 key events (StateChanged, MatchCompleted)
+    3. Add simple EventPublisher class
+    4. Modify TournamentMatchService to publish events
+    5. Ensure backward compatibility by keeping existing methods
+  }
+  
+  class "2. Enhance Tournament Model" as Step2 {
+    1. Move IsEligibleForPlayoffs() logic from service to model
+    2. Add AdvanceToPlayoffs() method to Tournament
+    3. Add key validation methods to models
+    4. Keep service methods as pass-through to new model methods
+  }
+  
+  class "3. Refactor Service Dependencies" as Step3 {
+    1. Create TournamentOperationsService to encapsulate common operations
+    2. Update dependency injection registrations in Program.cs
+    3. Use constructor injection consistently
+    4. Create facade interfaces that combine related operations
+  }
+  
+  class "4. Simplify Handler Pattern" as Step4 {
+    1. Create HandlerRegistry alongside existing factories
+    2. Add [HandlesComponent("prefix_")] attribute
+    3. Create adapter between old factory and new registry
+    4. Gradually migrate handlers to use registry directly
+  }
+  
+  class "5. Consolidate Interfaces" as Step5 {
+    1. Create new combined interfaces (ITournamentMatchManagement)
+    2. Implement these interfaces in existing services
+    3. Update DI registrations to include both old and new interfaces
+    4. Gradually update references to use new interfaces
+  }
+}
+
+package "Benefits" #e6ffcc {
+  class "File Consolidation" as Benefit1 {
+    +Potential to remove 2 factory files:
+      - ComponentHandlerFactory.cs
+      - ModalHandlerFactory.cs
+    +Simplifies code organization
+    +Reduces file count by ~10% in handlers area
+  }
+  
+  class "Interface Reduction" as Benefit2 {
+    +Could reduce interfaces from 14+ to ~8
+    +Merges:
+      - State services (2 to 1)
+      - Match services (2 to 1)
+      - Bracket & playoff services (2 to 1)
+      - Score management into domain model
+    +Clearer responsibility boundaries
+  }
+  
+  class "Reduced Complexity" as Benefit3 {
+    +Average service dependencies reduced by ~30%
+    +Less indirection in component handling
+    +More predictable event flow
+    +Easier to trace execution path
+  }
+  
+  class "Improved Maintainability" as Benefit4 {
+    +Business logic in domain models
+    +Simpler cross-service communication
+    +Higher cohesion within modules
+    +Easier to test individual components
+  }
+}
+
+Issue1 --> Solution1
+Issue2 --> Solution2
+Issue3 --> Solution3
+Issue4 --> Solution4
+Issue5 --> Solution5
+
+Solution1 --> Step1
+Solution2 --> Step2
+Solution3 --> Step3
+Solution4 --> Step4
+Solution5 --> Step5
+
+Dependency1 --> Step4
+Dependency2 --> Step3
+Dependency3 --> Step5
+
+Step1 --> Benefit3
+Step2 --> Benefit4
+Step3 --> Benefit1
+Step4 --> Benefit3
+Step5 --> Benefit2
+
+@enduml 

@@ -165,6 +165,37 @@ namespace Wabbit.Services
                 // Link the round to the match
                 match.LinkedRound = round;
 
+                // Create threads for teams
+                foreach (var team in round.Teams)
+                {
+                    if (tournament?.AnnouncementChannel is null)
+                    {
+                        _logger.LogError($"Cannot create thread for team {team.Name}: Announcement channel is null");
+                        continue;
+                    }
+
+                    var thread = await DiscordUtilities.CreateThreadAsync(
+                        tournament.AnnouncementChannel,
+                        team.Name ?? "Team Thread",
+                        _logger,
+                        DiscordChannelType.PrivateThread,
+                        DiscordAutoArchiveDuration.Day);
+
+                    if (thread is not null)
+                    {
+                        team.Thread = thread;
+
+                        // Add team participants to the thread
+                        foreach (var participant in team.Participants)
+                            if (participant.Player is not null)
+                                await thread.AddThreadMemberAsync(participant.Player);
+                    }
+                    else
+                    {
+                        _logger.LogError($"Failed to create thread for team {team.Name}");
+                    }
+                }
+
                 // Initialize the match status system
                 try
                 {
@@ -173,9 +204,20 @@ namespace Wabbit.Services
                         _logger.LogWarning($"No announcement channel found for tournament {tournament?.Name}");
                         return;
                     }
-                    await _matchStatusService.CreateNewMatchStatusAsync(tournament.AnnouncementChannel, round, client);
-                    await _matchStatusService.UpdateToMapBanStageAsync(tournament.AnnouncementChannel, round, client);
-                    _logger.LogInformation($"Match status initialized for match {match.Name}");
+
+                    // Create match status in each team's thread instead of announcement channel
+                    foreach (var team in round.Teams)
+                    {
+                        if (team.Thread is null)
+                        {
+                            _logger.LogWarning($"No thread found for team {team.Name}");
+                            continue;
+                        }
+
+                        await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                        await _matchStatusService.UpdateToMapBanStageAsync(team.Thread, round, client);
+                        _logger.LogInformation($"Match status initialized for match {match.Name} in thread for {team.Name}");
+                    }
                 }
                 catch (Exception ex)
                 {

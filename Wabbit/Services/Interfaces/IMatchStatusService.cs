@@ -135,5 +135,12 @@ namespace Wabbit.Services.Interfaces
         /// <param name="round">The tournament round</param>
         /// <param name="client">The Discord client</param>
         Task UpdateMapInformationAsync(DiscordChannel channel, Round round, DiscordClient client);
+
+        /// <summary>
+        /// Updates the match status in all threads
+        /// </summary>
+        /// <param name="round">The tournament round</param>
+        /// <param name="client">The Discord client</param>
+        Task UpdateMatchStatusInAllThreadsAsync(Round round, DiscordClient client);
     }
 }
