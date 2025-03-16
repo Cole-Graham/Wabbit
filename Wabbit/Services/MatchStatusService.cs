@@ -1,14 +1,17 @@
+using DSharpPlus;
+using DSharpPlus.Entities;
+using DSharpPlus.EventArgs;
+using DSharpPlus.Exceptions;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using DSharpPlus;
-using DSharpPlus.Entities;
-using Microsoft.Extensions.Logging;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using Wabbit.Misc;
+using DSharpPlus.Interactivity;
 
 namespace Wabbit.Services
 {
@@ -465,8 +468,69 @@ namespace Wabbit.Services
                 throw new ArgumentException($"Team '{teamName}' not found in round", nameof(teamName));
             }
 
-            // Update the team's map bans
-            team.MapBans = bannedMaps;
+            // Update the team's unconfirmed map bans (not confirmed yet)
+            team.UnconfirmedMapBans = bannedMaps;
+
+            // Get the message in this channel
+            var existingMessage = await GetMatchStatusMessageAsync(channel, client);
+            if (existingMessage == null)
+            {
+                throw new InvalidOperationException("Cannot find match status message to update");
+            }
+
+            // Update the status message
+            await UpdateMatchStatusAsync(channel, round, client);
+
+            // Also update all team threads if this is not a team thread
+            if (round.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
+            {
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
+
+            // Add confirm/revise buttons
+            var builder = new DiscordMessageBuilder()
+                .AddEmbed(CreateMatchStatusEmbed(round, null))
+                .AddComponents(
+                    new DiscordButtonComponent(
+                        DiscordButtonStyle.Success,
+                        $"confirm_map_bans_{round.GetHashCode()}",
+                        "Confirm Map Bans"
+                    ),
+                    new DiscordButtonComponent(
+                        DiscordButtonStyle.Secondary,
+                        $"revise_map_bans_{round.GetHashCode()}",
+                        "Revise Map Bans"
+                    )
+                );
+
+            await existingMessage.ModifyAsync(builder);
+        }
+
+        /// <summary>
+        /// Confirms a team's map bans
+        /// </summary>
+        public async Task ConfirmMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client)
+        {
+            if (round.CurrentStage != MatchStage.MapBan)
+            {
+                throw new InvalidOperationException($"Cannot confirm map bans in stage {round.CurrentStage}");
+            }
+
+            // Find the team by name
+            var team = round.Teams.FirstOrDefault(t => string.Equals(t.Name, teamName, StringComparison.OrdinalIgnoreCase));
+            if (team == null)
+            {
+                throw new ArgumentException($"Team '{teamName}' not found in round", nameof(teamName));
+            }
+
+            if (team.UnconfirmedMapBans == null || !team.UnconfirmedMapBans.Any())
+            {
+                throw new InvalidOperationException("No map bans to confirm");
+            }
+
+            // Transfer unconfirmed bans to confirmed bans
+            team.MapBans = team.UnconfirmedMapBans.ToList();
+            team.UnconfirmedMapBans.Clear();
 
             // Check if all teams have submitted map bans
             bool allTeamsSubmitted = round.Teams.All(t => t.MapBans?.Any() ?? false);
@@ -485,6 +549,66 @@ namespace Wabbit.Services
             {
                 await UpdateMatchStatusInAllThreadsAsync(round, client);
             }
+        }
+
+        /// <summary>
+        /// Revises a team's map ban selection by returning to the selection dropdown
+        /// </summary>
+        public async Task ReviseMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client)
+        {
+            if (round.CurrentStage != MatchStage.MapBan)
+            {
+                throw new InvalidOperationException($"Cannot revise map bans in stage {round.CurrentStage}");
+            }
+
+            // Find the team by name
+            var team = round.Teams.FirstOrDefault(t => string.Equals(t.Name, teamName, StringComparison.OrdinalIgnoreCase));
+            if (team == null)
+            {
+                throw new ArgumentException($"Team '{teamName}' not found in round", nameof(teamName));
+            }
+
+            // Clear unconfirmed map bans to allow reselection
+            team.UnconfirmedMapBans.Clear();
+
+            // Get the match status message
+            var existingMessage = await GetMatchStatusMessageAsync(channel, client);
+            if (existingMessage == null)
+            {
+                throw new InvalidOperationException("Cannot find match status message to update");
+            }
+
+            // Get map pool
+            var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
+            if (mapPool == null || !mapPool.Any())
+            {
+                throw new InvalidOperationException("No map pool available");
+            }
+
+            // Get available maps (all maps that haven't been played)
+            var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
+            if (!availableMaps.Any())
+            {
+                throw new InvalidOperationException("No available maps to ban");
+            }
+
+            // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+            // Bo5 matches have 2 bans
+            int numBans = round.Length == 5 ? 2 : 3;
+
+            // Update the status message with the dropdown again
+            var builder = new DiscordMessageBuilder()
+                .AddEmbed(CreateMatchStatusEmbed(round, mapPool))
+                .AddComponents(new DiscordSelectComponent(
+                    $"map_ban_{round.GetHashCode()}",
+                    $"Select {numBans} maps to ban (in order of priority)",
+                    availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                    false,
+                    minOptions: numBans,
+                    maxOptions: numBans
+                ));
+
+            await existingMessage.ModifyAsync(builder);
         }
 
         /// <summary>
@@ -1034,14 +1158,32 @@ namespace Wabbit.Services
             if (round.Maps?.Contains(map) == true)
                 return "🟦"; // Blue for played maps
 
-            // Check if map is banned by either team
+            // Check if map is banned by either team (only consider confirmed bans)
             foreach (var team in round.Teams ?? Enumerable.Empty<Round.Team>())
             {
                 if (team.MapBans?.Contains(map) == true)
                 {
-                    // First ban is guaranteed in Bo5, all bans in Bo3
-                    bool isGuaranteedBan = round.Length == 3 ||
-                                          (round.Length == 5 && team.MapBans.IndexOf(map) == 0);
+                    // Determine if this is a guaranteed or conditional ban based on match length and ban priority
+                    int banPriority = team.MapBans.IndexOf(map);
+
+                    bool isGuaranteedBan = false;
+
+                    // Best of 1: All 3 bans are guaranteed
+                    if (round.Length == 1)
+                    {
+                        isGuaranteedBan = true;
+                    }
+                    // Best of 3: Priority 1 and 2 are guaranteed, Priority 3 is conditional
+                    else if (round.Length == 3)
+                    {
+                        isGuaranteedBan = banPriority < 2; // 0 and 1 are guaranteed
+                    }
+                    // Best of 5: Only Priority 1 is guaranteed, Priority 2 is conditional
+                    else if (round.Length == 5)
+                    {
+                        isGuaranteedBan = banPriority == 0; // Only 0 is guaranteed
+                    }
+
                     return isGuaranteedBan ? "🟥" : "🟨";
                 }
             }
@@ -1062,8 +1204,29 @@ namespace Wabbit.Services
             if (userTeam is null) return;
 
             // User's team map bans
-            if (userTeam.MapBans?.Any() == true)
+            if (userTeam.UnconfirmedMapBans?.Any() == true && userTeam.MapBans?.Any() != true)
             {
+                // Display unconfirmed bans with proper formatting
+                banBuilder.AppendLine("My Team Map Bans (unconfirmed):");
+                banBuilder.AppendLine("Priority #1      Priority #2      Priority #3");
+
+                // Create a single line for the map names
+                var mapLine = new StringBuilder();
+                for (int i = 0; i < userTeam.UnconfirmedMapBans.Count; i++)
+                {
+                    string mapName = userTeam.UnconfirmedMapBans[i];
+                    // Pad each map name to align properly
+                    mapLine.Append(mapName.PadRight(15));
+                    if (i < userTeam.UnconfirmedMapBans.Count - 1)
+                        mapLine.Append(" ");
+                }
+                banBuilder.AppendLine(mapLine.ToString());
+            }
+            else if (userTeam.MapBans?.Any() == true)
+            {
+                // Display confirmed bans
+                banBuilder.AppendLine("My Team Map Bans:");
+
                 // Show priority numbers clearly
                 for (int i = 0; i < userTeam.MapBans.Count; i++)
                 {
@@ -1074,6 +1237,7 @@ namespace Wabbit.Services
             }
             else
             {
+                banBuilder.AppendLine("My Team Map Bans:");
                 banBuilder.AppendLine("(Not yet submitted)");
             }
 
@@ -1095,7 +1259,8 @@ namespace Wabbit.Services
             // Add divider at the end
             banBuilder.AppendLine("\n_______________________________________________");
 
-            builder.AddField("My Team Map Bans:", banBuilder.ToString().Trim(), false);
+            // Remove the label from the field since it's already in the content
+            builder.AddField("\u200B", banBuilder.ToString().Trim(), false);
         }
 
         private void AddDeckSubmissionsAreaWithDivider(DiscordEmbedBuilder builder, Round round)
@@ -1181,6 +1346,9 @@ namespace Wabbit.Services
         {
             string instructions = round.CurrentStage switch
             {
+                MatchStage.MapBan => round.Teams?.FirstOrDefault()?.UnconfirmedMapBans?.Any() == true
+                    ? "Review your map ban selections above and choose to confirm or revise them."
+                    : "Select maps to ban using the dropdown below, ordered by priority.",
                 MatchStage.DeckSubmission => "Submit your deck using `/tournament submit_deck`.",
                 MatchStage.DeckRevision => "Please submit your revised deck using `/tournament submit_deck`.",
                 MatchStage.GameResults => "Select the winner from the dropdown below.",

@@ -171,9 +171,6 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                         return;
                     }
 
-                    // Store map bans temporarily
-                    teamForMapBan.MapBans = validatedBans;
-
                     // Use the match status service to record the map bans in the centralized status embed
                     await _matchStatusService.RecordMapBanAsync(e.Channel, round, teamForMapBan.Name ?? "Unknown Team", validatedBans, client);
                 }
@@ -233,44 +230,16 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     }
                 }
 
-                // Check if both teams have submitted their bans
-                bool allTeamsSubmitted = teams?.All(t => t?.MapBans?.Any() == true) ?? false;
-
-                if (allTeamsSubmitted)
+                // Use the new ConfirmMapBansAsync method to confirm the map bans
+                if (e.Channel is not null)
                 {
-                    // Update the match status to move to the next stage (deck submission)
-                    if (e.Channel is not null)
-                    {
-                        await _matchStatusService.UpdateToDeckSubmissionStageAsync(e.Channel, round, client);
-                    }
-
-                    // Log the successful map ban completion
-                    if (e.Channel is not null)
-                    {
-                        _logger.LogInformation($"Map bans completed for match in channel {e.Channel.Id}");
-                    }
-
-                    // Save both tournament state and tournament data files
-                    await _stateService.SaveTournamentStateAsync(client);
-
-                    using (var scope = _scopeFactory.CreateScope())
-                    {
-                        var tournamentManager = scope.ServiceProvider.GetRequiredService<ITournamentManagerService>();
-                        await tournamentManager.SaveAllDataAsync();
-                    }
+                    await _matchStatusService.ConfirmMapBansAsync(e.Channel, round, team.Name ?? "Unknown Team", client);
                 }
-                else
-                {
-                    // Update the match status to show this team's bans are confirmed
-                    if (e.Channel is not null)
-                    {
-                        await _matchStatusService.UpdateToMapBanStageAsync(e.Channel, round, client);
-                    }
 
-                    // Send an ephemeral message to the user
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Your map bans have been confirmed. Waiting for the other team to submit their bans.")
-                        .AsEphemeral(true));
+                // Log the successful map ban confirmation
+                if (e.Channel is not null)
+                {
+                    _logger.LogInformation($"Map bans confirmed for team {team.Name} in channel {e.Channel.Id}");
                 }
             }
             catch (Exception ex)
@@ -328,13 +297,16 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     }
                 }
 
-                // Clear the team's map bans
-                team.MapBans?.Clear();
-
-                // Update the match status to show the map ban UI again
+                // Use the new ReviseMapBansAsync method to revise the map bans
                 if (e.Channel is not null)
                 {
-                    await _matchStatusService.UpdateToMapBanStageAsync(e.Channel, round, client);
+                    await _matchStatusService.ConfirmMapBansAsync(e.Channel, round, team.Name ?? "Unknown Team", client);
+                }
+
+                // Log the successful map ban revision
+                if (e.Channel is not null)
+                {
+                    _logger.LogInformation($"Map bans revised for team {team.Name} in channel {e.Channel.Id}");
                 }
             }
             catch (Exception ex)

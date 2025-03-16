@@ -113,12 +113,28 @@ namespace Wabbit.Services
                     int groupSize = group.Participants?.Count ?? 0;
                     int totalMatchesPerPlayer = Math.Max(0, groupSize - 1); // Each player plays against every other player once
 
-                    // Calculate match number for this specific match in player1's sequence
-                    int player1MatchesPlayed = group.Matches?
-                        .Count(m => m.Participants
-                            .Any(p => (p.Player as DiscordMember)?.Id == player1.Id)) ?? 0;
+                    // Find completed matches for player1
+                    int completedMatches = 0;
 
-                    round.CustomProperties["GroupMatchNumber"] = player1MatchesPlayed + 1;
+                    // If there's an existing tournament, check for previous matches in this group
+                    if (tournament != null && player1 is not null)
+                    {
+                        // Get all completed matches for this player in the group
+                        completedMatches = group.Matches?
+                            .Where(m => m != match) // Don't count current match
+                            .Where(m => m.IsComplete)
+                            .Count(m => m.Participants
+                                .Any(p => (p.Player as DiscordMember)?.Id == player1.Id)) ?? 0;
+
+                        // GroupMatchNumber should be completedMatches + 1 (i.e., next match number)
+                        round.CustomProperties["GroupMatchNumber"] = completedMatches + 1;
+                    }
+                    else
+                    {
+                        // Default to first match if we can't determine
+                        round.CustomProperties["GroupMatchNumber"] = 1;
+                    }
+
                     round.CustomProperties["TotalGroupMatches"] = totalMatchesPerPlayer;
                 }
 

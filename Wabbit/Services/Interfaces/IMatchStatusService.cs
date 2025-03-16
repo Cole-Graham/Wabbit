@@ -142,5 +142,23 @@ namespace Wabbit.Services.Interfaces
         /// <param name="round">The tournament round</param>
         /// <param name="client">The Discord client</param>
         Task UpdateMatchStatusInAllThreadsAsync(Round round, DiscordClient client);
+
+        /// <summary>
+        /// Confirms a team's map bans
+        /// </summary>
+        /// <param name="channel">The match thread channel</param>
+        /// <param name="round">The tournament round</param>
+        /// <param name="teamName">The name of the team confirming bans</param>
+        /// <param name="client">The Discord client</param>
+        Task ConfirmMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client);
+
+        /// <summary>
+        /// Revises a team's map ban selection by returning to the selection dropdown
+        /// </summary>
+        /// <param name="channel">The match thread channel</param>
+        /// <param name="round">The tournament round</param>
+        /// <param name="teamName">The name of the team revising bans</param>
+        /// <param name="client">The Discord client</param>
+        Task ReviseMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client);
     }
 }

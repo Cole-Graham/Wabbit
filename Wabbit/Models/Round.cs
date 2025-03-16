@@ -45,6 +45,7 @@ namespace Wabbit.Models
             public List<Participant> Participants { get; set; } = [];
             public int Wins { get; set; } = 0;
             public List<string> MapBans { get; set; } = [];
+            public List<string> UnconfirmedMapBans { get; set; } = [];
             public bool HasSubmittedDeck => Participants.All(p => !string.IsNullOrEmpty(p.Deck));
         }
     }
