@@ -64,6 +64,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         public override bool CanHandle(string customId)
         {
             return customId == "map_ban_dropdown" ||
+                   customId.StartsWith("map_ban_") ||
                    customId.StartsWith("confirm_map_bans_") ||
                    customId.StartsWith("revise_map_bans_") ||
                    customId.StartsWith("ban_map_") ||
@@ -83,6 +84,9 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 switch (e.Id)
                 {
                     case "map_ban_dropdown":
+                        await HandleMapBanDropdownAsync(client, e, hasBeenDeferred);
+                        break;
+                    case string s when s.StartsWith("map_ban_"):
                         await HandleMapBanDropdownAsync(client, e, hasBeenDeferred);
                         break;
                     case string s when s.StartsWith("confirm_map_bans_"):
