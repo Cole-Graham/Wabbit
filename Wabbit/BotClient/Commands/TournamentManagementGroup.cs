@@ -200,7 +200,7 @@ namespace Wabbit.BotClient.Commands
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Failed to delete messages: {ex.Message}");
+                        _logger.LogError(ex, $"Failed to delete messages: {ex.Message}");
                     }
                 });
             }, "Failed to create tournament from signup");
@@ -810,7 +810,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Log player information for debugging (minimal)
-                Console.WriteLine($"Adding player to signup '{tournamentName}': {player.Username} (ID: {player.Id})");
+                _logger.LogInformation($"Adding player to signup '{tournamentName}': {player.Username} (ID: {player.Id})");
 
                 // Find the signup using the SignupService and ensure participants are loaded
                 var signup = await _signupService.GetSignupWithParticipantsAsync(tournamentName, context.Client);
@@ -836,28 +836,28 @@ namespace Wabbit.BotClient.Commands
 
                 // Add the player to the signup
                 // Create a new list from the existing participants
-                Console.WriteLine($"Current participants in signup '{signup.Name}':");
+                _logger.LogInformation($"Current participants in signup '{signup.Name}':");
                 foreach (var p in signup.Participants)
                 {
-                    Console.WriteLine($"  - {p.Username} (ID: {p.Id})");
+                    _logger.LogInformation($"  - {p.Username} (ID: {p.Id})");
                 }
                 var newParticipantsList = signup.Participants.ToList();
 
                 // Log the initial state of the list
-                Console.WriteLine($"Initial participants list after initialization contains {newParticipantsList.Count} players:");
+                _logger.LogInformation($"Initial participants list after initialization contains {newParticipantsList.Count} players:");
                 foreach (var p in newParticipantsList)
                 {
-                    Console.WriteLine($"  - {p.Username} (ID: {p.Id})");
+                    _logger.LogInformation($"  - {p.Username} (ID: {p.Id})");
                 }
 
                 // Add the new player
                 newParticipantsList.Add(player);
 
                 // Log the final state after adding new player
-                Console.WriteLine($"Final participants list contains {newParticipantsList.Count} players:");
+                _logger.LogInformation($"Final participants list contains {newParticipantsList.Count} players:");
                 foreach (var p in newParticipantsList)
                 {
-                    Console.WriteLine($"  - {p.Username} (ID: {p.Id})");
+                    _logger.LogInformation($"  - {p.Username} (ID: {p.Id})");
                 }
 
                 // Replace the participants list in the signup
@@ -873,11 +873,11 @@ namespace Wabbit.BotClient.Commands
                 if (!signup.ParticipantInfo.Any(p => p.Id == player.Id))
                 {
                     signup.ParticipantInfo.Add(new ParticipantInfo { Id = player.Id, Username = player.Username });
-                    Console.WriteLine($"Added {player.Username} (ID: {player.Id}) to ParticipantInfo list, now has {signup.ParticipantInfo.Count} entries");
+                    _logger.LogInformation($"Added {player.Username} (ID: {player.Id}) to ParticipantInfo list, now has {signup.ParticipantInfo.Count} entries");
                 }
 
-                Console.WriteLine($"Successfully added {player.Username} (ID: {player.Id}) to signup '{tournamentName}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants (ParticipantInfo: {signup.ParticipantInfo.Count})");
+                _logger.LogInformation($"Successfully added {player.Username} (ID: {player.Id}) to signup '{tournamentName}'");
+                _logger.LogInformation($"Signup now has {signup.Participants.Count} participants (ParticipantInfo: {signup.ParticipantInfo.Count})");
 
                 // Save the updated signup
                 _signupService.UpdateSignup(signup);
@@ -935,11 +935,11 @@ namespace Wabbit.BotClient.Commands
                 if (signup.ParticipantInfo != null)
                 {
                     signup.ParticipantInfo.RemoveAll(p => p.Id == player.Id);
-                    Console.WriteLine($"Removed {player.Username} (ID: {player.Id}) from ParticipantInfo list, remaining: {signup.ParticipantInfo.Count}");
+                    _logger.LogInformation($"Removed {player.Username} (ID: {player.Id}) from ParticipantInfo list, remaining: {signup.ParticipantInfo.Count}");
                 }
 
-                Console.WriteLine($"Successfully removed {player.DisplayName} (ID: {player.Id}) from signup '{tournamentName}'");
-                Console.WriteLine($"Signup now has {signup.Participants.Count} participants (ParticipantInfo: {signup.ParticipantInfo?.Count ?? 0})");
+                _logger.LogInformation($"Successfully removed {player.DisplayName} (ID: {player.Id}) from signup '{tournamentName}'");
+                _logger.LogInformation($"Signup now has {signup.Participants.Count} participants (ParticipantInfo: {signup.ParticipantInfo?.Count ?? 0})");
 
                 // Save the updated signup
                 _signupService.UpdateSignup(signup);
@@ -1269,7 +1269,7 @@ namespace Wabbit.BotClient.Commands
             {
                 if (signup.MessageId == 0 || signup.SignupChannelId == 0)
                 {
-                    Console.WriteLine($"Cannot update signup message for '{signup.Name}' - missing message ID or channel ID");
+                    _logger.LogWarning($"Cannot update signup message for '{signup.Name}' - missing message ID or channel ID");
                     return;
                 }
 
@@ -1280,7 +1280,7 @@ namespace Wabbit.BotClient.Commands
                 var channel = await client.GetChannelAsync(signup.SignupChannelId);
                 if (channel is null)
                 {
-                    Console.WriteLine($"Cannot update signup message for '{signup.Name}' - channel {signup.SignupChannelId} not found");
+                    _logger.LogWarning($"Cannot update signup message for '{signup.Name}' - channel {signup.SignupChannelId} not found");
                     return;
                 }
 
@@ -1288,7 +1288,7 @@ namespace Wabbit.BotClient.Commands
                 var message = await channel.GetMessageAsync(signup.MessageId);
                 if (message == null)
                 {
-                    Console.WriteLine($"Cannot update signup message for '{signup.Name}' - message {signup.MessageId} not found in channel {signup.SignupChannelId}");
+                    _logger.LogWarning($"Cannot update signup message for '{signup.Name}' - message {signup.MessageId} not found in channel {signup.SignupChannelId}");
                     return;
                 }
 
@@ -1331,11 +1331,11 @@ namespace Wabbit.BotClient.Commands
                 // Update the message
                 await message.ModifyAsync(builder);
 
-                Console.WriteLine($"Updated signup message for '{signup.Name}'");
+                _logger.LogInformation($"Updated signup message for '{signup.Name}'");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error updating signup message for '{signup.Name}': {ex.Message}");
+                _logger.LogError(ex, $"Error updating signup message for '{signup.Name}': {ex.Message}");
             }
         }
 
@@ -1360,7 +1360,7 @@ namespace Wabbit.BotClient.Commands
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"Failed to auto-delete message: {ex.Message}");
+                            _logger.LogError(ex, $"Failed to auto-delete message: {ex.Message}");
                         }
                     });
                 }
@@ -1382,7 +1382,7 @@ namespace Wabbit.BotClient.Commands
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Failed to auto-delete message: {ex.Message}");
+                                _logger.LogError(ex, $"Failed to auto-delete message: {ex.Message}");
                             }
                         });
                     }
@@ -1390,7 +1390,7 @@ namespace Wabbit.BotClient.Commands
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in SafeResponse: {ex.Message}");
+                _logger.LogError(ex, $"Error in SafeResponse: {ex.Message}");
                 try
                 {
                     var msg = await context.Channel.SendMessageAsync(message);
@@ -1408,14 +1408,14 @@ namespace Wabbit.BotClient.Commands
                             }
                             catch (Exception delEx)
                             {
-                                Console.WriteLine($"Failed to auto-delete fallback message: {delEx.Message}");
+                                _logger.LogError(delEx, $"Failed to auto-delete fallback message: {delEx.Message}");
                             }
                         });
                     }
                 }
                 catch (Exception innerEx)
                 {
-                    Console.WriteLine($"Failed to send fallback message: {innerEx.Message}");
+                    _logger.LogError(innerEx, $"Failed to send fallback message: {innerEx.Message}");
                 }
             }
         }
@@ -1436,7 +1436,7 @@ namespace Wabbit.BotClient.Commands
                 catch (Exception deferEx)
                 {
                     // If deferring fails, log it but continue - the interaction might already be deferred
-                    Console.WriteLine($"Failed to defer response: {deferEx.Message}. Continuing execution...");
+                    _logger.LogWarning($"Failed to defer response: {deferEx.Message}. Continuing execution...");
                 }
 
                 // Execute the action
@@ -1444,7 +1444,7 @@ namespace Wabbit.BotClient.Commands
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{errorPrefix}: {ex.Message}\n{ex.StackTrace}");
+                _logger.LogError(ex, $"{errorPrefix}: {ex.Message}");
 
                 // Try to respond with the error message
                 try
@@ -1454,7 +1454,7 @@ namespace Wabbit.BotClient.Commands
                 }
                 catch (Exception responseEx)
                 {
-                    Console.WriteLine($"Failed to send error response via interaction: {responseEx.Message}");
+                    _logger.LogError(responseEx, "Failed to send error response via interaction");
 
                     // Fallback to channel message if interaction response fails
                     try
@@ -1471,13 +1471,13 @@ namespace Wabbit.BotClient.Commands
                             }
                             catch (Exception delEx)
                             {
-                                Console.WriteLine($"Failed to auto-delete fallback error message: {delEx.Message}");
+                                _logger.LogError(delEx, "Failed to auto-delete fallback error message");
                             }
                         });
                     }
                     catch (Exception channelEx)
                     {
-                        Console.WriteLine($"Failed to send any error messages: {channelEx.Message}");
+                        _logger.LogError(channelEx, "Failed to send any error messages");
                     }
                 }
             }
