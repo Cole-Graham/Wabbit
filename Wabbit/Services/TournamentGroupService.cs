@@ -709,5 +709,78 @@ namespace Wabbit.Services
 
             await Task.CompletedTask;
         }
+
+        /// <summary>
+        /// Ensures all participants in the tournament are properly converted to DiscordMember objects
+        /// </summary>
+        public void EnsureParticipantsAreDiscordMembers(Tournament tournament, DiscordClient client)
+        {
+            _logger.LogInformation($"Ensuring participants are DiscordMember objects for tournament {tournament.Name}");
+
+            if (tournament.Groups == null)
+                return;
+
+            foreach (var group in tournament.Groups)
+            {
+                if (group.Participants == null)
+                    continue;
+
+                for (int i = 0; i < group.Participants.Count; i++)
+                {
+                    var participant = group.Participants[i];
+                    if (participant.Player is not DiscordMember)
+                    {
+                        // Try to convert the player to a DiscordMember
+                        DiscordMember? member = null;
+
+                        // Check if it's a user ID
+                        if (participant.Player is ulong userId)
+                        {
+                            try
+                            {
+                                member = client.GetGuildAsync(client.Guilds.First().Key)
+                                    .GetAwaiter().GetResult()
+                                    .GetMemberAsync(userId)
+                                    .GetAwaiter().GetResult();
+
+                                _logger.LogInformation($"Converted player ID {userId} to member {member.DisplayName}");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Failed to convert player ID {userId} to DiscordMember");
+                            }
+                        }
+                        // Check if it's a string ID
+                        else if (participant.Player is string userIdStr && ulong.TryParse(userIdStr, out var parsedId))
+                        {
+                            try
+                            {
+                                member = client.GetGuildAsync(client.Guilds.First().Key)
+                                    .GetAwaiter().GetResult()
+                                    .GetMemberAsync(parsedId)
+                                    .GetAwaiter().GetResult();
+
+                                _logger.LogInformation($"Converted player ID string {userIdStr} to member {member.DisplayName}");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Failed to convert player ID string {userIdStr} to DiscordMember");
+                            }
+                        }
+
+                        // Update the participant with the converted member
+                        if (member is not null)
+                        {
+                            _logger.LogInformation($"Updated participant from {participant.Player} to DiscordMember {member.DisplayName}");
+                            participant.Player = member;
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"Could not convert participant player to DiscordMember: {participant.Player}");
+                        }
+                    }
+                }
+            }
+        }
     }
 }

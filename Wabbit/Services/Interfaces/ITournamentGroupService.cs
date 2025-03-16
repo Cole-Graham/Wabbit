@@ -56,5 +56,10 @@ namespace Wabbit.Services.Interfaces
         /// Converts to DiscordMember
         /// </summary>
         DiscordMember? ConvertToDiscordMember(object? player);
+
+        /// <summary>
+        /// Ensures all participants in the tournament are properly converted to DiscordMember objects
+        /// </summary>
+        void EnsureParticipantsAreDiscordMembers(Tournament tournament, DSharpPlus.DiscordClient client);
     }
 }

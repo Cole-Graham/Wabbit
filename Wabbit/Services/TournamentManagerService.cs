@@ -461,6 +461,14 @@ namespace Wabbit.Services
 
                 _logger.LogInformation($"Group {group.Name} has {group.Participants.Count} participants");
 
+                // Debug participant types
+                foreach (var participant in group.Participants)
+                {
+                    var playerType = participant.Player?.GetType().Name ?? "null";
+                    var isDiscordMember = participant.Player is DiscordMember;
+                    _logger.LogInformation($"Participant Player: Type={playerType}, IsDiscordMember={isDiscordMember}, DisplayName={participant.Player?.ToString() ?? "null"}");
+                }
+
                 // Create matches for each player pair in this group
                 for (int i = 0; i < group.Participants.Count; i++)
                 {
@@ -468,6 +476,8 @@ namespace Wabbit.Services
                     {
                         var player1 = group.Participants[i].Player as DiscordMember;
                         var player2 = group.Participants[j].Player as DiscordMember;
+
+                        _logger.LogInformation($"Checking pair: Player1={player1?.DisplayName ?? "null"}, Player2={player2?.DisplayName ?? "null"}");
 
                         if (player1 is not null && player2 is not null)
                         {
@@ -478,6 +488,8 @@ namespace Wabbit.Services
                                   m.Participants[1].Player is DiscordMember p2 && p2.Id == player2.Id) ||
                                  (m.Participants[0].Player is DiscordMember p3 && p3.Id == player2.Id &&
                                   m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id)));
+
+                            _logger.LogInformation($"Match already exists for {player1.DisplayName} vs {player2.DisplayName}: {matchExists}");
 
                             if (!matchExists)
                             {
@@ -600,6 +612,9 @@ namespace Wabbit.Services
 
             // Ensure tournament is set to group stage
             tournament.CurrentStage = TournamentStage.Groups;
+
+            // Ensure all participants are proper DiscordMember objects
+            _groupService.EnsureParticipantsAreDiscordMembers(tournament, client);
 
             // Generate all pending matches based on game type
             _pendingMatches[tournament.Name] = GeneratePendingMatches(tournament);
