@@ -64,149 +64,156 @@ namespace Wabbit.Services
         {
             try
             {
-                if (File.Exists(_signupsFilePath))
+                if (!File.Exists(_signupsFilePath))
                 {
-                    string json = File.ReadAllText(_signupsFilePath);
-                    _logger.LogInformation($"Loading signups from {_signupsFilePath}");
+                    _logger.LogInformation($"Creating new signups file at {_signupsFilePath}");
+                    var wrapper = new SignupListWrapper { Signups = new List<TournamentSignup>() };
+                    string json = JsonSerializer.Serialize(wrapper, _serializerOptions);
+                    File.WriteAllText(_signupsFilePath, json);
+                    _ongoingRounds.TournamentSignups = new List<TournamentSignup>();
+                    return;
+                }
 
-                    if (!string.IsNullOrEmpty(json))
+                string existingJson = File.ReadAllText(_signupsFilePath);
+                _logger.LogInformation($"Loading signups from {_signupsFilePath}");
+
+                if (!string.IsNullOrEmpty(existingJson))
+                {
+                    var options = new JsonSerializerOptions
                     {
-                        var options = new JsonSerializerOptions
-                        {
-                            ReferenceHandler = ReferenceHandler.Preserve
-                        };
+                        ReferenceHandler = ReferenceHandler.Preserve
+                    };
 
-                        // Use JsonDocument to parse the structure and extract $values
-                        using JsonDocument document = JsonDocument.Parse(json);
+                    // Use JsonDocument to parse the structure and extract $values
+                    using JsonDocument document = JsonDocument.Parse(existingJson);
 
-                        // Try to find $values at the top level
-                        if (document.RootElement.TryGetProperty("$values", out JsonElement valuesElement))
+                    // Try to find $values at the top level
+                    if (document.RootElement.TryGetProperty("$values", out JsonElement valuesElement))
+                    {
+                        // Direct $values at root level
+                        var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(valuesElement.GetRawText(), options);
+                        if (signups != null)
                         {
-                            // Direct $values at root level
-                            var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(valuesElement.GetRawText(), options);
-                            if (signups != null)
+                            _ongoingRounds.TournamentSignups = signups;
+
+                            // Initialize all collections for each signup
+                            foreach (var signup in _ongoingRounds.TournamentSignups)
                             {
-                                _ongoingRounds.TournamentSignups = signups;
+                                InitializeCollections(signup);
 
-                                // Initialize all collections for each signup
-                                foreach (var signup in _ongoingRounds.TournamentSignups)
+                                // Log the participants to verify they're properly loaded
+                                _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
+                                foreach (var participant in signup.ParticipantInfo)
                                 {
-                                    InitializeCollections(signup);
+                                    _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
+                                }
+                            }
 
-                                    // Log the participants to verify they're properly loaded
-                                    _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
-                                    foreach (var participant in signup.ParticipantInfo)
-                                    {
-                                        _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
-                                    }
+                            _logger.LogInformation($"Loaded {signups.Count} signups from root $values");
+                            return;
+                        }
+                    }
+
+                    // Try wrapper class approach (most robust)
+                    try
+                    {
+                        var wrapper = JsonSerializer.Deserialize<SignupListWrapper>(existingJson, options);
+                        if (wrapper != null && wrapper.Signups != null)
+                        {
+                            _ongoingRounds.TournamentSignups = wrapper.Signups;
+
+                            // Initialize all collections for each signup
+                            foreach (var signup in _ongoingRounds.TournamentSignups)
+                            {
+                                InitializeCollections(signup);
+
+                                // Log the participants to verify they're properly loaded
+                                _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
+                                foreach (var participant in signup.ParticipantInfo)
+                                {
+                                    _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
+                                }
+                            }
+
+                            _logger.LogInformation($"Loaded {wrapper.Signups.Count} signups from wrapper class");
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"Failed to deserialize signups with wrapper: {ex.Message}");
+                    }
+
+                    // Last resort: try direct deserialization
+                    try
+                    {
+                        var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(existingJson, options);
+                        if (signups != null)
+                        {
+                            _ongoingRounds.TournamentSignups = signups;
+
+                            // Initialize all collections for each signup
+                            foreach (var signup in _ongoingRounds.TournamentSignups)
+                            {
+                                InitializeCollections(signup);
+
+                                // Log the participants to verify they're properly loaded
+                                _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
+                                foreach (var participant in signup.ParticipantInfo)
+                                {
+                                    _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
+                                }
+                            }
+
+                            _logger.LogInformation($"Loaded {signups.Count} signups from direct deserialization");
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"Failed to directly deserialize signups: {ex.Message}");
+                    }
+
+                    // If standard methods fail, try manually extracting participant info
+                    try
+                    {
+                        // Check if we already have signups loaded
+                        if (_ongoingRounds.TournamentSignups.Count > 0)
+                        {
+                            _logger.LogInformation("Attempting to manually parse participant info from JSON");
+
+                            // Try to manually extract participants from the JSON
+                            foreach (var signup in _ongoingRounds.TournamentSignups)
+                            {
+                                // Create empty collections if missing
+                                if (signup.ParticipantInfo == null)
+                                {
+                                    signup.ParticipantInfo = new List<ParticipantInfo>();
                                 }
 
-                                _logger.LogInformation($"Loaded {signups.Count} signups from root $values");
-                                return;
-                            }
-                        }
-
-                        // Try wrapper class approach (most robust)
-                        try
-                        {
-                            var wrapper = JsonSerializer.Deserialize<SignupListWrapper>(json, options);
-                            if (wrapper != null && wrapper.Signups != null)
-                            {
-                                _ongoingRounds.TournamentSignups = wrapper.Signups;
-
-                                // Initialize all collections for each signup
-                                foreach (var signup in _ongoingRounds.TournamentSignups)
+                                // Search for this signup in the JSON by name
+                                try
                                 {
-                                    InitializeCollections(signup);
-
-                                    // Log the participants to verify they're properly loaded
-                                    _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
-                                    foreach (var participant in signup.ParticipantInfo)
+                                    var signupElement = FindSignupElementByName(document.RootElement, signup.Name);
+                                    if (signupElement.ValueKind != JsonValueKind.Undefined)
                                     {
-                                        _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
-                                    }
-                                }
-
-                                _logger.LogInformation($"Loaded {wrapper.Signups.Count} signups from wrapper class");
-                                return;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError($"Failed to deserialize signups with wrapper: {ex.Message}");
-                        }
-
-                        // Last resort: try direct deserialization
-                        try
-                        {
-                            var signups = JsonSerializer.Deserialize<List<TournamentSignup>>(json, options);
-                            if (signups != null)
-                            {
-                                _ongoingRounds.TournamentSignups = signups;
-
-                                // Initialize all collections for each signup
-                                foreach (var signup in _ongoingRounds.TournamentSignups)
-                                {
-                                    InitializeCollections(signup);
-
-                                    // Log the participants to verify they're properly loaded
-                                    _logger.LogInformation($"Signup '{signup.Name}' loaded with {signup.ParticipantInfo.Count} participants in ParticipantInfo");
-                                    foreach (var participant in signup.ParticipantInfo)
-                                    {
-                                        _logger.LogInformation($"Loaded participant {participant.Username} (ID: {participant.Id})");
-                                    }
-                                }
-
-                                _logger.LogInformation($"Loaded {signups.Count} signups from direct deserialization");
-                                return;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError($"Failed to directly deserialize signups: {ex.Message}");
-                        }
-
-                        // If standard methods fail, try manually extracting participant info
-                        try
-                        {
-                            // Check if we already have signups loaded
-                            if (_ongoingRounds.TournamentSignups.Count > 0)
-                            {
-                                _logger.LogInformation("Attempting to manually parse participant info from JSON");
-
-                                // Try to manually extract participants from the JSON
-                                foreach (var signup in _ongoingRounds.TournamentSignups)
-                                {
-                                    // Create empty collections if missing
-                                    if (signup.ParticipantInfo == null)
-                                    {
-                                        signup.ParticipantInfo = new List<ParticipantInfo>();
-                                    }
-
-                                    // Search for this signup in the JSON by name
-                                    try
-                                    {
-                                        var signupElement = FindSignupElementByName(document.RootElement, signup.Name);
-                                        if (signupElement.ValueKind != JsonValueKind.Undefined)
+                                        if (TryExtractParticipantInfo(signupElement, out var participantInfoList) && participantInfoList.Count > 0)
                                         {
-                                            if (TryExtractParticipantInfo(signupElement, out var participantInfoList) && participantInfoList.Count > 0)
-                                            {
-                                                signup.ParticipantInfo = participantInfoList;
-                                                _logger.LogInformation($"Manually extracted {participantInfoList.Count} participants for signup '{signup.Name}'");
-                                            }
+                                            signup.ParticipantInfo = participantInfoList;
+                                            _logger.LogInformation($"Manually extracted {participantInfoList.Count} participants for signup '{signup.Name}'");
                                         }
                                     }
-                                    catch (Exception extractEx)
-                                    {
-                                        _logger.LogError($"Error manually extracting participants for '{signup.Name}': {extractEx.Message}");
-                                    }
+                                }
+                                catch (Exception extractEx)
+                                {
+                                    _logger.LogError($"Error manually extracting participants for '{signup.Name}': {extractEx.Message}");
                                 }
                             }
                         }
-                        catch (Exception manualEx)
-                        {
-                            _logger.LogError($"Failed to manually extract participant info: {manualEx.Message}");
-                        }
+                    }
+                    catch (Exception manualEx)
+                    {
+                        _logger.LogError($"Failed to manually extract participant info: {manualEx.Message}");
                     }
                 }
             }

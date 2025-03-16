@@ -516,12 +516,12 @@ namespace Wabbit.BotClient.Commands
         {
             await context.DeferResponseAsync();
 
-            try
+            await SafeExecute(context, async () =>
             {
                 // Check if a signup with this name already exists
                 if (_signupService.GetAllSignups().Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"A signup with the name '{name}' already exists."));
+                    await context.EditResponseAsync($"A signup with the name '{name}' already exists.");
                     return;
                 }
 
@@ -529,7 +529,7 @@ namespace Wabbit.BotClient.Commands
                 ulong? signupChannelId = GetSignupChannelId(context);
                 if (!signupChannelId.HasValue)
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent("No signup channel configured. Using current channel."));
+                    await context.EditResponseAsync("No signup channel configured. Using current channel.");
                     signupChannelId = context.Channel.Id;
                 }
 
@@ -540,6 +540,8 @@ namespace Wabbit.BotClient.Commands
                     // Convert Unix timestamp to UTC DateTime
                     DateTimeOffset utcTime = DateTimeOffset.FromUnixTimeSeconds(startTimeUnix);
                     scheduledStartTime = utcTime.UtcDateTime;
+
+                    Console.WriteLine($"Signup timestamp conversion: Unix {startTimeUnix} -> UTC {scheduledStartTime.Value.ToString("yyyy-MM-dd HH:mm:ss")}");
                 }
 
                 // Parse game type
@@ -550,7 +552,7 @@ namespace Wabbit.BotClient.Commands
                 }
                 catch (Exception)
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"Invalid game type: {gameType}. Valid options are 'OneVsOne' or 'TwoVsTwo'."));
+                    await context.EditResponseAsync($"Invalid game type: {gameType}. Valid options are 'OneVsOne' or 'TwoVsTwo'.");
                     return;
                 }
 
@@ -589,25 +591,31 @@ namespace Wabbit.BotClient.Commands
 
                     // Store the message ID
                     signup.MessageId = message.Id;
+                    Console.WriteLine($"Set MessageId to {message.Id} for signup '{name}'");
+
+                    // Save updated MessageId - this is critical for future updates
                     _signupService.UpdateSignup(signup);
 
-                    // Send success response
-                    await context.EditResponseAsync(new DiscordWebhookBuilder()
-                        .WithContent($"Tournament signup '{name}' created successfully. Check {signupChannel.Mention} for the signup form."));
+                    // Verify the MessageId was saved
+                    var savedSignup = _signupService.GetSignup(name);
+                    if (savedSignup == null || savedSignup.MessageId == 0)
+                    {
+                        _logger.LogWarning($"MessageId was not saved correctly for '{name}'. Current value: {savedSignup?.MessageId ?? 0}");
+                    }
+                    else
+                    {
+                        _logger.LogInformation($"Successfully saved MessageId {savedSignup.MessageId} for signup '{name}'");
+                    }
+
+                    // Send a simple confirmation without repeating the tournament details
+                    await SafeResponse(context, $"Tournament signup '{name}' created successfully. Check {signupChannel.Mention} for the signup form.", null, true, 10);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error sending signup message");
-                    await context.EditResponseAsync(new DiscordWebhookBuilder()
-                        .WithContent($"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}"));
+                    Console.WriteLine($"Error sending signup message: {ex.Message}\n{ex.StackTrace}");
+                    await SafeResponse(context, $"Tournament signup '{name}' was created but there was an error creating the signup message: {ex.Message}", null, true, 10);
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating tournament signup");
-                await context.EditResponseAsync(new DiscordWebhookBuilder()
-                    .WithContent($"Failed to create tournament signup: {ex.Message}"));
-            }
+            }, "Failed to create tournament signup");
         }
 
         [Command("signup_close")]
