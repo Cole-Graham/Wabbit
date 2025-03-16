@@ -514,6 +514,8 @@ namespace Wabbit.BotClient.Commands
             [Description("Game type (1v1 or 2v2)")][SlashChoiceProvider<GameTypeChoiceProvider>] string gameType = "OneVsOne",
             [Description("Scheduled start time (Unix timestamp, 0 for none)")] long startTimeUnix = 0)
         {
+            await context.DeferResponseAsync();
+
             await SafeExecute(context, async () =>
             {
                 // Check if a signup with this name already exists
