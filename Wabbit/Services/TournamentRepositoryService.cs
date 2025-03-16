@@ -203,7 +203,7 @@ namespace Wabbit.Services
             };
 
             // Handle groups
-            cleanedTournament.Groups = tournament.Groups.Select(g => new Tournament.Group
+            cleanedTournament.Groups = tournament.Groups?.Select(g => new Tournament.Group
             {
                 Name = g.Name,
                 IsComplete = g.IsComplete,
@@ -219,20 +219,23 @@ namespace Wabbit.Services
                     AdvancedToPlayoffs = p.AdvancedToPlayoffs,
                     QualificationInfo = p.QualificationInfo
                 }).ToList()
-            }).ToList();
+            }).ToList() ?? new List<Tournament.Group>();
 
             // Handle matches within groups
-            foreach (var originalGroup in tournament.Groups)
+            if (tournament.Groups != null)
             {
-                var cleanedGroup = cleanedTournament.Groups.FirstOrDefault(g => g.Name == originalGroup.Name);
-                if (cleanedGroup != null)
+                foreach (var originalGroup in tournament.Groups)
                 {
-                    cleanedGroup.Matches = originalGroup.Matches.Select(m => CleanMatchForSerialization(m)).ToList();
+                    var cleanedGroup = cleanedTournament.Groups.FirstOrDefault(g => g.Name == originalGroup.Name);
+                    if (cleanedGroup != null && originalGroup.Matches != null)
+                    {
+                        cleanedGroup.Matches = originalGroup.Matches.Select(m => CleanMatchForSerialization(m)).ToList();
+                    }
                 }
             }
 
             // Handle playoff matches
-            cleanedTournament.PlayoffMatches = tournament.PlayoffMatches.Select(m => CleanMatchForSerialization(m)).ToList();
+            cleanedTournament.PlayoffMatches = tournament.PlayoffMatches?.Select(m => CleanMatchForSerialization(m)).ToList() ?? new List<Tournament.Match>();
 
             return cleanedTournament;
         }

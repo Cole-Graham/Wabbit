@@ -142,7 +142,7 @@ namespace Wabbit.Services
                 _groupService.CheckGroupCompletion(match.Participants[0].SourceGroup!);
 
                 // If all groups are completed, set up playoffs
-                if (tournament.Groups.All(g => g.IsComplete) && tournament.CurrentStage == TournamentStage.Groups)
+                if (tournament.Groups?.All(g => g.IsComplete) == true && tournament.CurrentStage == TournamentStage.Groups)
                 {
                     await _playoffService.SetupPlayoffsAsync(tournament, client);
                 }

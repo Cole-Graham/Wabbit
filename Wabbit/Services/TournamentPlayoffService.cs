@@ -17,25 +17,25 @@ namespace Wabbit.Services
     public class TournamentPlayoffService : ITournamentPlayoffService
     {
         private readonly ILogger<TournamentPlayoffService> _logger;
-        private readonly ITournamentGroupService _groupService;
+        private readonly ITournamentMatchOperationsService _matchOperations;
         private readonly ITournamentStateValidator _stateValidator;
         private readonly ITournamentBracketManager _bracketManager;
 
         /// <summary>
         /// Constructor with required dependencies
         /// </summary>
-        /// <param name="groupService">Service for accessing group data</param>
+        /// <param name="matchOperations">Service for match operations</param>
         /// <param name="logger">Logger for logging events</param>
         /// <param name="stateValidator">Service for validating tournament state transitions</param>
         /// <param name="bracketManager">Service for managing tournament brackets</param>
         public TournamentPlayoffService(
-            ITournamentGroupService groupService,
             ILogger<TournamentPlayoffService> logger,
+            ITournamentMatchOperationsService matchOperations,
             ITournamentStateValidator stateValidator,
             ITournamentBracketManager bracketManager)
         {
-            _groupService = groupService;
             _logger = logger;
+            _matchOperations = matchOperations;
             _stateValidator = stateValidator;
             _bracketManager = bracketManager;
         }
@@ -57,11 +57,12 @@ namespace Wabbit.Services
         public void SetupPlayoffs(Tournament tournament)
         {
             if (tournament == null) throw new ArgumentNullException(nameof(tournament));
+            if (tournament.Groups == null) throw new ArgumentNullException(nameof(tournament.Groups));
 
             _logger.LogInformation($"Setting up playoffs for tournament {tournament.Name}");
 
             // Get the total number of participants across all groups
-            int totalParticipants = tournament.Groups.Sum(g => g.Participants.Count);
+            int totalParticipants = tournament.Groups.Sum(g => g.Participants?.Count ?? 0);
             int groupCount = tournament.Groups.Count;
 
             // Get advancement criteria
@@ -79,7 +80,8 @@ namespace Wabbit.Services
             // Mark the tournament as being in the playoff stage
             tournament.CurrentStage = TournamentStage.Playoffs;
 
-            // Clear existing playoff matches
+            // Initialize and clear playoff matches
+            tournament.PlayoffMatches ??= new List<Tournament.Match>();
             tournament.PlayoffMatches.Clear();
 
             try
@@ -153,6 +155,8 @@ namespace Wabbit.Services
             if (losingParticipant == null) return;
 
             // Find the slot in the third place match
+            if (tournament.PlayoffMatches == null) return;
+
             var semifinals = tournament.PlayoffMatches
                 .Where(m => m.Type == TournamentMatchType.Semifinal)
                 .OrderBy(m => m.DisplayPosition)
@@ -172,19 +176,33 @@ namespace Wabbit.Services
             }
         }
 
+        private string GetPlayerDisplayName(object? player)
+        {
+            if (player == null)
+                return "Unknown";
+
+            if (player is DiscordMember member)
+                return member.DisplayName;
+
+            if (player is DiscordUser user)
+                return user.Username;
+
+            return player.ToString() ?? "Unknown";
+        }
+
         private void UpdateThirdPlaceMatchName(Tournament.Match thirdPlaceMatch)
         {
             if (thirdPlaceMatch.Participants[0]?.Player != null && thirdPlaceMatch.Participants[1]?.Player != null)
             {
-                thirdPlaceMatch.Name = $"{_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[0].Player)} vs {_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[1].Player)}";
+                thirdPlaceMatch.Name = $"{GetPlayerDisplayName(thirdPlaceMatch.Participants[0].Player)} vs {GetPlayerDisplayName(thirdPlaceMatch.Participants[1].Player)}";
             }
             else if (thirdPlaceMatch.Participants[0]?.Player != null)
             {
-                thirdPlaceMatch.Name = $"{_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[0].Player)} vs TBD";
+                thirdPlaceMatch.Name = $"{GetPlayerDisplayName(thirdPlaceMatch.Participants[0].Player)} vs TBD";
             }
             else if (thirdPlaceMatch.Participants[1]?.Player != null)
             {
-                thirdPlaceMatch.Name = $"TBD vs {_groupService.GetPlayerDisplayName(thirdPlaceMatch.Participants[1].Player)}";
+                thirdPlaceMatch.Name = $"TBD vs {GetPlayerDisplayName(thirdPlaceMatch.Participants[1].Player)}";
             }
         }
 
@@ -287,8 +305,12 @@ namespace Wabbit.Services
             var qualifiedParticipants = new List<Tournament.MatchParticipant>();
 
             // Get top N players from each group
+            if (tournament.Groups == null) return qualifiedParticipants;
+
             foreach (var group in tournament.Groups)
             {
+                if (group.Participants == null) continue;
+
                 // Sort participants by points, then by wins, then by game differential
                 var sortedParticipants = group.Participants
                     .OrderByDescending(p => p.Points)
@@ -542,7 +564,7 @@ namespace Wabbit.Services
                 };
 
                 _logger.LogInformation("Successfully processed forfeit for match {MatchName}. {WinnerName} wins by forfeit.",
-                    match.Name, _groupService.GetPlayerDisplayName(opponentParticipant.Player));
+                    match.Name, GetPlayerDisplayName(opponentParticipant.Player));
 
                 // Update bracket advancement with this result
                 return UpdateBracketAdvancement(tournament, match);

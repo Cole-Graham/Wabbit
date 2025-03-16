@@ -119,7 +119,7 @@ namespace Wabbit.Services.ServiceHelpers
                 LinkBracketMatches(tournament, firstRoundMatches);
 
                 // Add matches to tournament
-                tournament.PlayoffMatches ??= [];
+                tournament.PlayoffMatches ??= new List<Tournament.Match>();
                 tournament.PlayoffMatches.AddRange(firstRoundMatches);
 
                 _logger.LogInformation($"Created playoff bracket with {firstRoundMatches.Count} first round matches");
@@ -169,6 +169,7 @@ namespace Wabbit.Services.ServiceHelpers
             }
 
             // Add all matches to tournament
+            tournament.PlayoffMatches ??= new List<Tournament.Match>();
             tournament.PlayoffMatches.AddRange(allMatches.Except(firstRoundMatches));
         }
 

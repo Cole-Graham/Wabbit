@@ -128,9 +128,9 @@ namespace Wabbit.BotClient.Commands
                 // Track players who already have a match created
                 HashSet<ulong> playersWithMatches = new();
 
-                foreach (var group in tournament.Groups)
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                 {
-                    foreach (var match in group.Matches)
+                    foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
                     {
                         try
                         {
@@ -169,7 +169,7 @@ namespace Wabbit.BotClient.Commands
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"🏆 Tournament Created: {tournament.Name}")
                     .WithDescription($"A new tournament has been created from signup '{signup.Name}'.")
-                    .AddField("Players", tournament.Groups.Sum(g => g.Participants.Count).ToString(), true)
+                    .AddField("Players", (tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).Sum(g => g.Participants?.Count ?? 0).ToString(), true)
                     .AddField("Format", tournament.Format.ToString(), true)
                     .AddField("Game Type", tournament.GameType == GameType.OneVsOne ? "1v1" : "2v2", true)
                     .WithColor(DiscordColor.Green)
@@ -216,7 +216,8 @@ namespace Wabbit.BotClient.Commands
                 Format = signup.Format,
                 GameType = signup.Type,
                 CurrentStage = TournamentStage.Groups,
-                AnnouncementChannel = channel
+                AnnouncementChannel = channel,
+                Groups = new List<Tournament.Group>()  // Initialize Groups
             };
 
             // Determine group count based on player count
@@ -239,7 +240,12 @@ namespace Wabbit.BotClient.Commands
             // Create the groups with the determined sizes
             for (int i = 0; i < groupCount; i++)
             {
-                var group = new Tournament.Group { Name = $"Group {(char)('A' + i)}" };
+                var group = new Tournament.Group
+                {
+                    Name = $"Group {(char)('A' + i)}",
+                    Participants = new List<Tournament.GroupParticipant>(),  // Initialize Participants
+                    Matches = new List<Tournament.Match>()  // Initialize Matches
+                };
                 tournament.Groups.Add(group);
             }
 
@@ -434,7 +440,7 @@ namespace Wabbit.BotClient.Commands
                         }
                         else if (tournament.CurrentStage == TournamentStage.Groups)
                         {
-                            bool allGroupsComplete = tournament.Groups.All(g => g.IsComplete);
+                            bool allGroupsComplete = (tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).All(g => g.IsComplete);
                             status = allGroupsComplete ? "⏳ Group Stage Complete" : "🏁 Group Stage";
                         }
                         else if (tournament.CurrentStage == TournamentStage.Playoffs)
@@ -448,7 +454,7 @@ namespace Wabbit.BotClient.Commands
                             status = $"✅ Complete - 🏆 Winner: {winnerName}";
                         }
 
-                        int playerCount = tournament.Groups.Sum(g => g.Participants.Count);
+                        int playerCount = (tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).Sum(g => g.Participants?.Count ?? 0);
                         activeTournamentsText.AppendLine($"**{tournament.Name}** - {status} - {playerCount} players");
                     }
                 }
@@ -1035,7 +1041,7 @@ namespace Wabbit.BotClient.Commands
                     .WithDescription("Tournament has been resumed.")
                     .AddField("Status", tournament.IsComplete ? "Complete" : $"In Progress - {tournament.CurrentStage}")
                     .AddField("Format", tournament.Format.ToString())
-                    .AddField("Groups", tournament.Groups.Count.ToString())
+                    .AddField("Groups", (tournament.Groups?.Count ?? 0).ToString())
                     .AddField("Active Rounds", activeRounds.Count.ToString());
 
                 if (activeRounds.Any())
@@ -1184,7 +1190,7 @@ namespace Wabbit.BotClient.Commands
                 bool isInTournament = false;
                 Tournament.GroupParticipant? participantToSeed = null;
 
-                foreach (var group in tournament.Groups)
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                 {
                     var matchingParticipant = group.Participants.FirstOrDefault(p =>
                         p.Player is DiscordMember member && member.Id == player.Id);
@@ -1463,16 +1469,25 @@ namespace Wabbit.BotClient.Commands
             // Process each group
             foreach (var group in tournament.Groups)
             {
+                if (group.Participants == null)
+                {
+                    group.Participants = new List<Tournament.GroupParticipant>();
+                }
+                if (group.Matches == null)
+                {
+                    group.Matches = new List<Tournament.Match>();
+                }
+
                 _logger.LogInformation($"Processing group {group.Name}");
                 // Convert GroupParticipants to DiscordMembers
                 var participants = new List<DiscordMember>();
                 foreach (var participant in group.Participants)
                 {
-                    if (participant.Player is DiscordMember member)
+                    if (participant?.Player is DiscordMember member)
                     {
                         participants.Add(member);
                     }
-                    else if (participant.Player is not null)
+                    else if (participant?.Player is not null)
                     {
                         // Try to use reflection to get the ID
                         _logger.LogWarning($"Using reflection to get the player ID from {participant.Player.GetType().Name}");
@@ -1590,12 +1605,12 @@ namespace Wabbit.BotClient.Commands
                         }
 
                         // Check if a match already exists between these players
-                        bool matchExists = group.Matches.Any(m =>
-                            m.Participants.Count == 2 &&
+                        bool matchExists = group.Matches?.Any(m =>
+                            m.Participants?.Count == 2 &&
                             ((m.Participants[0].Player is DiscordMember p1 && p1.Id == player1.Id &&
                               m.Participants[1].Player is DiscordMember p2 && p2.Id == player2.Id) ||
                              (m.Participants[0].Player is DiscordMember p3 && p3.Id == player2.Id &&
-                              m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id)));
+                              m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id))) ?? false;
 
                         if (matchExists)
                         {

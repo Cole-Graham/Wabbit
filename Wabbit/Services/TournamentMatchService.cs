@@ -28,6 +28,7 @@ namespace Wabbit.Services
         private readonly ITournamentMapService _mapService;
         private readonly ILogger<TournamentMatchService> _logger;
         private readonly IMatchStatusService _matchStatusService;
+        private readonly ITournamentMatchOperationsService _matchOperations;
 
         private const int autoDeleteSeconds = 30;
         private const int mapThumbnailDurationMinutes = 5;
@@ -39,7 +40,8 @@ namespace Wabbit.Services
             ITournamentStateService stateService,
             ITournamentMapService mapService,
             ILogger<TournamentMatchService> logger,
-            IMatchStatusService matchStatusService)
+            IMatchStatusService matchStatusService,
+            ITournamentMatchOperationsService matchOperations)
         {
             _ongoingRounds = ongoingRounds ?? throw new ArgumentNullException(nameof(ongoingRounds));
             _tournamentGameService = tournamentGameService ?? throw new ArgumentNullException(nameof(tournamentGameService));
@@ -48,37 +50,7 @@ namespace Wabbit.Services
             _mapService = mapService ?? throw new ArgumentNullException(nameof(mapService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _matchStatusService = matchStatusService ?? throw new ArgumentNullException(nameof(matchStatusService));
-        }
-
-        /// <inheritdoc/>
-        public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
-        {
-            _logger.LogInformation($"Handling completion of match {match.Name} in tournament {tournament.Name}");
-
-            // Save tournament state
-            await _stateService.SaveTournamentStateAsync(client);
-
-            // Generate a new visualization
-            try
-            {
-                await Misc.TournamentVisualization.GenerateStandingsImage(tournament, client, _stateService);
-                _logger.LogInformation($"Generated updated standings visualization for tournament {tournament.Name}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error generating standings visualization for tournament {tournament.Name}: {ex.Message}");
-            }
-
-            // Check if tournament is complete
-            bool allPlayoffMatchesComplete = tournament.PlayoffMatches.Count > 0 &&
-                tournament.PlayoffMatches.All(m => m.IsComplete);
-
-            if (tournament.CurrentStage == TournamentStage.Playoffs && allPlayoffMatchesComplete)
-            {
-                tournament.CurrentStage = TournamentStage.Complete;
-                tournament.IsComplete = true;
-                _logger.LogInformation($"Tournament {tournament.Name} is now complete");
-            }
+            _matchOperations = matchOperations ?? throw new ArgumentNullException(nameof(matchOperations));
         }
 
         /// <inheritdoc/>
@@ -93,202 +65,32 @@ namespace Wabbit.Services
         {
             try
             {
-                _logger.LogInformation($"Creating 1v1 match: {player1.DisplayName} vs {player2.DisplayName}");
-
-                // Validate parameters
-                if (tournament is null)
-                    throw new ArgumentNullException(nameof(tournament), "Tournament cannot be null");
-
-                if (player1 is null || player2 is null)
+                if (!_matchOperations.ValidateMatchCreation(tournament, player1, player2))
                 {
-                    _logger.LogError("Players cannot be null");
-                    throw new ArgumentNullException(player1 is null ? nameof(player1) : nameof(player2));
+                    _logger.LogError("Match creation validation failed");
+                    return;
                 }
 
-                // Create or use existing match
                 Tournament.Match match;
-                if (existingMatch is not null)
+                if (existingMatch != null)
                 {
                     match = existingMatch;
                 }
                 else
                 {
-                    // Create a new match
-                    _logger.LogInformation("Creating new match for tournament");
-                    match = new Tournament.Match
-                    {
-                        Name = $"{player1.DisplayName} vs {player2.DisplayName}",
-                        // Set match type based on context
-                        Type = DetermineMatchType(group, existingMatch),
-                        // Group stage is Bo1, playoffs and tiebreakers are Bo3
-                        BestOf = ShouldUseBestOfThree(group, existingMatch) ? 3 : 1,
-                        Participants = new List<Tournament.MatchParticipant>
-                        {
-                            new Tournament.MatchParticipant { Player = player1, SourceGroup = group },
-                            new Tournament.MatchParticipant { Player = player2, SourceGroup = group }
-                        }
-                    };
+                    match = _matchOperations.CreateMatch(
+                        $"{player1.DisplayName} vs {player2.DisplayName}",
+                        group != null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal,
+                        matchLength,
+                        player1,
+                        player2,
+                        group);
 
-                    // Add the match to the group if applicable
-                    if (group is not null)
+                    if (group == null)
                     {
-                        group.Matches.Add(match);
-                    }
-                    else
-                    {
-                        // If no group, add to playoff matches
+                        tournament.PlayoffMatches ??= new List<Tournament.Match>();
                         tournament.PlayoffMatches.Add(match);
                     }
-                }
-
-                // Find or create a thread for the match
-                _logger.LogInformation("Finding channel for tournament match");
-                DiscordChannel? thread = null;
-                DiscordThreadChannel? player1Thread = null;
-                DiscordThreadChannel? player2Thread = null;
-                DiscordGuild? guild = null;
-
-                try
-                {
-                    // Try to find the guild through the client
-                    if (player1 is not null)
-                    {
-                        guild = await client.GetGuildAsync(player1.Guild.Id);
-                    }
-                    else if (player2 is not null)
-                    {
-                        guild = await client.GetGuildAsync(player2.Guild.Id);
-                    }
-
-                    if (guild is null)
-                    {
-                        _logger.LogError("Could not resolve guild for match");
-                        return;
-                    }
-
-                    // Try to find any existing threads for either player in this tournament
-                    if (tournament is not null)
-                    {
-                        // Initialize CustomProperties and TeamThreads if they don't exist
-                        tournament.CustomProperties ??= new Dictionary<string, object>();
-                        if (!tournament.CustomProperties.ContainsKey("TeamThreads"))
-                        {
-                            tournament.CustomProperties["TeamThreads"] = new Dictionary<ulong, ulong>();
-                        }
-
-                        var teamThreads = tournament.CustomProperties["TeamThreads"] as Dictionary<ulong, ulong>;
-
-                        // Try to find existing threads for the players
-                        if (teamThreads is not null)
-                        {
-                            if (player1 is not null && teamThreads.ContainsKey(player1.Id))
-                            {
-                                try
-                                {
-                                    var threadChannel = await guild.GetChannelAsync(teamThreads[player1.Id]);
-                                    if (threadChannel is not null)
-                                    {
-                                        player1Thread = threadChannel as DiscordThreadChannel;
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning($"Could not find thread for player1: {ex.Message}");
-                                }
-                            }
-
-                            if (player2 is not null && teamThreads.ContainsKey(player2.Id))
-                            {
-                                try
-                                {
-                                    var threadChannel = await guild.GetChannelAsync(teamThreads[player2.Id]);
-                                    if (threadChannel is not null)
-                                    {
-                                        player2Thread = threadChannel as DiscordThreadChannel;
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning($"Could not find thread for player2: {ex.Message}");
-                                }
-                            }
-                        }
-
-                        // Prefer player1's thread for consistency
-                        if (player1Thread is not null)
-                        {
-                            thread = player1Thread;
-                        }
-                        else if (player2Thread is not null)
-                        {
-                            thread = player2Thread;
-                        }
-                    }
-
-                    // If we don't have a thread yet, create a new one
-                    if (thread is null)
-                    {
-                        // Get the bot channel from config
-                        var server = ConfigManager.Config?.Servers?.FirstOrDefault(s => s.ServerId == guild.Id);
-                        DiscordChannel? tournamentChannel = null;
-
-                        if (server?.BotChannelId != null)
-                        {
-                            try
-                            {
-                                tournamentChannel = await guild.GetChannelAsync(server.BotChannelId.Value);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, $"Error getting bot channel with ID {server.BotChannelId.Value}");
-                            }
-                        }
-
-                        if (tournamentChannel is not null)
-                        {
-                            // For group stages, name the thread after player1
-                            // For playoffs, name it after both players
-                            string threadName;
-                            if (match.Type == TournamentMatchType.GroupStage)
-                            {
-                                threadName = player1?.DisplayName ?? "Player 1";
-                            }
-                            else
-                            {
-                                threadName = $"{player1?.DisplayName ?? "Player 1"} vs {player2?.DisplayName ?? "Player 2"}";
-                            }
-
-                            // Create a thread
-                            thread = await tournamentChannel.CreateThreadAsync(
-                                threadName,
-                                DSharpPlus.Entities.DiscordAutoArchiveDuration.Week,
-                                DSharpPlus.Entities.DiscordChannelType.PrivateThread,
-                                "Tournament match thread");
-
-                            // Store the new thread ID in TeamThreads
-                            if (tournament is not null && thread is not null)
-                            {
-                                tournament.CustomProperties ??= new Dictionary<string, object>();
-                                tournament.CustomProperties["TeamThreads"] ??= new Dictionary<ulong, ulong>();
-                                var teamThreads = tournament.CustomProperties["TeamThreads"] as Dictionary<ulong, ulong>;
-                                if (teamThreads is not null)
-                                {
-                                    if (player1 is not null && !teamThreads.ContainsKey(player1.Id))
-                                    {
-                                        teamThreads[player1.Id] = thread.Id;
-                                    }
-                                }
-                            }
-                        }
-                        else
-                        {
-                            _logger.LogError("Could not find bot channel. Please configure BotChannelId in the server settings.");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error finding or creating thread for match");
                 }
 
                 // Create the Round object
@@ -298,7 +100,7 @@ namespace Wabbit.Services
                     Length = matchLength,
                     OneVOne = true,
                     Teams = new List<Round.Team>(),
-                    TournamentId = tournament?.Name, // Use null conditional operator to avoid null reference
+                    TournamentId = tournament?.Name,
                     MsgToDel = new List<DiscordMessage>(),
                     TournamentRound = true
                 };
@@ -345,14 +147,6 @@ namespace Wabbit.Services
                 // Initialize the Maps collection
                 round.Maps = new List<string>();
 
-                // Create options for map ban dropdown
-                var options = new List<DiscordSelectComponentOption>();
-                foreach (var map in maps1v1)
-                {
-                    if (string.IsNullOrEmpty(map)) continue;
-                    options.Add(new DiscordSelectComponentOption(map, map));
-                }
-
                 // Create teams
                 var team1 = new Round.Team
                 {
@@ -361,7 +155,6 @@ namespace Wabbit.Services
                     {
                         new Round.Participant { Player = player1 }
                     },
-                    Thread = player1Thread ?? (thread as DiscordThreadChannel),
                     MapBans = new List<string>()
                 };
 
@@ -372,7 +165,6 @@ namespace Wabbit.Services
                     {
                         new Round.Participant { Player = player2 }
                     },
-                    Thread = player2Thread ?? (thread as DiscordThreadChannel),
                     MapBans = new List<string>()
                 };
 
@@ -401,270 +193,34 @@ namespace Wabbit.Services
                 // Link the round to the match
                 match.LinkedRound = round;
 
-                // Helper method to send match information to a thread
-                async Task SendMatchInfoToThread(DiscordChannel threadChannel)
+                // Initialize the match status system
+                try
                 {
-                    try
+                    if (tournament?.AnnouncementChannel is null)
                     {
-                        // Welcome message without mentions - will auto-delete after 10 seconds
-                        var welcomeMsg = await threadChannel.SendMessageAsync("**Match Thread**\nWelcome to your tournament match thread!");
-
-                        // Auto-delete welcome message after 10 seconds to keep thread clean
-                        _ = Task.Run(async () =>
-                        {
-                            await Task.Delay(10000); // 10 seconds
-                            try
-                            {
-                                await welcomeMsg.DeleteAsync();
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning($"Failed to auto-delete welcome message: {ex.Message}");
-                            }
-                        });
-
-                        // Initialize the match status system
-                        try
-                        {
-                            // Get the round associated with this thread
-                            var round = _ongoingRounds.TourneyRounds.FirstOrDefault(r =>
-                                r.Teams?.Any(t => t.Thread?.Id == threadChannel.Id) ?? false);
-
-                            if (round is not null)
-                            {
-                                // Always create a new match status for each match
-                                // This preserves match history in the thread
-                                await _matchStatusService.CreateNewMatchStatusAsync(threadChannel, round, client);
-
-                                // Set initial stage to map banning
-                                await _matchStatusService.UpdateToMapBanStageAsync(threadChannel, round, client);
-
-                                _logger.LogInformation($"Match status initialized for thread {threadChannel.Id}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, $"Failed to initialize match status for thread {threadChannel.Id}");
-                        }
+                        _logger.LogWarning($"No announcement channel found for tournament {tournament?.Name}");
+                        return;
                     }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"Error sending match information to thread {threadChannel.Name}");
-                    }
+                    await _matchStatusService.CreateNewMatchStatusAsync(tournament.AnnouncementChannel, round, client);
+                    await _matchStatusService.UpdateToMapBanStageAsync(tournament.AnnouncementChannel, round, client);
+                    _logger.LogInformation($"Match status initialized for match {match.Name}");
                 }
-
-                // Send information to both player threads
-                if (team1.Thread is not null)
+                catch (Exception ex)
                 {
-                    await SendMatchInfoToThread(team1.Thread);
-                }
-
-                if (team2.Thread is not null)
-                {
-                    await SendMatchInfoToThread(team2.Thread);
+                    _logger.LogError(ex, $"Failed to initialize match status for match {match.Name}");
                 }
 
                 // Save tournament state
                 await _stateService.SaveTournamentStateAsync(client);
-
-                // If all group matches are complete, set up playoffs
-                if (group is not null && group.IsComplete &&
-                    tournament?.CurrentStage == TournamentStage.Groups &&
-                    tournament.Groups?.All(g => g.IsComplete) == true)
-                {
-                    // Delegate to PlayoffService to set up the playoffs
-                    await _playoffService.SetupPlayoffsAsync(tournament, client);
-
-                    // Update tournament visualization
-                    if (tournament.AnnouncementChannel is not null)
-                    {
-                        // This would be handled by a visualization service
-                        // For now, just log it
-                        _logger.LogInformation("Tournament ready for playoffs visualization");
-                    }
-                }
-
-                // Previous code returned "void as per interface" which was accurate
-                // No return value is needed now
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error creating and starting 1v1 match: {ex.Message}");
-                throw; // Re-throw to allow calling code to handle the exception
-            }
-        }
-
-        /// <summary>
-        /// Determines the match type based on context
-        /// </summary>
-        private TournamentMatchType DetermineMatchType(Tournament.Group? group, Tournament.Match? existingMatch)
-        {
-            if (existingMatch?.IsTiebreakerMatch == true)
-            {
-                return TournamentMatchType.GroupStageTiebreaker;
-            }
-            return group is not null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal;
-        }
-
-        /// <summary>
-        /// Determines if the match should use Best-of-3 format
-        /// </summary>
-        private bool ShouldUseBestOfThree(Tournament.Group? group, Tournament.Match? existingMatch)
-        {
-            // Tiebreaker matches are always Bo3
-            if (existingMatch?.IsTiebreakerMatch == true)
-            {
-                return true;
-            }
-
-            // Group stage matches are Bo1, playoffs are Bo3
-            return group is null || existingMatch?.Type == TournamentMatchType.GroupStageTiebreaker;
-        }
-
-        /// <inheritdoc/>
-        public async Task SetupPlayoffStage(Tournament tournament, DiscordClient client)
-        {
-            _logger.LogInformation($"Setting up playoff stage for tournament {tournament.Name}");
-
-            // Delegate playoff setup to the specialized playoff service
-            await _playoffService.SetupPlayoffsAsync(tournament, client);
-
-            // Post updated visualization through appropriate service
-            // This could be an ITournamentVisualizationService or similar
-            if (tournament.AnnouncementChannel is not null)
-            {
-                _logger.LogInformation("Tournament playoff stage ready for visualization");
-            }
-
-            // Start the playoff matches
-            if (tournament.CurrentStage == TournamentStage.Playoffs)
-            {
-                await _playoffService.StartPlayoffMatchesAsync(tournament, client);
+                _logger.LogError(ex, "Error creating match");
+                throw;
             }
         }
 
         /// <inheritdoc/>
-        public int DetermineGroupCount(int playerCount, TournamentFormat format)
-        {
-            // For non-group formats, return 1
-            if (format == TournamentFormat.SingleElimination || format == TournamentFormat.DoubleElimination)
-            {
-                return 1; // No groups for elimination formats
-            }
-            else if (format == TournamentFormat.RoundRobin)
-            {
-                return 1; // Single group for round robin
-            }
-            else // GroupStageWithPlayoffs
-            {
-                // Return group count according to the GroupStageFormat specifications
-                return playerCount switch
-                {
-                    < 7 => 1,    // Small tournaments: 1 group
-                    7 => 1,      // 1 group of 7
-                    8 => 2,      // 2 groups of 4
-                    9 => 3,      // 3 groups of 3
-                    10 => 2,     // 2 groups of 5
-                    11 => 3,     // 3 groups (4, 4, 3)
-                    12 => 3,     // 3 groups of 4
-                    13 => 3,     // 3 groups (4, 4, 5)
-                    14 => 2,     // 2 groups of 7
-                    15 => 3,     // 3 groups of 5
-                    16 => 4,     // 4 groups of 4
-                    17 => 3,     // 3 groups (6, 6, 5)
-                    18 => 3,     // 3 groups of 6
-                    _ => 4       // Large tournaments: use 4 groups
-                };
-            }
-        }
-
-        /// <inheritdoc/>
-        public List<int> GetOptimalGroupSizes(int playerCount, int groupCount)
-        {
-            // Given the player count and group count, determine the optimal size for each group
-            List<int> groupSizes = new List<int>();
-
-            switch (playerCount)
-            {
-                case 7:
-                    groupSizes.Add(7); // 1 group of 7
-                    break;
-                case 8:
-                    groupSizes.Add(4); groupSizes.Add(4); // 2 groups of 4
-                    break;
-                case 9:
-                    groupSizes.Add(3); groupSizes.Add(3); groupSizes.Add(3); // 3 groups of 3
-                    break;
-                case 10:
-                    groupSizes.Add(5); groupSizes.Add(5); // 2 groups of 5
-                    break;
-                case 11:
-                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(3); // 3 groups (4, 4, 3)
-                    break;
-                case 12:
-                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); // 3 groups of 4
-                    break;
-                case 13:
-                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(5); // 3 groups (4, 4, 5)
-                    break;
-                case 14:
-                    groupSizes.Add(7); groupSizes.Add(7); // 2 groups of 7
-                    break;
-                case 15:
-                    groupSizes.Add(5); groupSizes.Add(5); groupSizes.Add(5); // 3 groups of 5
-                    break;
-                case 16:
-                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); // 4 groups of 4
-                    break;
-                case 17:
-                    groupSizes.Add(6); groupSizes.Add(6); groupSizes.Add(5); // 3 groups (6, 6, 5)
-                    break;
-                case 18:
-                    groupSizes.Add(6); groupSizes.Add(6); groupSizes.Add(6); // 3 groups of 6
-                    break;
-                default:
-                    // For player counts not explicitly defined, distribute players evenly
-                    int baseSize = playerCount / groupCount;
-                    int remainder = playerCount % groupCount;
-
-                    for (int i = 0; i < groupCount; i++)
-                    {
-                        // Give the first 'remainder' groups one extra player
-                        groupSizes.Add(baseSize + (i < remainder ? 1 : 0));
-                    }
-                    break;
-            }
-
-            return groupSizes;
-        }
-
-        /// <inheritdoc/>
-        public (int groupWinners, int bestThirdPlace) GetAdvancementCriteria(int playerCount, int groupCount)
-        {
-            // Return a tuple (groupWinners, bestThirdPlace) that specifies how many top players
-            // from each group advance, and how many best third-place players advance
-
-            return playerCount switch
-            {
-                7 => (4, 0),      // Top 4 advance to playoffs
-                8 => (2, 0),      // Top 2 from each group
-                9 => (2, 2),      // Top 2 from each group + 2 best third-place
-                10 => (2, 0),     // Top 2 from each group
-                11 => (2, 2),     // Top 2 from each group + 2 best third-place
-                12 => (2, 2),     // Top 2 from each group + 2 best third-place
-                13 => (2, 2),     // Top 2 from each group + 2 best third-place
-                14 => (4, 0),     // Top 4 from each group
-                15 => (2, 2),     // Top 2 from each group + 2 best third-place
-                16 => (2, 0),     // Top 2 from each group
-                17 => (2, 2),     // Top 2 from each group + 2 best third-place
-                18 => (2, 2),     // Top 2 from each group + 2 best third-place
-                _ => groupCount < 3 ? (2, 0) : (2, 2) // Default based on group count
-            };
-        }
-
-        /// <summary>
-        /// Updates match result
-        /// </summary>
         public async Task UpdateMatchResultAsync(
             Tournament? tournament,
             Tournament.Match? match,
@@ -672,227 +228,103 @@ namespace Wabbit.Services
             int winnerScore,
             int loserScore)
         {
-            try
+            if (tournament == null || match == null || winner is null)
             {
-                if (tournament is null)
-                    throw new ArgumentNullException(nameof(tournament), "Tournament cannot be null");
-                if (match is null)
-                    throw new ArgumentNullException(nameof(match), "Match cannot be null");
-                if (winner is null)
-                    throw new ArgumentNullException(nameof(winner), "Winner cannot be null");
-
-                _logger.LogInformation($"Updating match result for {match.Name} in tournament {tournament.Name}");
-
-                // Update the match result
-                UpdateMatchResultInternal(tournament, match, winner, winnerScore, loserScore);
-
-                // Save tournament state
-                await _stateService.SaveTournamentStateAsync(null);
+                _logger.LogError("Cannot update match result: one or more parameters are null");
+                return;
             }
-            catch (Exception ex)
+
+            await _matchOperations.UpdateMatchResultAsync(tournament, match, winner, winnerScore, loserScore);
+
+            // Handle match completion
+            await HandleMatchCompletion(tournament, match, null);
+        }
+
+        /// <inheritdoc/>
+        public async Task HandleMatchCompletion(
+            Tournament tournament,
+            Tournament.Match match,
+            DiscordClient? client)
+        {
+            _logger.LogInformation($"Handling completion of match {match.Name} in tournament {tournament.Name}");
+
+            // Save tournament state
+            if (client != null)
             {
-                _logger.LogError(ex, $"Error updating match result: {ex.Message}");
+                await _stateService.SaveTournamentStateAsync(client);
+
+                // Generate a new visualization
+                try
+                {
+                    await Misc.TournamentVisualization.GenerateStandingsImage(tournament, client, _stateService);
+                    _logger.LogInformation($"Generated updated standings visualization for tournament {tournament.Name}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Error generating standings visualization for tournament {tournament.Name}: {ex.Message}");
+                }
+            }
+
+            // Check if tournament is complete
+            bool allPlayoffMatchesComplete = tournament.PlayoffMatches != null &&
+                tournament.PlayoffMatches.Count > 0 &&
+                tournament.PlayoffMatches.All(m => m.IsComplete);
+
+            if (tournament.CurrentStage == TournamentStage.Playoffs && allPlayoffMatchesComplete)
+            {
+                tournament.CurrentStage = TournamentStage.Complete;
+                tournament.IsComplete = true;
+                _logger.LogInformation($"Tournament {tournament.Name} is now complete");
             }
         }
 
-        /// <summary>
-        /// Internal method to update match result
-        /// </summary>
-        private void UpdateMatchResultInternal(
-            Tournament tournament,
+        /// <inheritdoc/>
+        public async Task ArchiveMatchThreadsAsync(
             Tournament.Match match,
-            DiscordMember winner,
-            int winnerScore,
-            int loserScore)
+            DiscordClient client,
+            TimeSpan? archiveDuration = null)
         {
-            if (tournament is null)
-                throw new ArgumentNullException(nameof(tournament), "Tournament cannot be null");
-            if (match is null)
-                throw new ArgumentNullException(nameof(match), "Match cannot be null");
-            if (winner is null)
-                throw new ArgumentNullException(nameof(winner), "Winner cannot be null");
-
-            // Check if participants collection exists
-            if (match.Participants == null)
+            try
             {
-                _logger.LogError("Cannot update match result: match participants collection is null");
-                return;
-            }
+                _logger.LogInformation($"Archiving threads for match {match.Name}");
 
-            // Find the winner and loser participants
-            var winnerParticipant = match.Participants.FirstOrDefault(p =>
-                p?.Player is DiscordMember member && member.Id == winner.Id);
-
-            var loserParticipant = match.Participants.FirstOrDefault(p =>
-                p?.Player is DiscordMember member && member.Id != winner.Id);
-
-            if (winnerParticipant == null || loserParticipant == null)
-            {
-                _logger.LogError("Could not find winner or loser participants in match");
-                return;
-            }
-
-            // Set scores
-            winnerParticipant.Score = winnerScore;
-            loserParticipant.Score = loserScore;
-
-            // Create or update result
-            match.Result ??= new Tournament.MatchResult();
-            match.Result.Winner = winner;
-            match.Result.WinnerScore = winnerScore;
-            match.Result.LoserScore = loserScore;
-            match.Result.CompletedAt = DateTime.Now;
-
-            // Update group stats if this is a group stage match
-            if (match.Type == TournamentMatchType.GroupStage)
-            {
-                UpdateGroupStats(match, winnerParticipant, loserParticipant);
-            }
-
-            // Check for group completion
-            if (match.Type == TournamentMatchType.GroupStage &&
-                winnerParticipant.SourceGroup != null)
-            {
-                var group = winnerParticipant.SourceGroup;
-
-                if (group.Matches == null)
+                // Convert TimeSpan to DiscordAutoArchiveDuration
+                var archiveDurationEnum = archiveDuration?.TotalMinutes switch
                 {
-                    _logger.LogWarning($"Cannot check group completion: matches list is null for group {group.Name}");
-                }
-                else
-                {
-                    // Check if all matches in the group are complete
-                    bool allMatchesComplete = group.Matches.All(m => m != null && m.Result != null);
+                    <= 60 => DiscordAutoArchiveDuration.Hour,
+                    <= 1440 => DiscordAutoArchiveDuration.Day,
+                    <= 10080 => DiscordAutoArchiveDuration.Week,
+                    _ => DiscordAutoArchiveDuration.Week // Default to a week for longer durations
+                };
 
-                    if (allMatchesComplete)
+                // Find and archive team threads
+                if (match.LinkedRound?.Teams != null)
+                {
+                    foreach (var team in match.LinkedRound.Teams)
                     {
-                        group.IsComplete = true;
-                        SortGroupParticipants(group);
+                        try
+                        {
+                            if (team.Thread is not null)
+                            {
+                                await team.Thread.ModifyAsync(props =>
+                                {
+                                    props.Locked = true;
+                                    props.AutoArchiveDuration = archiveDurationEnum;
+                                });
+                                _logger.LogInformation($"Archived team thread {team.Thread.Name}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, $"Error archiving team thread: {ex.Message}");
+                        }
                     }
                 }
             }
-
-            // Update next match if this is part of a bracket
-            if (match.NextMatch != null && match.Result?.Winner != null)
+            catch (Exception ex)
             {
-                UpdateNextMatch(tournament, match);
+                _logger.LogError(ex, $"Error archiving match threads: {ex.Message}");
             }
-        }
-
-        /// <summary>
-        /// Updates the group stats based on match results
-        /// </summary>
-        private void UpdateGroupStats(
-            Tournament.Match match,
-            Tournament.MatchParticipant winnerParticipant,
-            Tournament.MatchParticipant loserParticipant)
-        {
-            if (match is null)
-                throw new ArgumentNullException(nameof(match));
-            if (winnerParticipant is null)
-                throw new ArgumentNullException(nameof(winnerParticipant));
-            if (loserParticipant is null)
-                throw new ArgumentNullException(nameof(loserParticipant));
-
-            _logger.LogInformation($"Updating group stats for match {match.Name}");
-
-            // Find participants in their respective groups
-            if (winnerParticipant.SourceGroup?.Participants == null ||
-                loserParticipant.SourceGroup?.Participants == null)
-            {
-                _logger.LogWarning("Cannot update group stats: source groups or their participant lists are null");
-                return;
-            }
-
-            var winnerInGroup = winnerParticipant.SourceGroup.Participants.FirstOrDefault(p =>
-                p?.Player is DiscordMember member &&
-                member.Id == (winnerParticipant.Player as DiscordMember)?.Id);
-
-            var loserInGroup = loserParticipant.SourceGroup.Participants.FirstOrDefault(p =>
-                p?.Player is DiscordMember member &&
-                member.Id == (loserParticipant.Player as DiscordMember)?.Id);
-
-            if (winnerInGroup == null || loserInGroup == null)
-            {
-                _logger.LogError("Could not find participants in their groups");
-                return;
-            }
-
-            // Update stats
-            winnerInGroup.Wins++;
-            loserInGroup.Losses++;
-            winnerInGroup.GamesWon += match.Result?.WinnerScore ?? 0;
-            loserInGroup.GamesWon += match.Result?.LoserScore ?? 0;
-            winnerInGroup.GamesLost += match.Result?.LoserScore ?? 0;
-            loserInGroup.GamesLost += match.Result?.WinnerScore ?? 0;
-        }
-
-        /// <summary>
-        /// Sorts participants in a group by their points and game differential
-        /// </summary>
-        private void SortGroupParticipants(Tournament.Group group)
-        {
-            if (group is null)
-                throw new ArgumentNullException(nameof(group));
-            if (group.Participants == null)
-            {
-                _logger.LogWarning($"Cannot sort participants: participant list is null for group {group.Name}");
-                return;
-            }
-
-            group.Participants = group.Participants
-                .OrderByDescending(p => p?.Points ?? 0)
-                .ThenByDescending(p => p?.GamesWon ?? 0)
-                .ThenByDescending(p => (p?.GamesWon ?? 0) - (p?.GamesLost ?? 0))
-                .ToList();
-
-            // Update positions
-            for (int i = 0; i < group.Participants.Count; i++)
-            {
-                if (group.Participants[i] != null)
-                {
-                    group.Participants[i].Position = i + 1;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Updates the next match in a bracket with the winner of this match
-        /// </summary>
-        private void UpdateNextMatch(Tournament tournament, Tournament.Match match)
-        {
-            if (tournament is null)
-                throw new ArgumentNullException(nameof(tournament));
-            if (match is null)
-                throw new ArgumentNullException(nameof(match));
-            if (match.NextMatch == null)
-            {
-                _logger.LogWarning($"Cannot update next match: no next match defined for {match.Name}");
-                return;
-            }
-            if (match.Result?.Winner == null)
-            {
-                _logger.LogWarning($"Cannot update next match: no winner defined for {match.Name}");
-                return;
-            }
-
-            var nextMatch = match.NextMatch;
-            var winner = match.Result.Winner;
-
-            // Find the slot in the next match where this winner should go
-            var slot = nextMatch.Participants?.FirstOrDefault(p => p?.SourceMatch == match);
-            if (slot == null)
-            {
-                _logger.LogError($"Could not find slot in next match {nextMatch.Name} for winner of {match.Name}");
-                return;
-            }
-
-            // Update the slot with the winner
-            slot.Player = winner;
-            slot.SourceMatch = match;
-            slot.Score = 0; // Reset score for new match
-
-            _logger.LogInformation($"Updated next match {nextMatch.Name} with winner {(winner as DiscordMember)?.Username ?? "Unknown"} from {match.Name}");
         }
 
         /// <summary>
@@ -1053,52 +485,171 @@ namespace Wabbit.Services
         }
 
         /// <inheritdoc/>
-        public async Task ArchiveMatchThreadsAsync(
-            Tournament.Match match,
-            DiscordClient client,
-            TimeSpan? archiveDuration = null)
+        public async Task SetupPlayoffStage(Tournament tournament, DiscordClient client)
         {
-            try
-            {
-                _logger.LogInformation($"Archiving threads for match {match.Name}");
+            _logger.LogInformation($"Setting up playoff stage for tournament {tournament.Name}");
 
-                // Convert TimeSpan to DiscordAutoArchiveDuration
-                var archiveDurationEnum = archiveDuration?.TotalMinutes switch
+            // Delegate playoff setup to the specialized playoff service
+            await _playoffService.SetupPlayoffsAsync(tournament, client);
+
+            // Post updated visualization through appropriate service
+            // This could be an ITournamentVisualizationService or similar
+            if (tournament.AnnouncementChannel is not null)
+            {
+                _logger.LogInformation("Tournament playoff stage ready for visualization");
+            }
+
+            // Start the playoff matches
+            if (tournament.CurrentStage == TournamentStage.Playoffs)
+            {
+                await _playoffService.StartPlayoffMatchesAsync(tournament, client);
+            }
+        }
+
+        /// <inheritdoc/>
+        public int DetermineGroupCount(int playerCount, TournamentFormat format)
+        {
+            // For non-group formats, return 1
+            if (format == TournamentFormat.SingleElimination || format == TournamentFormat.DoubleElimination)
+            {
+                return 1; // No groups for elimination formats
+            }
+            else if (format == TournamentFormat.RoundRobin)
+            {
+                return 1; // Single group for round robin
+            }
+            else // GroupStageWithPlayoffs
+            {
+                // Return group count according to the GroupStageFormat specifications
+                return playerCount switch
                 {
-                    <= 60 => DiscordAutoArchiveDuration.Hour,
-                    <= 1440 => DiscordAutoArchiveDuration.Day,
-                    <= 10080 => DiscordAutoArchiveDuration.Week,
-                    _ => DiscordAutoArchiveDuration.Week // Default to a week for longer durations
+                    < 7 => 1,    // Small tournaments: 1 group
+                    7 => 1,      // 1 group of 7
+                    8 => 2,      // 2 groups of 4
+                    9 => 3,      // 3 groups of 3
+                    10 => 2,     // 2 groups of 5
+                    11 => 3,     // 3 groups (4, 4, 3)
+                    12 => 3,     // 3 groups of 4
+                    13 => 3,     // 3 groups (4, 4, 5)
+                    14 => 2,     // 2 groups of 7
+                    15 => 3,     // 3 groups of 5
+                    16 => 4,     // 4 groups of 4
+                    17 => 3,     // 3 groups (6, 6, 5)
+                    18 => 3,     // 3 groups of 6
+                    _ => 4       // Large tournaments: use 4 groups
                 };
+            }
+        }
 
-                // Find and archive team threads
-                if (match.LinkedRound?.Teams != null)
-                {
-                    foreach (var team in match.LinkedRound.Teams)
-                    {
-                        try
-                        {
-                            if (team.Thread is not null)
-                            {
-                                await team.Thread.ModifyAsync(props =>
-                                {
-                                    props.Locked = true;
-                                    props.AutoArchiveDuration = archiveDurationEnum;
-                                });
-                                _logger.LogInformation($"Archived team thread {team.Thread.Name}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, $"Error archiving team thread: {ex.Message}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
+        /// <inheritdoc/>
+        public List<int> GetOptimalGroupSizes(int playerCount, int groupCount)
+        {
+            // Given the player count and group count, determine the optimal size for each group
+            List<int> groupSizes = new List<int>();
+
+            switch (playerCount)
             {
-                _logger.LogError(ex, $"Error archiving match threads: {ex.Message}");
+                case 7:
+                    groupSizes.Add(7); // 1 group of 7
+                    break;
+                case 8:
+                    groupSizes.Add(4); groupSizes.Add(4); // 2 groups of 4
+                    break;
+                case 9:
+                    groupSizes.Add(3); groupSizes.Add(3); groupSizes.Add(3); // 3 groups of 3
+                    break;
+                case 10:
+                    groupSizes.Add(5); groupSizes.Add(5); // 2 groups of 5
+                    break;
+                case 11:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(3); // 3 groups (4, 4, 3)
+                    break;
+                case 12:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); // 3 groups of 4
+                    break;
+                case 13:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(5); // 3 groups (4, 4, 5)
+                    break;
+                case 14:
+                    groupSizes.Add(7); groupSizes.Add(7); // 2 groups of 7
+                    break;
+                case 15:
+                    groupSizes.Add(5); groupSizes.Add(5); groupSizes.Add(5); // 3 groups of 5
+                    break;
+                case 16:
+                    groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); groupSizes.Add(4); // 4 groups of 4
+                    break;
+                case 17:
+                    groupSizes.Add(6); groupSizes.Add(6); groupSizes.Add(5); // 3 groups (6, 6, 5)
+                    break;
+                case 18:
+                    groupSizes.Add(6); groupSizes.Add(6); groupSizes.Add(6); // 3 groups of 6
+                    break;
+                default:
+                    // For player counts not explicitly defined, distribute players evenly
+                    int baseSize = playerCount / groupCount;
+                    int remainder = playerCount % groupCount;
+
+                    for (int i = 0; i < groupCount; i++)
+                    {
+                        // Give the first 'remainder' groups one extra player
+                        groupSizes.Add(baseSize + (i < remainder ? 1 : 0));
+                    }
+                    break;
             }
+
+            return groupSizes;
+        }
+
+        /// <inheritdoc/>
+        public (int groupWinners, int bestThirdPlace) GetAdvancementCriteria(int playerCount, int groupCount)
+        {
+            // Return a tuple (groupWinners, bestThirdPlace) that specifies how many top players
+            // from each group advance, and how many best third-place players advance
+
+            return playerCount switch
+            {
+                7 => (4, 0),      // Top 4 advance to playoffs
+                8 => (2, 0),      // Top 2 from each group
+                9 => (2, 2),      // Top 2 from each group + 2 best third-place
+                10 => (2, 0),     // Top 2 from each group
+                11 => (2, 2),     // Top 2 from each group + 2 best third-place
+                12 => (2, 2),     // Top 2 from each group + 2 best third-place
+                13 => (2, 2),     // Top 2 from each group + 2 best third-place
+                14 => (4, 0),     // Top 4 from each group
+                15 => (2, 2),     // Top 2 from each group + 2 best third-place
+                16 => (2, 0),     // Top 2 from each group
+                17 => (2, 2),     // Top 2 from each group + 2 best third-place
+                18 => (2, 2),     // Top 2 from each group + 2 best third-place
+                _ => groupCount < 3 ? (2, 0) : (2, 2) // Default based on group count
+            };
+        }
+
+        /// <summary>
+        /// Determines the match type based on context
+        /// </summary>
+        private TournamentMatchType DetermineMatchType(Tournament.Group? group, Tournament.Match? existingMatch)
+        {
+            if (existingMatch?.IsTiebreakerMatch == true)
+            {
+                return TournamentMatchType.GroupStageTiebreaker;
+            }
+            return group is not null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal;
+        }
+
+        /// <summary>
+        /// Determines if the match should use Best-of-3 format
+        /// </summary>
+        private bool ShouldUseBestOfThree(Tournament.Group? group, Tournament.Match? existingMatch)
+        {
+            // Tiebreaker matches are always Bo3
+            if (existingMatch?.IsTiebreakerMatch == true)
+            {
+                return true;
+            }
+
+            // Group stage matches are Bo1, playoffs are Bo3
+            return group is null || existingMatch?.Type == TournamentMatchType.GroupStageTiebreaker;
         }
 
         // ... other methods ...

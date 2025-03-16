@@ -131,21 +131,25 @@ namespace Wabbit.Services
                     Tournament.Group? group = null;
 
                     // Find the match in groups
-                    foreach (var g in tournament.Groups)
+                    if (tournament.Groups != null)
                     {
-                        match = g.Matches.FirstOrDefault(m =>
-                            m.LinkedRound?.CustomProperties != null &&
-                            m.LinkedRound.CustomProperties.ContainsKey("RoundId") &&
-                            m.LinkedRound.CustomProperties["RoundId"].ToString() == matchId);
-                        if (match != null)
+                        foreach (var g in tournament.Groups)
                         {
-                            group = g;
-                            break;
+                            if (g.Matches == null) continue;
+                            match = g.Matches.FirstOrDefault(m =>
+                                m.LinkedRound?.CustomProperties != null &&
+                                m.LinkedRound.CustomProperties.ContainsKey("RoundId") &&
+                                m.LinkedRound.CustomProperties["RoundId"].ToString() == matchId);
+                            if (match != null)
+                            {
+                                group = g;
+                                break;
+                            }
                         }
                     }
 
                     // If not in groups, check playoff matches
-                    if (match == null)
+                    if (match == null && tournament.PlayoffMatches != null)
                     {
                         match = tournament.PlayoffMatches.FirstOrDefault(m =>
                             m.LinkedRound?.CustomProperties != null &&

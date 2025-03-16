@@ -7,10 +7,11 @@ namespace Wabbit.Models
 {
     public class Tournament
     {
-        public string Name { get; set; } = "Tournament";
-        public List<Group> Groups { get; set; } = [];
-        public List<Match> PlayoffMatches { get; set; } = [];
-        public TournamentStage CurrentStage { get; set; } = TournamentStage.SignupOpen;
+        public string Name { get; set; } = string.Empty;
+        public List<Group>? Groups { get; set; }
+        public List<Match>? PlayoffMatches { get; set; }
+        public TournamentStage CurrentStage { get; set; }
+        public int DefaultMatchLength { get; set; } = 10; // Default match length in minutes
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
         public GameType GameType { get; set; } = GameType.OneVsOne;
         public int MatchesPerPlayer { get; set; } = 0; // Default to roundrobin
@@ -63,7 +64,7 @@ namespace Wabbit.Models
             };
 
             // Clone groups
-            clone.Groups = Groups.Select(g => new Group
+            clone.Groups = Groups?.Select(g => new Group
             {
                 Name = g.Name,
                 IsComplete = g.IsComplete,
@@ -84,26 +85,32 @@ namespace Wabbit.Models
             }).ToList();
 
             // Clone matches within groups
-            foreach (var originalGroup in Groups)
+            if (Groups != null && clone.Groups != null)
             {
-                var clonedGroup = clone.Groups.First(g => g.Name == originalGroup.Name);
-                clonedGroup.Matches = originalGroup.Matches.Select(m => CloneMatch(m, clone)).ToList();
+                foreach (var originalGroup in Groups)
+                {
+                    var clonedGroup = clone.Groups.First(g => g.Name == originalGroup.Name);
+                    clonedGroup.Matches = originalGroup.Matches.Select(m => CloneMatch(m, clone)).ToList();
+                }
             }
 
             // Clone playoff matches
-            clone.PlayoffMatches = PlayoffMatches.Select(m => CloneMatch(m, clone)).ToList();
+            clone.PlayoffMatches = PlayoffMatches?.Select(m => CloneMatch(m, clone)).ToList() ?? new List<Tournament.Match>();
 
             // Fix match references (NextMatch and ThirdPlaceMatch)
-            foreach (var originalMatch in PlayoffMatches)
+            if (PlayoffMatches != null)
             {
-                var clonedMatch = clone.PlayoffMatches.First(m => m.Name == originalMatch.Name);
-                if (originalMatch.NextMatch != null)
+                foreach (var originalMatch in PlayoffMatches)
                 {
-                    clonedMatch.NextMatch = clone.PlayoffMatches.First(m => m.Name == originalMatch.NextMatch.Name);
-                }
-                if (originalMatch.ThirdPlaceMatch != null)
-                {
-                    clonedMatch.ThirdPlaceMatch = clone.PlayoffMatches.First(m => m.Name == originalMatch.ThirdPlaceMatch.Name);
+                    var clonedMatch = clone.PlayoffMatches.First(m => m.Name == originalMatch.Name);
+                    if (originalMatch.NextMatch != null)
+                    {
+                        clonedMatch.NextMatch = clone.PlayoffMatches.First(m => m.Name == originalMatch.NextMatch.Name);
+                    }
+                    if (originalMatch.ThirdPlaceMatch != null)
+                    {
+                        clonedMatch.ThirdPlaceMatch = clone.PlayoffMatches.First(m => m.Name == originalMatch.ThirdPlaceMatch.Name);
+                    }
                 }
             }
 
@@ -130,7 +137,8 @@ namespace Wabbit.Models
                     Player = p.Player,
                     Score = p.Score,
                     SourceGroupPosition = p.SourceGroupPosition,
-                    SourceGroup = p.SourceGroup != null ? clonedTournament.Groups.First(g => g.Name == p.SourceGroup.Name) : null
+                    SourceGroup = p.SourceGroup != null && clonedTournament.Groups != null ?
+                        clonedTournament.Groups.First(g => g.Name == p.SourceGroup.Name) : null
                 }).ToList()
             };
 

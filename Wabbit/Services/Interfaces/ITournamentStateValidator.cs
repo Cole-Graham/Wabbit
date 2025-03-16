@@ -26,5 +26,9 @@ namespace Wabbit.Services.Interfaces
         /// Validates the structure of playoff matches to ensure correct connections
         /// </summary>
         List<string> ValidateBracketStructure(Tournament tournament);
+
+        bool ValidatePlayoffSetup(Tournament tournament);
+        bool ValidateGroupMatchCreation(Tournament tournament, Tournament.Group group);
+        bool ValidateGroupCompletion(Tournament tournament, Tournament.Group group);
     }
 }

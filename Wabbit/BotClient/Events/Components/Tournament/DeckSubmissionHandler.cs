@@ -448,15 +448,15 @@ namespace Wabbit.BotClient.Events.Components.Tournament
 
                 // Get the tournament and match from the tournament manager service
                 var tournament = _tournamentManagerService.GetAllTournaments()
-                    .FirstOrDefault(t => t.Groups.Any(g => g.Matches.Any(m =>
-                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true)) ||
-                        t.PlayoffMatches.Any(m =>
-                            m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true));
+                    .FirstOrDefault(t => (t.Groups?.Any(g => g.Matches?.Any(m =>
+                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true) ?? false) == true) ||
+                        (t.PlayoffMatches?.Any(m =>
+                            m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true) ?? false) == true);
 
                 if (tournament is not null)
                 {
-                    var match = tournament.Groups.SelectMany(g => g.Matches)
-                        .Concat(tournament.PlayoffMatches)
+                    var match = tournament.Groups?.SelectMany(g => g.Matches)
+                        .Concat(tournament.PlayoffMatches ?? Enumerable.Empty<Models.Tournament.Match>())
                         .FirstOrDefault(m => m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true);
 
                     if (match?.LinkedRound is not null)

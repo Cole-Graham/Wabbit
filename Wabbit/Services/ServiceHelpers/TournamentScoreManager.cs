@@ -114,6 +114,8 @@ namespace Wabbit.Services.ServiceHelpers
         {
             try
             {
+                if (tournament.Groups == null) return new List<Tournament.GroupParticipant>();
+
                 var thirdPlaceFinishers = tournament.Groups
                     .Select(g => GetGroupStandings(g))
                     .Where(standings => standings.Count >= 3)

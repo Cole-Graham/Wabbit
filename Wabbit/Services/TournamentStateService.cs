@@ -188,9 +188,9 @@ namespace Wabbit.Services
             foreach (var tournament in _ongoingRounds.Tournaments)
             {
                 // Link group stage matches
-                foreach (var group in tournament.Groups)
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                 {
-                    foreach (var match in group.Matches)
+                    foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
                     {
                         if (match.LinkedRound != null)
                         {
@@ -217,7 +217,7 @@ namespace Wabbit.Services
                 }
 
                 // Link playoff matches
-                foreach (var match in tournament.PlayoffMatches)
+                foreach (var match in tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>())
                 {
                     if (match.LinkedRound != null)
                     {
@@ -567,9 +567,9 @@ namespace Wabbit.Services
             _logger.LogInformation($"Updating tournament {tournament.Name} from rounds");
 
             // Update group stage matches
-            foreach (var group in tournament.Groups)
+            foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
             {
-                foreach (var match in group.Matches)
+                foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
                 {
                     if (match.LinkedRound != null &&
                         match.LinkedRound.CustomProperties.ContainsKey("IsCompleted") &&
@@ -581,7 +581,7 @@ namespace Wabbit.Services
             }
 
             // Update playoff matches
-            foreach (var match in tournament.PlayoffMatches)
+            foreach (var match in tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>())
             {
                 if (match.LinkedRound != null &&
                     match.LinkedRound.CustomProperties.ContainsKey("IsCompleted") &&
@@ -592,8 +592,8 @@ namespace Wabbit.Services
             }
 
             // Check if tournament is complete
-            bool allPlayoffMatchesComplete = tournament.PlayoffMatches.Count > 0 &&
-                tournament.PlayoffMatches.All(m => m.IsComplete);
+            bool allPlayoffMatchesComplete = (tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>()).Count() > 0 &&
+                (tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>()).All(m => m.IsComplete);
 
             if (tournament.CurrentStage == TournamentStage.Playoffs && allPlayoffMatchesComplete)
             {
@@ -668,9 +668,9 @@ namespace Wabbit.Services
             _logger.LogInformation($"Updating tournament {tournament.Name} from rounds");
 
             // Update group stage matches
-            foreach (var group in tournament.Groups)
+            foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
             {
-                foreach (var match in group.Matches)
+                foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
                 {
                     if (match.LinkedRound != null &&
                         match.LinkedRound.CustomProperties.ContainsKey("IsCompleted") &&
@@ -682,7 +682,7 @@ namespace Wabbit.Services
             }
 
             // Update playoff matches
-            foreach (var match in tournament.PlayoffMatches)
+            foreach (var match in tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>())
             {
                 if (match.LinkedRound != null &&
                     match.LinkedRound.CustomProperties.ContainsKey("IsCompleted") &&

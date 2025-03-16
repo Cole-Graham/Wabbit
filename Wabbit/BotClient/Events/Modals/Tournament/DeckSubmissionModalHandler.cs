@@ -84,16 +84,16 @@ namespace Wabbit.BotClient.Events.Modals.Tournament
 
                 // Handle tournament deck submission
                 var tournament = _tournamentService.GetAllTournaments()
-                    .FirstOrDefault(t => t.Groups.Any(g => g.Matches.Any(m =>
-                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Interaction.Channel.Id) == true)) ||
-                                       t.PlayoffMatches.Any(m =>
-                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Interaction.Channel.Id) == true));
+                    .FirstOrDefault(t => (t.Groups?.Any(g => g.Matches?.Any(m =>
+                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Interaction.Channel.Id) == true) ?? false) == true) ||
+                                       (t.PlayoffMatches?.Any(m =>
+                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Interaction.Channel.Id) == true) ?? false) == true);
 
                 if (tournament != null)
                 {
                     // Find the match corresponding to this thread
-                    var match = tournament.Groups.SelectMany(g => g.Matches)
-                        .Concat(tournament.PlayoffMatches)
+                    var match = (tournament.Groups ?? Enumerable.Empty<Models.Tournament.Group>()).SelectMany(g => g.Matches ?? Enumerable.Empty<Models.Tournament.Match>())
+                        .Concat(tournament.PlayoffMatches ?? Enumerable.Empty<Models.Tournament.Match>())
                         .FirstOrDefault(m => m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Interaction.Channel.Id) == true);
 
                     if (match != null)

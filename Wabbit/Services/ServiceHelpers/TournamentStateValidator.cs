@@ -1311,5 +1311,101 @@ namespace Wabbit.Services.ServiceHelpers
 
             return errors;
         }
+
+        public bool ValidatePlayoffSetup(Tournament tournament)
+        {
+            if (tournament == null)
+            {
+                _logger.LogError("Tournament cannot be null");
+                return false;
+            }
+
+            if (tournament.Groups == null || tournament.Groups.Count == 0)
+            {
+                _logger.LogError("Tournament must have groups to set up playoffs");
+                return false;
+            }
+
+            if (tournament.CurrentStage != TournamentStage.Groups)
+            {
+                _logger.LogError("Tournament must be in group stage to set up playoffs");
+                return false;
+            }
+
+            // Check if all groups are complete
+            if (!tournament.Groups.All(g => g.IsComplete))
+            {
+                _logger.LogError("All groups must be complete to set up playoffs");
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool ValidateGroupMatchCreation(Tournament tournament, Tournament.Group group)
+        {
+            if (tournament == null)
+            {
+                _logger.LogError("Tournament cannot be null");
+                return false;
+            }
+
+            if (group == null)
+            {
+                _logger.LogError("Group cannot be null");
+                return false;
+            }
+
+            if (tournament.CurrentStage != TournamentStage.Groups)
+            {
+                _logger.LogError("Tournament must be in group stage to create group matches");
+                return false;
+            }
+
+            if (group.Participants == null || group.Participants.Count < 2)
+            {
+                _logger.LogError("Group must have at least 2 participants");
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool ValidateGroupCompletion(Tournament tournament, Tournament.Group group)
+        {
+            if (tournament == null)
+            {
+                _logger.LogError("Tournament cannot be null");
+                return false;
+            }
+
+            if (group == null)
+            {
+                _logger.LogError("Group cannot be null");
+                return false;
+            }
+
+            if (tournament.CurrentStage != TournamentStage.Groups)
+            {
+                _logger.LogError("Tournament must be in group stage to complete groups");
+                return false;
+            }
+
+            if (group.Matches == null || group.Matches.Count == 0)
+            {
+                _logger.LogError("Group must have matches to be completed");
+                return false;
+            }
+
+            // Check if all non-tiebreaker matches are complete
+            var nonTiebreakerMatches = group.Matches.Where(m => !m.IsTiebreakerMatch);
+            if (!nonTiebreakerMatches.All(m => m.Result != null))
+            {
+                _logger.LogError("All non-tiebreaker matches must be complete");
+                return false;
+            }
+
+            return true;
+        }
     }
 }

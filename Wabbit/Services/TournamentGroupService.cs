@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
 using Wabbit.Models;
@@ -15,19 +17,22 @@ namespace Wabbit.Services
     {
         private readonly ILogger<TournamentGroupService> _logger;
         private readonly IRandomProvider _randomProvider;
-        private readonly ITournamentMatchService _matchService;
+        private readonly ITournamentMatchOperationsService _matchOperations;
         private readonly ITournamentScoreManager _scoreManager;
+        private readonly ITournamentStateValidator _stateValidator;
 
         public TournamentGroupService(
             IRandomProvider randomProvider,
             ILogger<TournamentGroupService> logger,
-            ITournamentMatchService matchService,
-            ITournamentScoreManager scoreManager)
+            ITournamentMatchOperationsService matchOperations,
+            ITournamentScoreManager scoreManager,
+            ITournamentStateValidator stateValidator)
         {
             _randomProvider = randomProvider;
             _logger = logger;
-            _matchService = matchService;
+            _matchOperations = matchOperations;
             _scoreManager = scoreManager;
+            _stateValidator = stateValidator;
         }
 
         /// <summary>
@@ -103,7 +108,7 @@ namespace Wabbit.Services
             _logger.LogInformation($"Creating {groupCount} groups with sizes: {string.Join(", ", groupSizes)}");
 
             // Create the groups
-            tournament.Groups = new List<Tournament.Group>();
+            tournament.Groups ??= new List<Tournament.Group>();
             for (int i = 0; i < groupCount; i++)
             {
                 var group = new Tournament.Group
@@ -151,6 +156,12 @@ namespace Wabbit.Services
 
             foreach (var player in seededPlayers)
             {
+                // Ensure groups are initialized
+                tournament.Groups ??= new List<Tournament.Group>();
+
+                // Add participant to group
+                tournament.Groups[groupIndex] ??= new Tournament.Group();
+                tournament.Groups[groupIndex].Participants ??= new List<Tournament.GroupParticipant>();
                 if (tournament.Groups[groupIndex].Participants.Count < groupSizes[groupIndex])
                 {
                     tournament.Groups[groupIndex].Participants.Add(new Tournament.GroupParticipant
@@ -194,9 +205,12 @@ namespace Wabbit.Services
             var shuffledPlayers = players.OrderBy(_ => _randomProvider.Instance.Next()).ToList();
 
             // Distribute to groups
+            tournament.Groups ??= new List<Tournament.Group>();
             int playerIndex = 0;
             for (int i = 0; i < tournament.Groups.Count; i++)
             {
+                tournament.Groups[i] ??= new Tournament.Group();
+                tournament.Groups[i].Participants ??= new List<Tournament.GroupParticipant>();
                 for (int j = 0; j < groupSizes[i]; j++)
                 {
                     if (playerIndex < shuffledPlayers.Count)
@@ -242,27 +256,13 @@ namespace Wabbit.Services
                         _ => 1
                     };
 
-                    var match = new Tournament.Match
-                    {
-                        Name = $"{GetPlayerDisplayName(player1.Player)} vs {GetPlayerDisplayName(player2.Player)}",
-                        Type = TournamentMatchType.GroupStage,
-                        BestOf = bestOf,
-                        Participants = new List<Tournament.MatchParticipant>
-                        {
-                            new Tournament.MatchParticipant
-                            {
-                                Player = player1.Player,
-                                SourceGroup = group,
-                                SourceGroupPosition = i + 1 // Store position for tiebreakers
-                            },
-                            new Tournament.MatchParticipant
-                            {
-                                Player = player2.Player,
-                                SourceGroup = group,
-                                SourceGroupPosition = j + 1 // Store position for tiebreakers
-                            }
-                        }
-                    };
+                    var match = _matchOperations.CreateMatch(
+                        $"{GetPlayerDisplayName(player1.Player)} vs {GetPlayerDisplayName(player2.Player)}",
+                        TournamentMatchType.GroupStage,
+                        bestOf,
+                        ConvertToDiscordMember(player1.Player)!,
+                        ConvertToDiscordMember(player2.Player)!,
+                        group);
 
                     group.Matches.Add(match);
                 }
@@ -574,6 +574,140 @@ namespace Wabbit.Services
                 // Default case - use standard criteria
                 _ => (2, 0)  // Default to top 2 from each group
             };
+        }
+
+        public async Task CreateGroupMatchesAsync(Tournament tournament, Tournament.Group group)
+        {
+            try
+            {
+                if (!_stateValidator.ValidateGroupMatchCreation(tournament, group))
+                {
+                    _logger.LogError($"Cannot create matches for group {group.Name}: validation failed");
+                    return;
+                }
+
+                if (group.Participants == null || group.Participants.Count < 2)
+                {
+                    _logger.LogError($"Cannot create matches for group {group.Name}: insufficient participants");
+                    return;
+                }
+
+                group.Matches ??= new List<Tournament.Match>();
+
+                // Create round-robin matches
+                for (int i = 0; i < group.Participants.Count; i++)
+                {
+                    for (int j = i + 1; j < group.Participants.Count; j++)
+                    {
+                        var player1 = group.Participants[i]?.Player as DiscordMember;
+                        var player2 = group.Participants[j]?.Player as DiscordMember;
+
+                        if (player1 is null || player2 is null) continue;
+
+                        var match = _matchOperations.CreateMatch(
+                            $"{player1.DisplayName} vs {player2.DisplayName}",
+                            TournamentMatchType.GroupStage,
+                            tournament.DefaultMatchLength,
+                            player1,
+                            player2,
+                            group);
+
+                        group.Matches.Add(match);
+                    }
+                }
+
+                await Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error creating matches for group {group.Name}");
+                throw;
+            }
+        }
+
+        public async Task HandleGroupCompletionAsync(Tournament tournament, Tournament.Group group)
+        {
+            try
+            {
+                if (!_stateValidator.ValidateGroupCompletion(tournament, group))
+                {
+                    _logger.LogError($"Cannot handle completion for group {group.Name}: validation failed");
+                    return;
+                }
+
+                // Sort participants by points and game differential
+                SortGroupParticipants(group);
+
+                // Check for ties and create tiebreaker matches if needed
+                await CreateTiebreakerMatchesIfNeededAsync(tournament, group);
+
+                await Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error handling completion for group {group.Name}");
+                throw;
+            }
+        }
+
+        private void SortGroupParticipants(Tournament.Group group)
+        {
+            if (group.Participants == null) return;
+
+            group.Participants = group.Participants
+                .OrderByDescending(p => p?.Points)
+                .ThenByDescending(p => p?.GamesWon - p?.GamesLost)
+                .ThenByDescending(p => p?.GamesWon)
+                .ToList();
+
+            // Update positions
+            for (int i = 0; i < group.Participants.Count; i++)
+            {
+                if (group.Participants[i] != null)
+                {
+                    group.Participants[i].Position = i + 1;
+                }
+            }
+        }
+
+        private async Task CreateTiebreakerMatchesIfNeededAsync(Tournament tournament, Tournament.Group group)
+        {
+            if (group.Participants == null || group.Participants.Count < 2) return;
+
+            // Find tied participants in qualifying positions (top 2)
+            var tiedGroups = group.Participants
+                .Where(p => p?.Position <= 2)
+                .GroupBy(p => new { p?.Points, GameDiff = p?.GamesWon - p?.GamesLost })
+                .Where(g => g.Count() > 1)
+                .ToList();
+
+            foreach (var tiedGroup in tiedGroups)
+            {
+                var tiedParticipants = tiedGroup.ToList();
+                for (int i = 0; i < tiedParticipants.Count; i++)
+                {
+                    for (int j = i + 1; j < tiedParticipants.Count; j++)
+                    {
+                        var player1 = tiedParticipants[i]?.Player as DiscordMember;
+                        var player2 = tiedParticipants[j]?.Player as DiscordMember;
+
+                        if (player1 is null || player2 is null) continue;
+
+                        var match = _matchOperations.CreateMatch(
+                            $"Tiebreaker: {player1.DisplayName} vs {player2.DisplayName}",
+                            TournamentMatchType.GroupStageTiebreaker,
+                            tournament.DefaultMatchLength,
+                            player1,
+                            player2,
+                            group);
+
+                        match.IsTiebreakerMatch = true;
+                        group.Matches?.Add(match);
+                    }
+                }
+            }
+
+            await Task.CompletedTask;
         }
     }
 }

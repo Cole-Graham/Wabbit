@@ -42,7 +42,7 @@ namespace Wabbit.Misc
         public static async Task<string> GenerateStandingsImage(Tournament tournament, DiscordClient? client = null, ITournamentStateService? stateService = null)
         {
             // Calculate sizes
-            bool useDoubleColumn = tournament.Groups.Count >= 4; // Use two columns for 4+ groups
+            bool useDoubleColumn = (tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).Count() >= 4; // Use two columns for 4+ groups
             int width = useDoubleColumn ? 1800 : 900; // Double width for two columns
 
             int groupSectionHeight = CalculateGroupSectionHeight(tournament, useDoubleColumn);
@@ -209,7 +209,7 @@ namespace Wabbit.Misc
             {
                 // Single column layout - sum all group heights
                 int totalHeight = 0;
-                foreach (var group in tournament.Groups)
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                 {
                     // Group header
                     totalHeight += RowHeight;
@@ -225,8 +225,9 @@ namespace Wabbit.Misc
             else
             {
                 // Double column layout - calculate the height of the tallest column
-                var leftGroups = tournament.Groups.Take((tournament.Groups.Count + 1) / 2).ToList();
-                var rightGroups = tournament.Groups.Skip((tournament.Groups.Count + 1) / 2).ToList();
+                var groups = tournament.Groups ?? new List<Tournament.Group>();
+                var leftGroups = groups.Take((groups.Count + 1) / 2).ToList();
+                var rightGroups = groups.Skip((groups.Count + 1) / 2).ToList();
 
                 int leftHeight = 0, rightHeight = 0;
 
@@ -378,9 +379,9 @@ namespace Wabbit.Misc
             yOffset += HeaderHeight;
 
             // Debug information
-            Console.WriteLine($"Drawing group standings for {tournament.Groups.Count} groups");
+            Console.WriteLine($"Drawing group standings for {(tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).Count()} groups");
 
-            bool useDoubleColumn = tournament.Groups.Count >= 4;
+            bool useDoubleColumn = (tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).Count() >= 4;
             int columnWidth = useDoubleColumn ? (width - (Padding * 3)) / 2 : width - (Padding * 2);
             int startYOffset = yOffset; // Remember starting Y position
 
@@ -389,8 +390,9 @@ namespace Wabbit.Misc
             {
                 int leftColYOffset = yOffset;
                 int rightColYOffset = yOffset;
-                var leftGroups = tournament.Groups.Take((tournament.Groups.Count + 1) / 2).ToList();
-                var rightGroups = tournament.Groups.Skip((tournament.Groups.Count + 1) / 2).ToList();
+                var groups = tournament.Groups ?? new List<Tournament.Group>();
+                var leftGroups = groups.Take((groups.Count + 1) / 2).ToList();
+                var rightGroups = groups.Skip((groups.Count + 1) / 2).ToList();
 
                 // Draw left column groups
                 foreach (var group in leftGroups)
@@ -412,7 +414,7 @@ namespace Wabbit.Misc
             else
             {
                 // Single column layout - original behavior
-                foreach (var group in tournament.Groups)
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                 {
                     DrawGroupTable(canvas, group, Padding, yOffset, columnWidth, borderPaint, headerPaint, textPaint);
                     yOffset += (2 + group.Participants.Count) * RowHeight + GroupSpacing;

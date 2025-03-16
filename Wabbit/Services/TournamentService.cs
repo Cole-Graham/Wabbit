@@ -113,9 +113,9 @@ namespace Wabbit.Services
                 List<DiscordMember> players = new List<DiscordMember>();
 
                 // Extract players from all group participants
-                foreach (var group in tournament.Groups)
+                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                 {
-                    foreach (var participant in group.Participants)
+                    foreach (var participant in group.Participants ?? Enumerable.Empty<Tournament.GroupParticipant>())
                     {
                         if (participant.Player is DiscordMember member)
                         {
@@ -132,9 +132,9 @@ namespace Wabbit.Services
                 if (players.Count > 0)
                 {
                     playerSeeds = new Dictionary<DiscordMember, int>();
-                    foreach (var group in tournament.Groups)
+                    foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
                     {
-                        foreach (var participant in group.Participants)
+                        foreach (var participant in group.Participants ?? Enumerable.Empty<Tournament.GroupParticipant>())
                         {
                             if (participant.Player is DiscordMember member && participant.Seed > 0)
                             {
@@ -242,9 +242,9 @@ namespace Wabbit.Services
             _logger.LogInformation($"Archiving all threads for tournament: {tournament.Name}");
 
             // Archive all group stage matches
-            foreach (var group in tournament.Groups)
+            foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
             {
-                foreach (var match in group.Matches)
+                foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
                 {
                     if (match.IsComplete)
                     {
@@ -254,7 +254,7 @@ namespace Wabbit.Services
             }
 
             // Archive all playoff matches
-            foreach (var match in tournament.PlayoffMatches)
+            foreach (var match in tournament.PlayoffMatches ?? Enumerable.Empty<Tournament.Match>())
             {
                 if (match.IsComplete)
                 {
