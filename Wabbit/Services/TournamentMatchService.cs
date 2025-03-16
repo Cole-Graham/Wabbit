@@ -71,6 +71,112 @@ namespace Wabbit.Services
                     return;
                 }
 
+                // Check if players are already in active matches
+                bool player1InActiveMatch = false;
+                bool player2InActiveMatch = false;
+
+                // Check ongoing rounds first
+                foreach (var ongoingRound in _ongoingRounds.TourneyRounds)
+                {
+                    if (ongoingRound.IsCompleted) continue;
+
+                    foreach (var team in ongoingRound.Teams ?? Enumerable.Empty<Round.Team>())
+                    {
+                        foreach (var participant in team.Participants ?? Enumerable.Empty<Round.Participant>())
+                        {
+                            if (participant?.Player is DiscordMember member)
+                            {
+                                if (member.Id == player1?.Id)
+                                {
+                                    player1InActiveMatch = true;
+                                    _logger.LogWarning($"Player {player1?.DisplayName ?? "Unknown"} (ID: {player1?.Id ?? 0}) is already in an active match");
+                                }
+
+                                if (member.Id == player2?.Id)
+                                {
+                                    player2InActiveMatch = true;
+                                    _logger.LogWarning($"Player {player2?.DisplayName ?? "Unknown"} (ID: {player2?.Id ?? 0}) is already in an active match");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check tournament matches that haven't been completed yet
+                if (tournament != null)
+                {
+                    // Check group stage matches
+                    if (group != null && group.Matches != null)
+                    {
+                        foreach (var groupMatch in group.Matches)
+                        {
+                            if (groupMatch.IsComplete || groupMatch == existingMatch) continue;
+
+                            foreach (var participant in groupMatch.Participants ?? Enumerable.Empty<Tournament.MatchParticipant>())
+                            {
+                                if (participant?.Player is DiscordMember member)
+                                {
+                                    if (member.Id == player1?.Id)
+                                    {
+                                        player1InActiveMatch = true;
+                                    }
+
+                                    if (member.Id == player2?.Id)
+                                    {
+                                        player2InActiveMatch = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Check playoff matches
+                    if (tournament.PlayoffMatches != null)
+                    {
+                        foreach (var playoffMatch in tournament.PlayoffMatches)
+                        {
+                            if (playoffMatch.IsComplete || playoffMatch == existingMatch) continue;
+
+                            foreach (var participant in playoffMatch.Participants ?? Enumerable.Empty<Tournament.MatchParticipant>())
+                            {
+                                if (participant?.Player is DiscordMember member)
+                                {
+                                    if (member.Id == player1?.Id)
+                                    {
+                                        player1InActiveMatch = true;
+                                    }
+
+                                    if (member.Id == player2?.Id)
+                                    {
+                                        player2InActiveMatch = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Log and exit if players are already in active matches
+                if (player1InActiveMatch || player2InActiveMatch)
+                {
+                    string errorMsg = "Cannot create match: ";
+                    if (player1InActiveMatch && player2InActiveMatch)
+                    {
+                        errorMsg += $"Both {player1?.DisplayName ?? "Unknown"} and {player2?.DisplayName ?? "Unknown"} are already assigned to active matches";
+                    }
+                    else if (player1InActiveMatch)
+                    {
+                        errorMsg += $"{player1?.DisplayName ?? "Unknown"} is already assigned to an active match";
+                    }
+                    else
+                    {
+                        errorMsg += $"{player2?.DisplayName ?? "Unknown"} is already assigned to an active match";
+                    }
+
+                    _logger.LogError(errorMsg);
+                    return;
+                }
+
                 Tournament.Match match;
                 if (existingMatch != null)
                 {
@@ -78,15 +184,26 @@ namespace Wabbit.Services
                 }
                 else
                 {
+                    // Add null checks before accessing DisplayName
+                    string matchName = $"{player1?.DisplayName ?? "Player 1"} vs {player2?.DisplayName ?? "Player 2"}";
+
+                    // Add null checks before creating match
+                    if (player1 is null || player2 is null)
+                    {
+                        _logger.LogError("Cannot create match: player1 or player2 is null");
+                        return;
+                    }
+
                     match = _matchOperations.CreateMatch(
-                        $"{player1.DisplayName} vs {player2.DisplayName}",
+                        matchName,
                         group != null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal,
                         matchLength,
                         player1,
                         player2,
                         group);
 
-                    if (group == null)
+                    // Make sure tournament is not null before accessing its properties
+                    if (group == null && tournament != null)
                     {
                         tournament.PlayoffMatches ??= new List<Tournament.Match>();
                         tournament.PlayoffMatches.Add(match);
