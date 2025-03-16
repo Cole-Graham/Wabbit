@@ -224,13 +224,41 @@ namespace Wabbit.Models
             public bool IsTiebreakerMatch { get; set; }
         }
 
+        /// <summary>
+        /// Match participant in a tournament match
+        /// </summary>
         public class MatchParticipant
         {
+            /// <summary>
+            /// The player who is participating (typically a DiscordMember)
+            /// </summary>
             public object? Player { get; set; }
+
+            /// <summary>
+            /// The group this participant comes from (for group stage)
+            /// </summary>
             public Group? SourceGroup { get; set; } // For playoff seeding
+
+            /// <summary>
+            /// The match this participant advanced from (for playoffs)
+            /// </summary>
             public Match? SourceMatch { get; set; } // For bracket advancement tracking
+
+            /// <summary>
+            /// The position in the source group (for playoffs seeding)
+            /// </summary>
             public int SourceGroupPosition { get; set; } = 0; // 1 = first place, 2 = second place, etc.
+
+            /// <summary>
+            /// The participant's score in the match
+            /// </summary>
             public int Score { get; set; } = 0;
+
+            /// <summary>
+            /// Team identifier (e.g., "A" or "B") for team matches
+            /// </summary>
+            public string? TeamIdentifier { get; set; }
+
             public string Display => Player?.ToString() ?? $"{SourceGroup?.Name ?? "Unknown"} #{SourceGroupPosition}";
         }
 

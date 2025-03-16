@@ -77,132 +77,34 @@ namespace Wabbit.BotClient.Commands
             CommandContext context,
             [Description("Signup name")] string signupName)
         {
-            await context.DeferResponseAsync();
-
             await SafeExecute(context, async () =>
             {
-                // Load the signup with participants
-                var signup = await _signupService.GetSignupWithParticipantsAsync(signupName, context.Client);
+                // Get the signup
+                TournamentSignup? signup = await _tournamentService.GetSignupWithParticipantsAsync(signupName, context.Client);
                 if (signup == null)
                 {
-                    await SafeResponse(context, $"No signup found with name '{signupName}'", null, true);
+                    await SafeResponse(context, $"No signup found with name '{signupName}'");
                     return;
                 }
 
-                if (signup.Participants.Count < 3)
+                // Check if the signup has enough participants
+                if (signup.Participants == null || signup.Participants.Count < 2)
                 {
-                    await SafeResponse(context, $"Signup '{signupName}' doesn't have enough participants (minimum 3 required)", null, true);
+                    await SafeResponse(context, $"Signup '{signupName}' has fewer than 2 participants.");
                     return;
                 }
 
-                // Check if signup has seeded players
-                bool hasSeededPlayers = signup.Seeds != null && signup.Seeds.Count > 0;
+                // Convert the signup to a tournament
+                var tournament = await CreateTournamentWithSeeding(signup, context.Channel);
 
-                string createMethod = hasSeededPlayers ? "seeded" : "random";
-                await context.EditResponseAsync(new DiscordWebhookBuilder()
-                    .WithContent($"Creating tournament with {(hasSeededPlayers ? "**seeded groups**" : "**random groups**")} (based on available seeding data)"));
-
-                // Create tournament with random groups or using seeding if available
-                Tournament tournament;
-                if (signup.Seeds != null && signup.Seeds.Any())
-                {
-                    tournament = await CreateTournamentWithSeeding(signup, context.Channel);
-                }
-                else
-                {
-                    // Create tournament with default settings
-                    tournament = await _tournamentService.CreateTournamentAsync(
-                        signup.Name,
-                        signup.Participants,
-                        signup.Format,
-                        context.Channel,
-                        signup.Type);
-                }
-
-                // Post the tournament standings visualization to the standings channel if configured
+                // Display tournament standings
                 await _tournamentService.PostTournamentVisualizationAsync(tournament, context.Client);
 
-                // Start all group matches to create threads for each match
-                _logger.LogInformation($"Starting group matches for tournament {tournament.Name}");
+                // Start the group stage matches using the batch scheduler
+                await _tournamentService.StartGroupStage(tournament, context.Client);
 
-                // Track players who already have a match created
-                HashSet<ulong> playersWithMatches = new();
-
-                foreach (var group in tournament.Groups ?? Enumerable.Empty<Tournament.Group>())
-                {
-                    foreach (var match in group.Matches ?? Enumerable.Empty<Tournament.Match>())
-                    {
-                        try
-                        {
-                            // Convert players to Discord members
-                            var player1 = match.Participants[0].Player as DiscordMember;
-                            var player2 = match.Participants[1].Player as DiscordMember;
-
-                            if (player1 is null || player2 is null)
-                            {
-                                _logger.LogWarning($"Could not start match {match.Name}: players are not valid DiscordMembers");
-                                continue;
-                            }
-
-                            // Skip if both players already have matches
-                            if (playersWithMatches.Contains(player1.Id) && playersWithMatches.Contains(player2.Id))
-                            {
-                                continue;
-                            }
-
-                            // Start the match round which will create a thread
-                            await _tournamentService.StartMatchRoundAsync(tournament, match, context.Channel, context.Client);
-                            _logger.LogInformation($"Started match {match.Name} in tournament {tournament.Name}");
-
-                            // Track that these players now have matches
-                            playersWithMatches.Add(player1.Id);
-                            playersWithMatches.Add(player2.Id);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, $"Error starting match {match.Name} in tournament {tournament.Name}");
-                        }
-                    }
-                }
-
-                // Create confirmation embed
-                var embed = new DiscordEmbedBuilder()
-                    .WithTitle($"🏆 Tournament Created: {tournament.Name}")
-                    .WithDescription($"A new tournament has been created from signup '{signup.Name}'.")
-                    .AddField("Players", (tournament.Groups ?? Enumerable.Empty<Tournament.Group>()).Sum(g => g.Participants?.Count ?? 0).ToString(), true)
-                    .AddField("Format", tournament.Format.ToString(), true)
-                    .AddField("Game Type", tournament.GameType == GameType.OneVsOne ? "1v1" : "2v2", true)
-                    .WithColor(DiscordColor.Green)
-                    .WithFooter("Use /tournament_manager show_standings to view the current standings.");
-
-                // Send confirmation
-                await context.EditResponseAsync(embed);
-
-                // Send a public message
-                var publicMessage = await context.Channel.SendMessageAsync(
-                    new DiscordMessageBuilder()
-                        .WithContent($"**Tournament Created**: {tournament.Name} has been created and will start shortly!")
-                        .WithAllowedMentions(new IMention[] { new RoleMention() }));
-
-                // Clean up signup data
-                await _signupService.DeleteSignupAsync(signupName, context.Client, true);
-
-                // Save tournament state
-                await SaveTournamentStateAsync(context.Client);
-
-                // Auto-delete both messages after a short time
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(5000);
-                    try
-                    {
-                        await publicMessage.DeleteAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"Failed to delete messages: {ex.Message}");
-                    }
-                });
+                // Respond to the user
+                await SafeResponse(context, $"Tournament '{tournament.Name}' created and started from signup '{signupName}'.");
             }, "Failed to create tournament from signup");
         }
 
@@ -1675,14 +1577,26 @@ namespace Wabbit.BotClient.Commands
         // Method to handle match completion (delegate to service)
         public async Task HandleMatchCompletion(Tournament tournament, Tournament.Match match, DiscordClient client)
         {
-            await _tournamentMatchService.HandleMatchCompletion(tournament, match, client);
-
-            // After playoff setup and state save
-            if (tournament.CurrentStage == TournamentStage.Playoffs)
+            try
             {
-                await _playoffService.StartPlayoffMatchesAsync(tournament, client);
-            }
+                if (tournament == null || match == null || client == null)
+                {
+                    _logger.LogError("Cannot handle match completion: tournament, match, or client is null");
+                    return;
+                }
 
+                // Call the tournament manager to handle match completion and schedule next matches
+                await _tournamentService.HandleMatchCompletionEvent(tournament, match, client);
+
+                // Update tournament visualization
+                await _tournamentService.PostTournamentVisualizationAsync(tournament, client);
+
+                _logger.LogInformation($"Handled completion of match {match.Name} in tournament {tournament.Name}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error handling match completion: {ex.Message}");
+            }
         }
 
         // Method to handle game result selection and advance the match series

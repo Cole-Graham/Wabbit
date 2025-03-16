@@ -53,7 +53,20 @@ namespace Wabbit.Services
             _scoreManager = scoreManager ?? throw new ArgumentNullException(nameof(scoreManager));
         }
 
-        /// <inheritdoc/>
+        /// <summary>
+        /// Creates and starts a 1v1 match between two players
+        /// </summary>
+        /// <remarks>
+        /// This method assumes that player scheduling (ensuring players aren't double-booked)
+        /// has already been handled by the TournamentManagerService's scheduling system.
+        /// </remarks>
+        /// <param name="tournament">The tournament the match belongs to</param>
+        /// <param name="group">The group the match belongs to (null for playoff matches)</param>
+        /// <param name="player1">The first player</param>
+        /// <param name="player2">The second player</param>
+        /// <param name="client">The Discord client</param>
+        /// <param name="matchLength">The length/format of the match (usually 1 for Bo1, 3 for Bo3, etc.)</param>
+        /// <param name="existingMatch">An existing match to use, if any</param>
         public async Task CreateAndStart1v1Match(
             Tournament tournament,
             Tournament.Group? group,
@@ -70,112 +83,8 @@ namespace Wabbit.Services
                     _logger.LogError("Match creation validation failed");
                     return;
                 }
-
-                // Check if players are already in active matches
-                bool player1InActiveMatch = false;
-                bool player2InActiveMatch = false;
-
-                // Check ongoing rounds first
-                foreach (var ongoingRound in _ongoingRounds.TourneyRounds)
-                {
-                    if (ongoingRound.IsCompleted) continue;
-
-                    foreach (var team in ongoingRound.Teams ?? Enumerable.Empty<Round.Team>())
-                    {
-                        foreach (var participant in team.Participants ?? Enumerable.Empty<Round.Participant>())
-                        {
-                            if (participant?.Player is DiscordMember member)
-                            {
-                                if (member.Id == player1?.Id)
-                                {
-                                    player1InActiveMatch = true;
-                                    _logger.LogWarning($"Player {player1?.DisplayName ?? "Unknown"} (ID: {player1?.Id ?? 0}) is already in an active match");
-                                }
-
-                                if (member.Id == player2?.Id)
-                                {
-                                    player2InActiveMatch = true;
-                                    _logger.LogWarning($"Player {player2?.DisplayName ?? "Unknown"} (ID: {player2?.Id ?? 0}) is already in an active match");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Check tournament matches that haven't been completed yet
-                if (tournament != null)
-                {
-                    // Check group stage matches
-                    if (group != null && group.Matches != null)
-                    {
-                        foreach (var groupMatch in group.Matches)
-                        {
-                            if (groupMatch.IsComplete || groupMatch == existingMatch) continue;
-
-                            foreach (var participant in groupMatch.Participants ?? Enumerable.Empty<Tournament.MatchParticipant>())
-                            {
-                                if (participant?.Player is DiscordMember member)
-                                {
-                                    if (member.Id == player1?.Id)
-                                    {
-                                        player1InActiveMatch = true;
-                                    }
-
-                                    if (member.Id == player2?.Id)
-                                    {
-                                        player2InActiveMatch = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Check playoff matches
-                    if (tournament.PlayoffMatches != null)
-                    {
-                        foreach (var playoffMatch in tournament.PlayoffMatches)
-                        {
-                            if (playoffMatch.IsComplete || playoffMatch == existingMatch) continue;
-
-                            foreach (var participant in playoffMatch.Participants ?? Enumerable.Empty<Tournament.MatchParticipant>())
-                            {
-                                if (participant?.Player is DiscordMember member)
-                                {
-                                    if (member.Id == player1?.Id)
-                                    {
-                                        player1InActiveMatch = true;
-                                    }
-
-                                    if (member.Id == player2?.Id)
-                                    {
-                                        player2InActiveMatch = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Log and exit if players are already in active matches
-                if (player1InActiveMatch || player2InActiveMatch)
-                {
-                    string errorMsg = "Cannot create match: ";
-                    if (player1InActiveMatch && player2InActiveMatch)
-                    {
-                        errorMsg += $"Both {player1?.DisplayName ?? "Unknown"} and {player2?.DisplayName ?? "Unknown"} are already assigned to active matches";
-                    }
-                    else if (player1InActiveMatch)
-                    {
-                        errorMsg += $"{player1?.DisplayName ?? "Unknown"} is already assigned to an active match";
-                    }
-                    else
-                    {
-                        errorMsg += $"{player2?.DisplayName ?? "Unknown"} is already assigned to an active match";
-                    }
-
-                    _logger.LogError(errorMsg);
-                    return;
-                }
+                // Note: We no longer need to check if players are in active matches
+                // This is now handled by the TournamentManagerService's scheduling system
 
                 Tournament.Match match;
                 if (existingMatch != null)
@@ -186,14 +95,11 @@ namespace Wabbit.Services
                 {
                     // Add null checks before accessing DisplayName
                     string matchName = $"{player1?.DisplayName ?? "Player 1"} vs {player2?.DisplayName ?? "Player 2"}";
-
-                    // Add null checks before creating match
                     if (player1 is null || player2 is null)
                     {
                         _logger.LogError("Cannot create match: player1 or player2 is null");
                         return;
                     }
-
                     match = _matchOperations.CreateMatch(
                         matchName,
                         group != null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal,
@@ -558,6 +464,10 @@ namespace Wabbit.Services
                 {
                     await ArchiveMatchThreadsAsync(match, client);
                 }
+
+                // Notify the tournament manager that this match is complete
+                // This is handled by the DI system - we don't have direct access to the manager
+                // The tournament management group will handle this via its event handlers
 
                 // Save tournament state
                 await _stateService.SaveTournamentStateAsync(client);
@@ -992,6 +902,444 @@ namespace Wabbit.Services
             {
                 _logger.LogError(ex, "Error handling tournament progression");
             }
+        }
+
+        /// <summary>
+        /// Creates and starts a match of any supported game type
+        /// </summary>
+        /// <remarks>
+        /// This method assumes that participant scheduling (ensuring players/teams aren't double-booked)
+        /// has already been handled by the TournamentManagerService's scheduling system.
+        /// </remarks>
+        public async Task CreateAndStartMatch(
+            Tournament tournament,
+            Tournament.Group? group,
+            List<DiscordMember> teamA,
+            List<DiscordMember> teamB,
+            DiscordClient client,
+            int matchLength,
+            Tournament.Match? existingMatch = null)
+        {
+            try
+            {
+                // Validate input
+                if (tournament == null)
+                {
+                    _logger.LogError("Cannot create match: tournament is null");
+                    return;
+                }
+
+                if (teamA == null || teamA.Count == 0 || teamA.Any(p => p is null) ||
+                    teamB == null || teamB.Count == 0 || teamB.Any(p => p is null))
+                {
+                    _logger.LogError("Cannot create match: one or more teams are null or empty");
+                    return;
+                }
+
+                // If this is a 1v1 match, delegate to the 1v1 method
+                if (teamA.Count == 1 && teamB.Count == 1)
+                {
+                    await CreateAndStart1v1Match(tournament, group, teamA[0], teamB[0], client, matchLength, existingMatch);
+                    return;
+                }
+
+                // Create or use existing match
+                Tournament.Match match;
+                if (existingMatch != null)
+                {
+                    match = existingMatch;
+                }
+                else
+                {
+                    // Get team names
+                    string teamAName = string.Join(", ", teamA.Select(p => p.DisplayName));
+                    string teamBName = string.Join(", ", teamB.Select(p => p.DisplayName));
+                    string matchName = $"{teamAName} vs {teamBName}";
+
+                    // Create all participants
+                    var participants = new List<Tournament.MatchParticipant>();
+
+                    // Team A participants
+                    foreach (var player in teamA)
+                    {
+                        participants.Add(new Tournament.MatchParticipant
+                        {
+                            Player = player,
+                            SourceGroup = group,
+                            TeamIdentifier = "A" // Add a team identifier
+                        });
+                    }
+
+                    // Team B participants
+                    foreach (var player in teamB)
+                    {
+                        participants.Add(new Tournament.MatchParticipant
+                        {
+                            Player = player,
+                            SourceGroup = group,
+                            TeamIdentifier = "B" // Add a team identifier
+                        });
+                    }
+
+                    // Create the match
+                    match = new Tournament.Match
+                    {
+                        Name = matchName,
+                        Type = group != null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal,
+                        BestOf = matchLength,
+                        Participants = participants,
+                        Result = new Tournament.MatchResult()
+                    };
+
+                    // Add to tournament if this is a playoff match
+                    if (group == null && tournament != null)
+                    {
+                        tournament.PlayoffMatches ??= new List<Tournament.Match>();
+                        tournament.PlayoffMatches.Add(match);
+                    }
+                    else if (group != null)
+                    {
+                        group.Matches ??= new List<Tournament.Match>();
+                        group.Matches.Add(match);
+                    }
+                }
+
+                // Create the Round object
+                var round = new Round
+                {
+                    Name = match.Name,
+                    Length = matchLength,
+                    OneVOne = false, // This is a team match
+                    Teams = new List<Round.Team>(),
+                    TournamentId = tournament?.Name,
+                    MsgToDel = new List<DiscordMessage>(),
+                    TournamentRound = true,
+                    CustomProperties = new Dictionary<string, object>()
+                };
+
+                // Set group stage match information (similar to 1v1 method)
+                if (match.Type == TournamentMatchType.GroupStage && group is not null)
+                {
+                    // Set group match information
+                    SetupGroupMatchInfo(round, group, match, teamA[0]);
+                }
+
+                // Create team objects
+                var team1 = CreateTeamFromMembers("Team A", teamA);
+                var team2 = CreateTeamFromMembers("Team B", teamB);
+
+                // Add teams to round
+                round.Teams.Add(team1);
+                round.Teams.Add(team2);
+
+                // Setup round metadata
+                SetupTeamMatchMetadata(round, team1, team2, matchLength);
+
+                // Add the round to ongoing rounds
+                _ongoingRounds.TourneyRounds.Add(round);
+
+                // Link the round to the match
+                match.LinkedRound = round;
+
+                // Create threads and initialize match status (same as 1v1)
+                if (tournament is not null)
+                {
+                    await CreateMatchThreadsAndInitialize(tournament, round, client);
+                }
+                else
+                {
+                    _logger.LogError("Cannot create match: tournament is null");
+                }
+
+                // Save tournament state
+                await _stateService.SaveTournamentStateAsync(client);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating team match");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Sets up group match information
+        /// </summary>
+        private void SetupGroupMatchInfo(Round round, Tournament.Group group, Tournament.Match match, DiscordMember firstPlayer)
+        {
+            // Calculate total matches per team in this group
+            int groupSize = group.Participants?.Count ?? 0;
+            int teamCount = (int)Math.Ceiling(groupSize / 2.0); // For 2v2, each 2 players form a team
+            int totalMatchesPerTeam = Math.Max(0, teamCount - 1);
+
+            // Find completed matches for this team
+            int completedMatches = 0;
+
+            if (firstPlayer is not null)
+            {
+                // Get completed matches for this team
+                completedMatches = group.Matches?
+                    .Where(m => m != match)
+                    .Where(m => m.IsComplete)
+                    .Count(m => m.Participants
+                        .Any(p => (p.Player as DiscordMember)?.Id == firstPlayer.Id)) ?? 0;
+
+                round.CustomProperties["GroupMatchNumber"] = completedMatches + 1;
+            }
+            else
+            {
+                round.CustomProperties["GroupMatchNumber"] = 1;
+            }
+
+            round.CustomProperties["TotalGroupMatches"] = totalMatchesPerTeam;
+        }
+
+        /// <summary>
+        /// Creates a team object from a list of members
+        /// </summary>
+        private Round.Team CreateTeamFromMembers(string teamName, List<DiscordMember> members)
+        {
+            var team = new Round.Team
+            {
+                Name = teamName,
+                Participants = new List<Round.Participant>(),
+                MapBans = new List<string>()
+            };
+
+            foreach (var member in members)
+            {
+                team.Participants.Add(new Round.Participant
+                {
+                    Player = member
+                });
+            }
+
+            return team;
+        }
+
+        /// <summary>
+        /// Sets up metadata for a team match
+        /// </summary>
+        private void SetupTeamMatchMetadata(Round round, Round.Team team1, Round.Team team2, int matchLength)
+        {
+            if (team1.Name is null || team2.Name is null)
+            {
+                _logger.LogError("Cannot setup team match metadata: team1.Name or team2.Name is null");
+                return;
+            }
+            round.CustomProperties["TeamAName"] = team1.Name;
+            round.CustomProperties["TeamBName"] = team2.Name;
+            round.CustomProperties["TeamAScore"] = 0;
+            round.CustomProperties["TeamBScore"] = 0;
+            round.CustomProperties["TeamAWins"] = 0;
+            round.CustomProperties["TeamBWins"] = 0;
+            round.CustomProperties["Draws"] = 0;
+            round.CustomProperties["MatchLength"] = matchLength;
+            round.CustomProperties["IsTeamMatch"] = true;
+
+            // Store player IDs for both teams
+            var teamAIds = team1.Participants?.Select(p => (p.Player as DiscordMember)?.Id ?? 0).ToList();
+            var teamBIds = team2.Participants?.Select(p => (p.Player as DiscordMember)?.Id ?? 0).ToList();
+            if (teamAIds is null || teamBIds is null)
+            {
+                _logger.LogError("Cannot setup team match metadata: teamAIds or teamBIds is null");
+                return;
+            }
+            round.CustomProperties["TeamAPlayerIds"] = teamAIds;
+            round.CustomProperties["TeamBPlayerIds"] = teamBIds;
+        }
+
+        /// <summary>
+        /// Creates threads and initializes match status for any match type
+        /// </summary>
+        private async Task CreateMatchThreadsAndInitialize(Tournament tournament, Round round, DiscordClient client)
+        {
+            if (tournament is null)
+            {
+                _logger.LogError("Cannot manage team threads: tournament is null");
+                return;
+            }
+
+            await GetOrCreateTeamThreadsAsync(tournament, round.Teams, client);
+
+            // Check if this is a first match for any team member
+            bool isFirstMatch = DetermineIfFirstMatch(tournament, round);
+
+            // Initialize the match status system
+            try
+            {
+                if (tournament?.AnnouncementChannel is null)
+                {
+                    _logger.LogWarning($"No announcement channel found for tournament {tournament?.Name}");
+                    return;
+                }
+
+                // For each team's thread
+                foreach (var team in round.Teams)
+                {
+                    if (team.Thread is null)
+                    {
+                        _logger.LogWarning($"No thread found for team {team.Name}");
+                        continue;
+                    }
+
+                    await InitializeMatchStatusInThread(tournament, round, team, isFirstMatch, client);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Failed to initialize match status for match {round.Name}");
+            }
+        }
+
+        /// <summary>
+        /// Determines if this is the first match for any team member
+        /// </summary>
+        private bool DetermineIfFirstMatch(Tournament tournament, Round round)
+        {
+            // Extract all player IDs involved in this match
+            var playerIds = new HashSet<ulong>();
+            foreach (var team in round.Teams ?? Enumerable.Empty<Round.Team>())
+            {
+                foreach (var participant in team.Participants ?? Enumerable.Empty<Round.Participant>())
+                {
+                    if (participant?.Player is DiscordMember member)
+                    {
+                        playerIds.Add(member.Id);
+                    }
+                }
+            }
+
+            // Check if any player has previous matches in groups
+            if (tournament.Groups != null)
+            {
+                foreach (var group in tournament.Groups)
+                {
+                    if (group.Matches == null) continue;
+
+                    int existingMatches = group.Matches.Count(m =>
+                        m.Participants?.Any(p =>
+                            p.Player is DiscordMember pm &&
+                            playerIds.Contains(pm.Id)) ?? false);
+
+                    if (existingMatches > 1) // More than this match
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            // Check playoff matches
+            if (tournament.PlayoffMatches != null)
+            {
+                int existingMatches = tournament.PlayoffMatches.Count(m =>
+                    m.Participants?.Any(p =>
+                        p.Player is DiscordMember pm &&
+                        playerIds.Contains(pm.Id)) ?? false);
+
+                if (existingMatches > 1) // More than this match
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Initializes match status in a team thread
+        /// </summary>
+        private async Task InitializeMatchStatusInThread(
+            Tournament tournament,
+            Round round,
+            Round.Team team,
+            bool isFirstMatch,
+            DiscordClient client)
+        {
+            // If not the first match, add a separator before creating a new match status
+            if (!isFirstMatch)
+            {
+                int matchNumber = (int)(round.CustomProperties.ContainsKey("GroupMatchNumber") ?
+                    round.CustomProperties["GroupMatchNumber"] : 1);
+                int totalMatches = (int)(round.CustomProperties.ContainsKey("TotalGroupMatches") ?
+                    round.CustomProperties["TotalGroupMatches"] : 1);
+
+                // Get opponent name
+                string opponentName = team == round.Teams[0] ?
+                    round.Teams[1].Name ?? "Opponent" :
+                    round.Teams[0].Name ?? "Opponent";
+
+                if (team.Thread is not null)
+                {
+                    await _matchStatusService.AddMatchSeparatorAsync(
+                        team.Thread,
+                        client,
+                        matchNumber,
+                        totalMatches,
+                        opponentName);
+                }
+                else
+                {
+                    _logger.LogError("Cannot add match separator: team.Thread is null");
+                }
+            }
+
+            // For existing threads with previous matches, ensure we create a new match status
+            // message rather than updating an old one if the previous match was completed
+            if (!isFirstMatch)
+            {
+                // Find the existing round for this team in this thread, if any
+                var existingRound = _ongoingRounds.TourneyRounds
+                    .Where(r => r.TournamentId == tournament.Name)
+                    .Where(r => r != round) // Not the current round
+                    .Where(r => r.Teams.Any(t => t.Thread?.Id == team.Thread?.Id))
+                    .OrderByDescending(r => r.CustomProperties.ContainsKey("GroupMatchNumber") ?
+                        Convert.ToInt32(r.CustomProperties["GroupMatchNumber"]) : 0)
+                    .FirstOrDefault();
+
+                // If we found a previous round and it's completed, create a new status
+                if (existingRound != null && existingRound.IsCompleted && team.Thread is not null)
+                {
+                    await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                }
+                else if (team.Thread is not null)
+                {
+                    // Otherwise, check if there's an existing message
+                    var existingStatus = await _matchStatusService.GetMatchStatusMessageAsync(team.Thread, client);
+
+                    if (existingStatus == null)
+                    {
+                        // If no existing message, create a new one
+                        await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+                    }
+                    else
+                    {
+                        // Update existing status
+                        await _matchStatusService.UpdateMatchStatusAsync(team.Thread, round, client);
+                    }
+                }
+                else
+                {
+                    _logger.LogError("Cannot initialize match status in thread: team.Thread is null");
+                }
+            }
+            else if (team.Thread is not null)
+            {
+                // First match, always create a new status
+                await _matchStatusService.CreateNewMatchStatusAsync(team.Thread, round, client);
+            }
+            else
+            {
+                _logger.LogError("Cannot initialize match status in thread: team.Thread is null");
+            }
+            if (team.Thread is not null)
+            {
+                await _matchStatusService.UpdateToMapBanStageAsync(team.Thread, round, client);
+            }
+            else
+            {
+                _logger.LogError("Cannot update to map ban stage: team.Thread is null");
+            }
+            _logger.LogInformation($"Match status initialized for match {round.Name} in thread for {team.Name}");
         }
 
         // ... other methods ...

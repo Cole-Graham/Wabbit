@@ -5,16 +5,39 @@ using System.Threading.Tasks;
 
 namespace Wabbit.Services.Interfaces
 {
+    /// <summary>
+    /// Service for managing tournament matches
+    /// </summary>
     public interface ITournamentMatchService
     {
         /// <summary>
-        /// Creates and starts a 1v1 match
+        /// Creates and starts a match between two players or teams
         /// </summary>
+        /// <remarks>
+        /// This method assumes that participant scheduling (ensuring players/teams aren't double-booked)
+        /// has already been handled by the TournamentManagerService's scheduling system.
+        /// </remarks>
         Task CreateAndStart1v1Match(
             Tournament tournament,
             Tournament.Group? group,
             DiscordMember player1,
             DiscordMember player2,
+            DiscordClient client,
+            int matchLength,
+            Tournament.Match? existingMatch = null);
+
+        /// <summary>
+        /// Creates and starts a match of any supported game type
+        /// </summary>
+        /// <remarks>
+        /// This method assumes that participant scheduling (ensuring players/teams aren't double-booked)
+        /// has already been handled by the TournamentManagerService's scheduling system.
+        /// </remarks>
+        Task CreateAndStartMatch(
+            Tournament tournament,
+            Tournament.Group? group,
+            List<DiscordMember> teamA,
+            List<DiscordMember> teamB,
             DiscordClient client,
             int matchLength,
             Tournament.Match? existingMatch = null);

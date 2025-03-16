@@ -113,5 +113,20 @@ namespace Wabbit.Services.Interfaces
         /// Gets a signup with fully loaded participants
         /// </summary>
         Task<TournamentSignup?> GetSignupWithParticipantsAsync(string name, DiscordClient client);
+
+        /// <summary>
+        /// Schedules next available matches for a tournament
+        /// </summary>
+        Task ScheduleNextMatchBatchAsync(Tournament tournament, DiscordClient client);
+
+        /// <summary>
+        /// Handles a match completion event and schedules next matches if available
+        /// </summary>
+        Task HandleMatchCompletionEvent(Tournament tournament, Tournament.Match match, DiscordClient client);
+
+        /// <summary>
+        /// Starts the group stage for a tournament
+        /// </summary>
+        Task StartGroupStage(Tournament tournament, DiscordClient client);
     }
 }
