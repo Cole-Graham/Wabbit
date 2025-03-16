@@ -98,7 +98,8 @@ namespace Wabbit
                     services.AddSingleton<ITournamentManagerService, TournamentManagerService>();
                     services.AddSingleton<IMatchStatusService, MatchStatusService>();
                     services.AddSingleton<ITournamentStateValidator, TournamentStateValidator>();
-                    services.AddSingleton<ITournamentScoreManager, TournamentScoreManager>();
+                    services.AddSingleton<TournamentScoreManager>();
+                    services.AddSingleton<ITournamentScoreManager>(sp => sp.GetRequiredService<TournamentScoreManager>());
                     services.AddSingleton<ITournamentProgressTracker, TournamentProgressTracker>();
 
                     // Register existing services
