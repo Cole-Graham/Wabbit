@@ -89,6 +89,9 @@ namespace Wabbit
                     services.AddSingleton<TournamentStateValidator>();
                     services.AddSingleton<ITournamentStateValidator>(sp => sp.GetRequiredService<TournamentStateValidator>());
 
+                    services.AddSingleton<TournamentBracketManager>();
+                    services.AddSingleton<ITournamentBracketManager>(sp => sp.GetRequiredService<TournamentBracketManager>());
+
                     services.AddSingleton<TournamentMatchOperationsService>();
                     services.AddSingleton<ITournamentMatchOperationsService>(sp => sp.GetRequiredService<TournamentMatchOperationsService>());
 
