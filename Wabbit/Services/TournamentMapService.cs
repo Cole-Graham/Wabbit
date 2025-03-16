@@ -143,7 +143,7 @@ namespace Wabbit.Services
         /// <summary>
         /// Processes map bans and generates a map list
         /// </summary>
-        public List<string> GenerateMapList(bool oneVOne, List<string> team1Bans, List<string> team2Bans, int matchLength)
+        public List<string> GenerateMapList(bool oneVOne, List<string> team1Bans, List<string> team2Bans, int matchLength, Round? round = null)
         {
             try
             {
@@ -182,6 +182,52 @@ namespace Wabbit.Services
                 if (validTeam2Bans.Count != team2Bans.Count)
                 {
                     _logger.LogWarning($"Team 2 has {team2Bans.Count - validTeam2Bans.Count} invalid map bans");
+                }
+
+                // Check for conditional bans based on match length
+                if (round != null && round.CoinflipPerformed && matchLength > 1)
+                {
+                    string? team1Name = round.Teams.Count > 0 ? round.Teams[0].Name : null;
+                    string? team2Name = round.Teams.Count > 1 ? round.Teams[1].Name : null;
+
+                    // Get winning team (if it exists)
+                    bool team1Won = string.Equals(team1Name, round.CoinflipWinnerTeamName, StringComparison.OrdinalIgnoreCase);
+                    bool team2Won = string.Equals(team2Name, round.CoinflipWinnerTeamName, StringComparison.OrdinalIgnoreCase);
+
+                    if (matchLength == 3) // Bo3 match
+                    {
+                        // For Bo3, only apply priority 3 bans for the team that won the coinflip
+                        if (validTeam1Bans.Count >= 3 && !team1Won)
+                        {
+                            // Remove priority 3 ban from team 1's bans if they lost the coinflip
+                            validTeam1Bans.RemoveAt(2);
+                            _logger.LogInformation("Removed conditional (priority 3) ban from Team 1 as they lost the coinflip");
+                        }
+
+                        if (validTeam2Bans.Count >= 3 && !team2Won)
+                        {
+                            // Remove priority 3 ban from team 2's bans if they lost the coinflip
+                            validTeam2Bans.RemoveAt(2);
+                            _logger.LogInformation("Removed conditional (priority 3) ban from Team 2 as they lost the coinflip");
+                        }
+                    }
+                    else if (matchLength == 5) // Bo5 match
+                    {
+                        // For Bo5, only apply priority 2 bans for the team that won the coinflip
+                        if (validTeam1Bans.Count >= 2 && !team1Won)
+                        {
+                            // Remove priority 2 ban from team 1's bans if they lost the coinflip
+                            validTeam1Bans.RemoveAt(1);
+                            _logger.LogInformation("Removed conditional (priority 2) ban from Team 1 as they lost the coinflip");
+                        }
+
+                        if (validTeam2Bans.Count >= 2 && !team2Won)
+                        {
+                            // Remove priority 2 ban from team 2's bans if they lost the coinflip
+                            validTeam2Bans.RemoveAt(1);
+                            _logger.LogInformation("Removed conditional (priority 2) ban from Team 2 as they lost the coinflip");
+                        }
+                    }
                 }
 
                 // Process valid team 1 bans
@@ -248,22 +294,23 @@ namespace Wabbit.Services
                 // Get the base map pool
                 var mapPool = GetTournamentMapPool(round.OneVOne);
 
-                // Get all banned maps
+                // Get all banned maps - use the GenerateMapList method to handle conditional bans
+                var team1Bans = round.Teams?.Count > 0 ? round.Teams[0].MapBans?.ToList() ?? new List<string>() : new List<string>();
+                var team2Bans = round.Teams?.Count > 1 ? round.Teams[1].MapBans?.ToList() ?? new List<string>() : new List<string>();
+
+                // Remove banned maps from the pool (including conditional bans based on coinflip)
+                var availableMaps = mapPool.ToList();
                 var bannedMaps = new HashSet<string>();
-                if (round.Teams?.Any() == true)
+
+                // Use GenerateMapList to get maps after applying bans
+                var mapsAfterBans = GenerateMapList(round.OneVOne, team1Bans, team2Bans, Math.Max(1, mapPool.Count - (team1Bans.Count + team2Bans.Count)), round);
+
+                // Calculate banned maps by finding difference between original map pool and remaining maps
+                foreach (var map in mapPool)
                 {
-                    foreach (var team in round.Teams)
+                    if (!mapsAfterBans.Contains(map))
                     {
-                        if (team?.MapBans?.Any() == true)
-                        {
-                            foreach (var ban in team.MapBans)
-                            {
-                                if (!string.IsNullOrEmpty(ban))
-                                {
-                                    bannedMaps.Add(ban);
-                                }
-                            }
-                        }
+                        bannedMaps.Add(map);
                     }
                 }
 
@@ -285,7 +332,7 @@ namespace Wabbit.Services
                 var playedMaps = new HashSet<string>(round.Maps ?? new List<string>());
 
                 // Filter out banned and played maps
-                var availableMaps = mapPool
+                availableMaps = mapPool
                     .Where(map => !bannedMaps.Contains(map) && !playedMaps.Contains(map))
                     .ToList();
 
@@ -380,19 +427,19 @@ namespace Wabbit.Services
             }
         }
 
-        public List<string> GenerateMapListBo1(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null)
+        public List<string> GenerateMapListBo1(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null, Round? round = null)
         {
-            return GenerateMapList(oneVOne, team1Bans, team2Bans, 1);
+            return GenerateMapList(oneVOne, team1Bans, team2Bans, 1, round);
         }
 
-        public List<string> GenerateMapListBo3(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null)
+        public List<string> GenerateMapListBo3(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null, Round? round = null)
         {
-            return GenerateMapList(oneVOne, team1Bans, team2Bans, 3);
+            return GenerateMapList(oneVOne, team1Bans, team2Bans, 3, round);
         }
 
-        public List<string> GenerateMapListBo5(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null)
+        public List<string> GenerateMapListBo5(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? globalBans = null, Round? round = null)
         {
-            return GenerateMapList(oneVOne, team1Bans, team2Bans, 5);
+            return GenerateMapList(oneVOne, team1Bans, team2Bans, 5, round);
         }
 
         public (Map? map, DiscordEmbedBuilder embed) GetRandomMapWithVisualization()

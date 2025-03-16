@@ -300,13 +300,13 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 // Use the new ReviseMapBansAsync method to revise the map bans
                 if (e.Channel is not null)
                 {
-                    await _matchStatusService.ConfirmMapBansAsync(e.Channel, round, team.Name ?? "Unknown Team", client);
+                    await _matchStatusService.ReviseMapBansAsync(e.Channel, round, team.Name ?? "Unknown Team", client);
                 }
 
                 // Log the successful map ban revision
                 if (e.Channel is not null)
                 {
-                    _logger.LogInformation($"Map bans revised for team {team.Name} in channel {e.Channel.Id}");
+                    _logger.LogInformation($"Map bans revision requested for team {team.Name} in channel {e.Channel.Id}");
                 }
             }
             catch (Exception ex)

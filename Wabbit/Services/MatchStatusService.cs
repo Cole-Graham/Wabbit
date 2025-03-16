@@ -493,12 +493,12 @@ namespace Wabbit.Services
                 .AddComponents(
                     new DiscordButtonComponent(
                         DiscordButtonStyle.Success,
-                        $"confirm_map_bans_{round.GetHashCode()}",
+                        $"confirm_map_bans_{teamName}",
                         "Confirm Map Bans"
                     ),
                     new DiscordButtonComponent(
                         DiscordButtonStyle.Secondary,
-                        $"revise_map_bans_{round.GetHashCode()}",
+                        $"revise_map_bans_{teamName}",
                         "Revise Map Bans"
                     )
                 );
@@ -538,6 +538,12 @@ namespace Wabbit.Services
             // If all teams have submitted, move to deck submission stage
             if (allTeamsSubmitted)
             {
+                // Perform coinflip for conditional bans if needed
+                if (round.Teams.Count == 2 && (round.Length == 3 || round.Length == 5) && !round.CoinflipPerformed)
+                {
+                    await PerformConditionalBanCoinflipAsync(channel, round, client);
+                }
+
                 round.CurrentStage = MatchStage.DeckSubmission;
             }
 
@@ -548,6 +554,383 @@ namespace Wabbit.Services
             if (round.Teams?.All(t => t is not null && t.Thread?.Id != channel.Id) ?? false)
             {
                 await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
+        }
+
+        /// <summary>
+        /// Creates and shows an animated coinflip
+        /// </summary>
+        private async Task<DiscordMessage> ShowAnimatedCoinflipAsync(
+            DiscordChannel channel,
+            string headsTeamName,
+            string tailsTeamName,
+            bool headsWins)
+        {
+            // Coin flip animation frames with more varied flipping
+            string[] coinFrames = [
+                "🪙",
+                "↕️",
+                "🪙",
+                "↔️",
+                "🪙",
+                "↘️",
+                "🪙",
+                "↗️",
+                "🪙",
+                "↕️",
+                "🪙"
+            ];
+
+            // Color animation - changes color during the flip for visual effect
+            DiscordColor[] colorFrames = [
+                new DiscordColor(255, 215, 0),    // Gold
+                new DiscordColor(200, 170, 0),    // Dark gold
+                new DiscordColor(230, 190, 0),    // Medium gold
+                new DiscordColor(255, 215, 0),    // Gold
+                new DiscordColor(255, 230, 100)   // Light gold
+            ];
+
+            // Create initial message with first frame
+            var message = await channel.SendMessageAsync(new DiscordMessageBuilder()
+                .WithContent($"**COINFLIP IN PROGRESS** 🎲")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle("🪙 Coinflip for Conditional Map Ban")
+                    .WithDescription($"Flipping a coin to determine which team's conditional ban applies...\n\n{coinFrames[0]}")
+                    .WithColor(colorFrames[0])
+                    .AddField("Heads", $"**{headsTeamName}**", true)
+                    .AddField("Tails", $"**{tailsTeamName}**", true)));
+
+            // Update message to show animation frames
+            for (int i = 1; i < coinFrames.Length; i++)
+            {
+                await Task.Delay(400); // Delay between frames
+
+                await message.ModifyAsync(new DiscordMessageBuilder()
+                    .WithContent($"**COINFLIP IN PROGRESS** 🎲")
+                    .AddEmbed(new DiscordEmbedBuilder()
+                        .WithTitle("🪙 Coinflip for Conditional Map Ban")
+                        .WithDescription($"Flipping a coin to determine which team's conditional ban applies...\n\n{coinFrames[i]}")
+                        .WithColor(colorFrames[i % colorFrames.Length])
+                        .AddField("Heads", $"**{headsTeamName}**", true)
+                        .AddField("Tails", $"**{tailsTeamName}**", true)));
+            }
+
+            // Final frame showing result with dramatic flair
+            string resultEmoji = headsWins ? "⭐" : "🌙";
+            string winnerName = headsWins ? headsTeamName : tailsTeamName;
+            string resultText = headsWins ? "Heads" : "Tails";
+
+            // Suspense pause
+            await message.ModifyAsync(new DiscordMessageBuilder()
+                .WithContent($"**COINFLIP RESULT INCOMING...** 👀")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle("🪙 The coin has stopped spinning...")
+                    .WithDescription($"And the result is...\n\n...")
+                    .WithColor(new DiscordColor(100, 100, 100))
+                    .AddField("Heads", $"**{headsTeamName}**", true)
+                    .AddField("Tails", $"**{tailsTeamName}**", true)));
+
+            await Task.Delay(1000); // Dramatic pause
+
+            // Final result with fanfare
+            await message.ModifyAsync(new DiscordMessageBuilder()
+                .WithContent($"**COINFLIP RESULT** 🎯")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle($"🪙 Coinflip Result: {resultText}! 🎉")
+                    .WithDescription($"The coin has landed on **{resultText}**! {resultEmoji}\n\n**{winnerName}** wins the coinflip! 🎊")
+                    .WithColor(headsWins ? new DiscordColor(255, 223, 0) : new DiscordColor(192, 192, 192))
+                    .AddField("Heads", $"**{headsTeamName}** {(headsWins ? "✅" : "")}", true)
+                    .AddField("Tails", $"**{tailsTeamName}** {(!headsWins ? "✅" : "")}", true)
+                    .AddField("Result", $"**{resultText}** {resultEmoji}", false)));
+
+            return message;
+        }
+
+        /// <summary>
+        /// Creates and shows an animated slot machine
+        /// </summary>
+        private async Task<DiscordMessage> ShowAnimatedSlotMachineAsync(
+            DiscordChannel channel,
+            string team1Name,
+            string team2Name,
+            bool team1Wins)
+        {
+            // Slot symbols with more variety for visual appeal
+            string[] symbols = ["🍒", "🍊", "🍋", "🍇", "🔔", "💎", "7️⃣", "🎰", "⭐", "🍀", "🎲"];
+
+            // Create initial message
+            var message = await channel.SendMessageAsync(new DiscordMessageBuilder()
+                .WithContent($"**SPINNING THE SLOT MACHINE** 🎰")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle("🎰 Slot Machine for Conditional Map Ban")
+                    .WithDescription($"Spinning to determine which team's conditional ban applies...")
+                    .WithColor(new DiscordColor(138, 43, 226))
+                    .AddField(team1Name, "🎰", true)
+                    .AddField(team2Name, "🎰", true)));
+
+            var random = new Random();
+
+            // Animation frames with increasing speed
+            int[] delays = [600, 500, 400, 300, 250, 200];
+
+            // First round of spins - slower
+            for (int i = 0; i < 3; i++)
+            {
+                await Task.Delay(delays[0]);
+                string team1Symbol = symbols[random.Next(symbols.Length)];
+                string team2Symbol = symbols[random.Next(symbols.Length)];
+
+                await message.ModifyAsync(new DiscordMessageBuilder()
+                    .WithContent($"**SPINNING THE SLOT MACHINE** 🎰")
+                    .AddEmbed(new DiscordEmbedBuilder()
+                        .WithTitle("🎰 Slot Machine for Conditional Map Ban")
+                        .WithDescription($"Spinning to determine which team's conditional ban applies...")
+                        .WithColor(new DiscordColor(138, 43, 226))
+                        .AddField(team1Name, team1Symbol, true)
+                        .AddField(team2Name, team2Symbol, true)));
+            }
+
+            // Second round - faster
+            for (int i = 0; i < delays.Length - 1; i++)
+            {
+                await Task.Delay(delays[i]);
+
+                // Multiple rapid symbol changes for visual effect
+                for (int j = 0; j < 2; j++)
+                {
+                    string team1Symbol = symbols[random.Next(symbols.Length)];
+                    string team2Symbol = symbols[random.Next(symbols.Length)];
+
+                    await message.ModifyAsync(new DiscordMessageBuilder()
+                        .WithContent($"**SPINNING THE SLOT MACHINE** 🎰")
+                        .AddEmbed(new DiscordEmbedBuilder()
+                            .WithTitle("🎰 Slot Machine for Conditional Map Ban")
+                            .WithDescription($"Spinning to determine which team's conditional ban applies...\n{(i > 2 ? "Almost there..." : "")}")
+                            .WithColor(new DiscordColor(138, 43, 226))
+                            .AddField(team1Name, team1Symbol, true)
+                            .AddField(team2Name, team2Symbol, true)));
+
+                    await Task.Delay(100); // Quick flicker between symbols
+                }
+            }
+
+            // Prepare for final reveal
+            await message.ModifyAsync(new DiscordMessageBuilder()
+                .WithContent($"**SLOT MACHINE SLOWING DOWN...** 🎰")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle("🎰 Slot Machine for Conditional Map Ban")
+                    .WithDescription($"The reels are slowing down...")
+                    .WithColor(new DiscordColor(138, 43, 226))
+                    .AddField(team1Name, "❓", true)
+                    .AddField(team2Name, "❓", true)));
+
+            await Task.Delay(800);
+
+            // Final spin with results
+            string winningSymbol = "🏆";
+            string losingSymbol = symbols[random.Next(symbols.Length)];
+
+            string team1Final = team1Wins ? winningSymbol : losingSymbol;
+            string team2Final = team1Wins ? losingSymbol : winningSymbol;
+            string winnerName = team1Wins ? team1Name : team2Name;
+
+            // Final result with fanfare
+            await message.ModifyAsync(new DiscordMessageBuilder()
+                .WithContent($"**SLOT MACHINE RESULT** 🎉")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle($"🎰 We Have a Winner! 🎊")
+                    .WithDescription($"The slot machine has selected a winner!\n\n**{winnerName}** gets the trophy! 🏆\n\nJACKPOT! 💰💰💰")
+                    .WithColor(new DiscordColor(255, 215, 0))
+                    .AddField(team1Name, team1Final, true)
+                    .AddField(team2Name, team2Final, true)
+                    .AddField("Winner", $"**{winnerName}**'s conditional map ban will be applied", false)));
+
+            return message;
+        }
+
+        /// <summary>
+        /// Creates and shows an animated roulette wheel
+        /// </summary>
+        private async Task<DiscordMessage> ShowAnimatedRouletteAsync(
+            DiscordChannel channel,
+            string team1Name,
+            string team2Name,
+            bool team1Wins)
+        {
+            // Roulette wheel spinning frames
+            string[] rouletteFrames = [
+                "🔄 0️⃣",
+                "🔄 🔴",
+                "🔄 ⚫",
+                "🔄 🔴",
+                "🔄 ⚫",
+                "🔄 🔴",
+                "🔄 ⚫",
+                "🔄 🔴",
+                "🔄 ⚫"
+            ];
+
+            // Team colors
+            string team1Color = "🔴";
+            string team2Color = "⚫";
+
+            // Create initial message
+            var message = await channel.SendMessageAsync(new DiscordMessageBuilder()
+                .WithContent($"**ROULETTE WHEEL SPINNING** 🎰")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle("🎡 Roulette for Conditional Map Ban")
+                    .WithDescription($"Spinning the roulette wheel to determine which team's conditional ban applies...\n\n{rouletteFrames[0]}")
+                    .WithColor(new DiscordColor(204, 0, 0))
+                    .AddField($"{team1Name} - Red", team1Color, true)
+                    .AddField($"{team2Name} - Black", team2Color, true)));
+
+            // Update message to show animation frames
+            for (int i = 1; i < rouletteFrames.Length; i++)
+            {
+                await Task.Delay(500);
+
+                await message.ModifyAsync(new DiscordMessageBuilder()
+                    .WithContent($"**ROULETTE WHEEL SPINNING** 🎰")
+                    .AddEmbed(new DiscordEmbedBuilder()
+                        .WithTitle("🎡 Roulette for Conditional Map Ban")
+                        .WithDescription($"Spinning the roulette wheel to determine which team's conditional ban applies...\n\n{rouletteFrames[i]}")
+                        .WithColor(new DiscordColor(204, 0, 0))
+                        .AddField($"{team1Name} - Red", team1Color, true)
+                        .AddField($"{team2Name} - Black", team2Color, true)));
+            }
+
+            // Final result
+            string winningColor = team1Wins ? "🔴 RED" : "⚫ BLACK";
+            string winnerName = team1Wins ? team1Name : team2Name;
+
+            await Task.Delay(700);
+
+            await message.ModifyAsync(new DiscordMessageBuilder()
+                .WithContent($"**ROULETTE RESULT** 🎯")
+                .AddEmbed(new DiscordEmbedBuilder()
+                    .WithTitle($"🎡 Roulette Result: {winningColor}!")
+                    .WithDescription($"The ball has landed on **{winningColor}**!\n\n**{winnerName}** wins the spin!")
+                    .WithColor(team1Wins ? new DiscordColor(204, 0, 0) : new DiscordColor(0, 0, 0))
+                    .AddField($"{team1Name} - Red", team1Wins ? "🎯" : "❌", true)
+                    .AddField($"{team2Name} - Black", team1Wins ? "❌" : "🎯", true)
+                    .AddField("Result", $"**{winnerName}**'s conditional map ban will be applied", false)));
+
+            return message;
+        }
+
+        /// <summary>
+        /// Performs a random selection to determine which team's conditional ban is applied
+        /// </summary>
+        private async Task PerformConditionalBanCoinflipAsync(DiscordChannel channel, Round round, DiscordClient client)
+        {
+            if (round.Teams.Count != 2)
+                return;
+
+            var team1 = round.Teams[0];
+            var team2 = round.Teams[1];
+
+            // Check if both teams have map bans
+            if (team1.MapBans?.Any() != true || team2.MapBans?.Any() != true)
+                return;
+
+            // For Bo3: Check if there are overlapping bans resulting in fewer than 4 unique banned maps
+            // For Bo5: Check if there are overlapping bans resulting in fewer than 2 unique banned maps
+            var uniqueMapBans = new HashSet<string>();
+            foreach (var mapBan in team1.MapBans.Union(team2.MapBans))
+            {
+                uniqueMapBans.Add(mapBan);
+            }
+
+            bool needCoinflip = false;
+            if (round.Length == 3 && uniqueMapBans.Count < 4 && team1.MapBans.Count >= 3 && team2.MapBans.Count >= 3)
+            {
+                needCoinflip = true;
+            }
+            else if (round.Length == 5 && uniqueMapBans.Count < 2 && team1.MapBans.Count >= 2 && team2.MapBans.Count >= 2)
+            {
+                needCoinflip = true;
+            }
+
+            if (needCoinflip)
+            {
+                // First send a teaser message
+                await channel.SendMessageAsync(new DiscordMessageBuilder()
+                    .WithContent($"**INITIATING GAMBLING SEQUENCE...** 🤩 🎮 🎲 🎯"));
+
+                await Task.Delay(1000); // Short dramatic pause
+
+                var random = new Random();
+                bool team1IsHeads = random.Next(2) == 0;
+                bool headsWins = random.Next(2) == 0;
+
+                // Determine winner
+                var selectionWinner = headsWins ? (team1IsHeads ? team1 : team2) : (team1IsHeads ? team2 : team1);
+                var selectionLoser = headsWins ? (team1IsHeads ? team2 : team1) : (team1IsHeads ? team1 : team2);
+
+                // Record random selection results
+                round.CoinflipPerformed = true;
+                round.CoinflipWinnerTeamName = selectionWinner.Name;
+                round.CoinflipHeadsTeamName = team1IsHeads ? team1.Name : team2.Name;
+                round.CoinflipTailsTeamName = team1IsHeads ? team2.Name : team1.Name;
+
+                // Randomly choose between animation types (0: coinflip, 1: slot machine, 2: roulette)
+                int animationType = random.Next(3);
+                bool team1Wins = string.Equals(team1.Name, selectionWinner.Name, StringComparison.OrdinalIgnoreCase);
+
+                switch (animationType)
+                {
+                    case 0:
+                        // Use coinflip animation
+                        await ShowAnimatedCoinflipAsync(
+                            channel,
+                            round.CoinflipHeadsTeamName ?? "Heads Team",
+                            round.CoinflipTailsTeamName ?? "Tails Team",
+                            headsWins);
+                        break;
+
+                    case 1:
+                        // Use slot machine animation
+                        await ShowAnimatedSlotMachineAsync(
+                            channel,
+                            team1.Name ?? "Team 1",
+                            team2.Name ?? "Team 2",
+                            team1Wins);
+                        break;
+
+                    case 2:
+                        // Use roulette animation
+                        await ShowAnimatedRouletteAsync(
+                            channel,
+                            team1.Name ?? "Team 1",
+                            team2.Name ?? "Team 2",
+                            team1Wins);
+                        break;
+                }
+
+                // Send a message about the random selection result
+                var resultEmbed = new DiscordEmbedBuilder()
+                    .WithTitle("🎲 Random Selection Result for Conditional Map Ban")
+                    .WithDescription($"Due to overlapping map bans, a random selection was needed to determine which conditional ban applies.")
+                    .WithColor(new DiscordColor(255, 215, 0))
+                    .AddField("Winner", $"**{selectionWinner.Name}**", false);
+
+                // Add specific map ban information
+                int conditionalBanIndex = round.Length == 3 ? 2 : 1; // Priority 3 (index 2) for Bo3, Priority 2 (index 1) for Bo5
+                if (selectionWinner.MapBans.Count > conditionalBanIndex)
+                {
+                    string conditionalMap = selectionWinner.MapBans[conditionalBanIndex];
+                    resultEmbed.AddField("Applied Conditional Ban",
+                        $"**{selectionWinner.Name}**'s {(conditionalBanIndex == 2 ? "3rd" : "2nd")} priority ban (**{conditionalMap}**) has been applied.", false);
+                }
+
+                if (selectionLoser.MapBans.Count > conditionalBanIndex)
+                {
+                    string ignoredMap = selectionLoser.MapBans[conditionalBanIndex];
+                    resultEmbed.AddField("Ignored Conditional Ban",
+                        $"**{selectionLoser.Name}**'s {(conditionalBanIndex == 2 ? "3rd" : "2nd")} priority ban (**{ignoredMap}**) will not be applied.", false);
+                }
+
+                await channel.SendMessageAsync(new DiscordMessageBuilder().AddEmbed(resultEmbed));
             }
         }
 
@@ -1176,12 +1559,32 @@ namespace Wabbit.Services
                     // Best of 3: Priority 1 and 2 are guaranteed, Priority 3 is conditional
                     else if (round.Length == 3)
                     {
-                        isGuaranteedBan = banPriority < 2; // 0 and 1 are guaranteed
+                        // Priority 0 and 1 (1st and 2nd) are guaranteed
+                        if (banPriority < 2)
+                        {
+                            isGuaranteedBan = true;
+                        }
+                        // Priority 2 (3rd) is conditional and depends on coinflip
+                        else if (banPriority == 2 && round.CoinflipPerformed)
+                        {
+                            // If this team won the coinflip, their priority 3 ban is applied
+                            isGuaranteedBan = string.Equals(team.Name, round.CoinflipWinnerTeamName, StringComparison.OrdinalIgnoreCase);
+                        }
                     }
                     // Best of 5: Only Priority 1 is guaranteed, Priority 2 is conditional
                     else if (round.Length == 5)
                     {
-                        isGuaranteedBan = banPriority == 0; // Only 0 is guaranteed
+                        // Priority 0 (1st) is guaranteed
+                        if (banPriority == 0)
+                        {
+                            isGuaranteedBan = true;
+                        }
+                        // Priority 1 (2nd) is conditional and depends on coinflip
+                        else if (banPriority == 1 && round.CoinflipPerformed)
+                        {
+                            // If this team won the coinflip, their priority 2 ban is applied
+                            isGuaranteedBan = string.Equals(team.Name, round.CoinflipWinnerTeamName, StringComparison.OrdinalIgnoreCase);
+                        }
                     }
 
                     return isGuaranteedBan ? "🟥" : "🟨";
@@ -1221,6 +1624,23 @@ namespace Wabbit.Services
                         mapLine.Append(" ");
                 }
                 banBuilder.AppendLine(mapLine.ToString());
+
+                // Add guarantee information based on match length
+                banBuilder.AppendLine();
+                if (round.Length == 1)
+                {
+                    banBuilder.AppendLine("All bans are guaranteed in Bo1 matches");
+                }
+                else if (round.Length == 3)
+                {
+                    banBuilder.AppendLine("Priority #1 and #2 are guaranteed bans");
+                    banBuilder.AppendLine("Priority #3 is conditional (if duplicate guaranteed bans + coinflip win)");
+                }
+                else if (round.Length == 5)
+                {
+                    banBuilder.AppendLine("Only Priority #1 is a guaranteed ban");
+                    banBuilder.AppendLine("Priority #2 is conditional (if duplicate guaranteed bans + coinflip win)");
+                }
             }
             else if (userTeam.MapBans?.Any() == true)
             {
@@ -1360,6 +1780,27 @@ namespace Wabbit.Services
             {
                 builder.AddField("📝 Instructions", instructions, false);
             }
+
+            // Check if there are custom instructions in the CustomProperties
+            if (round.CustomProperties?.TryGetValue("Instructions", out var customInstructionsObj) == true &&
+                customInstructionsObj is string customInstructions && !string.IsNullOrEmpty(customInstructions))
+            {
+                // Add coinflip information to the instructions if a coinflip was performed
+                if (round.CoinflipPerformed &&
+                    !string.IsNullOrEmpty(round.CoinflipWinnerTeamName) &&
+                    !string.IsNullOrEmpty(round.CoinflipHeadsTeamName) &&
+                    !string.IsNullOrEmpty(round.CoinflipTailsTeamName))
+                {
+                    string randomSelectionText = $"\n\n**Random Selection Result for Conditional Map Ban:**\n" +
+                        $"Teams: **{round.CoinflipHeadsTeamName}** vs **{round.CoinflipTailsTeamName}**\n" +
+                        $"**Winner: {round.CoinflipWinnerTeamName}**\n" +
+                        $"Their {(round.Length == 3 ? "3rd" : "2nd")} priority ban was applied to the map pool.";
+
+                    customInstructions += randomSelectionText;
+                }
+
+                builder.AddField("__Custom Instructions__", customInstructions);
+            }
         }
 
         /// <summary>
@@ -1485,7 +1926,7 @@ namespace Wabbit.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error updating map information");
+                _logger.LogError(ex, $"Error updating map information: {ex.Message}");
             }
         }
 

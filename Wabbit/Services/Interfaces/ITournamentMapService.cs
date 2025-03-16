@@ -39,8 +39,9 @@ namespace Wabbit.Services.Interfaces
         /// <param name="team1Bans">Maps banned by team 1</param>
         /// <param name="team2Bans">Maps banned by team 2</param>
         /// <param name="matchLength">Length of the match (number of maps needed)</param>
+        /// <param name="round">Optional round information for conditional bans</param>
         /// <returns>A list of maps for the match</returns>
-        List<string> GenerateMapList(bool oneVOne, List<string> team1Bans, List<string> team2Bans, int matchLength);
+        List<string> GenerateMapList(bool oneVOne, List<string> team1Bans, List<string> team2Bans, int matchLength, Round? round = null);
 
         /// <summary>
         /// Gets the list of available maps for the next game in a match
@@ -60,17 +61,17 @@ namespace Wabbit.Services.Interfaces
         /// <summary>
         /// Generates a map list for a Bo1 match
         /// </summary>
-        List<string> GenerateMapListBo1(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null);
+        List<string> GenerateMapListBo1(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null, Round? round = null);
 
         /// <summary>
         /// Generates a map list for a Bo3 match
         /// </summary>
-        List<string> GenerateMapListBo3(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null);
+        List<string> GenerateMapListBo3(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null, Round? round = null);
 
         /// <summary>
         /// Generates a map list for a Bo5 match
         /// </summary>
-        List<string> GenerateMapListBo5(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null);
+        List<string> GenerateMapListBo5(bool oneVOne, List<string> team1Bans, List<string> team2Bans, List<string>? customMapPool = null, Round? round = null);
 
         /// <summary>
         /// Gets a random map with its visualization data

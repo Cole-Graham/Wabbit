@@ -21,6 +21,12 @@ namespace Wabbit.Models
         public string? WinMsg { get; set; }
         public bool TournamentRound { get; set; }
 
+        // Properties for tracking conditional map bans
+        public bool CoinflipPerformed { get; set; } = false;
+        public string? CoinflipWinnerTeamName { get; set; }
+        public string? CoinflipHeadsTeamName { get; set; }
+        public string? CoinflipTailsTeamName { get; set; }
+
         // Group stage tracking properties
         public int GroupStageMatchNumber { get; set; } = 0;
         public int TotalGroupStageMatches { get; set; } = 0;
