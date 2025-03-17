@@ -177,5 +177,23 @@ namespace Wabbit.Services.Interfaces
         /// <param name="teamName">The name of the team revising bans</param>
         /// <param name="client">The Discord client</param>
         Task ReviseMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client);
+
+        /// <summary>
+        /// Confirms a player's deck submission
+        /// </summary>
+        /// <param name="channel">The match thread channel</param>
+        /// <param name="round">The tournament round</param>
+        /// <param name="playerId">The ID of the player confirming the deck</param>
+        /// <param name="client">The Discord client</param>
+        Task ConfirmDeckAsync(DiscordChannel channel, Round round, ulong playerId, DiscordClient client);
+
+        /// <summary>
+        /// Revises a player's deck submission by clearing the temporary deck code
+        /// </summary>
+        /// <param name="channel">The match thread channel</param>
+        /// <param name="round">The tournament round</param>
+        /// <param name="playerId">The ID of the player revising the deck</param>
+        /// <param name="client">The Discord client</param>
+        Task ReviseDeckAsync(DiscordChannel channel, Round round, ulong playerId, DiscordClient client);
     }
 }

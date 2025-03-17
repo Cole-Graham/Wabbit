@@ -68,55 +68,147 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage> UpdateMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
-            if (round is null) throw new ArgumentNullException(nameof(round));
-            if (channel is null) throw new ArgumentNullException(nameof(channel));
-            if (client is null) throw new ArgumentNullException(nameof(client));
-
             try
             {
-                // Ensure round has an Id
-                if (string.IsNullOrEmpty(round.Id))
+                _logger.LogInformation($"Updating match status in channel {channel.Id}");
+
+                // Ensure the message exists
+                var message = await EnsureMatchStatusMessageExistsAsync(channel, round, client);
+                if (message == null)
                 {
-                    round.Id = Guid.NewGuid().ToString();
+                    _logger.LogError($"Failed to ensure match status message exists in channel {channel.Id}");
+                    throw new Exception("Failed to create or retrieve match status message");
                 }
 
-                // Create the status embed
+                // Create the embed based on the round state
                 var embed = CreateMatchStatusEmbed(round);
 
-                // Get the status message ID
-                ulong? statusMessageId = round.StatusMessageId;
-
-                // Create message builder with appropriate components
+                // Create a message builder with the updated embed
                 var messageBuilder = new DiscordMessageBuilder()
                     .AddEmbed(embed);
 
-                // Add map ban dropdown during map ban stage
-                if (round.CurrentStage == MatchStage.MapBan)
+                // Check if the team has confirmed their map bans (if applicable)
+                bool hasConfirmedMapBans = false;
+                var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == channel.Id);
+                if (team != null && round.CurrentStage == MatchStage.MapBan)
                 {
-                    var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
-                    if (mapPool?.Any() == true)
-                    {
-                        var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
-                        if (availableMaps.Any())
-                        {
-                            // Bo1 matches (including group stage) and Bo3 matches have 3 bans
-                            // Bo5 matches have 2 bans
-                            int numBans = round.Length == 5 ? 2 : 3;
+                    hasConfirmedMapBans = team.MapBans != null && team.MapBans.Any();
+                    _logger.LogInformation($"Team {team.Name} in channel {channel.Id} has confirmed map bans: {hasConfirmedMapBans}");
+                }
 
-                            messageBuilder.AddComponents(new DiscordSelectComponent(
-                                $"map_ban_{round.GetHashCode()}",
-                                $"Select {numBans} maps to ban (in order of priority)",
-                                availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
-                                false,
-                                minOptions: numBans,
-                                maxOptions: numBans
-                            ));
-                        }
+                // Check if the team has a pending deck submission (if applicable)
+                bool hasPendingDeckSubmission = false;
+                if (team != null && round.CurrentStage == MatchStage.DeckSubmission)
+                {
+                    // Check if this team has a pending deck submission
+                    hasPendingDeckSubmission = round.CustomProperties != null &&
+                        round.CustomProperties.ContainsKey($"PendingDeckSubmission_{team.Name}");
+
+                    // Also check if any participant has a temp deck code
+                    hasPendingDeckSubmission = hasPendingDeckSubmission ||
+                        (team.Participants?.Any(p => !string.IsNullOrEmpty(p?.TempDeckCode)) ?? false);
+
+                    _logger.LogInformation($"Team {team.Name} in channel {channel.Id} has pending deck submission: {hasPendingDeckSubmission}");
+                }
+
+                // CASE 1: Map Ban Stage with no confirmation yet - show map ban dropdown
+                if (round.CurrentStage == MatchStage.MapBan && !hasConfirmedMapBans)
+                {
+                    _logger.LogInformation($"Showing map ban dropdown for channel {channel.Id} - team has not confirmed bans yet");
+
+                    // Get the map pool for this round
+                    var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
+                    if (mapPool == null || !mapPool.Any())
+                    {
+                        _logger.LogWarning($"No map pool available for round {round.Id}");
+                        return message;
+                    }
+
+                    // Get available maps (excluding already banned ones)
+                    var availableMaps = mapPool.ToList();
+                    if (round.Teams != null)
+                    {
+                        // Remove maps that have already been banned by all teams
+                        var allBannedMaps = round.Teams
+                            .Where(t => t.MapBans != null && t.MapBans.Any())
+                            .SelectMany(t => t.MapBans)
+                            .Distinct()
+                            .ToList();
+
+                        availableMaps = availableMaps
+                            .Except(allBannedMaps)
+                            .ToList();
+                    }
+
+                    // Check if there are enough maps to ban
+                    int numBans = round.Length;
+                    if (availableMaps.Count < numBans)
+                    {
+                        _logger.LogError($"Not enough maps available to ban. Available: {availableMaps.Count}, Required: {numBans}");
+                        var refreshButton = new DiscordButtonComponent(
+                            DiscordButtonStyle.Secondary,
+                            $"refresh_status_{round.Id}",
+                            "Refresh Status",
+                            emoji: new DiscordComponentEmoji("🔄"));
+                        messageBuilder.AddComponents(refreshButton);
+                    }
+                    else
+                    {
+                        // Add the map ban dropdown
+                        var selectComponent = new DiscordSelectComponent(
+                            $"map_ban_{round.GetHashCode()}",
+                            $"Select {numBans} maps to ban (in order of priority)",
+                            availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                            false,
+                            minOptions: numBans,
+                            maxOptions: numBans);
+                        messageBuilder.AddComponents(selectComponent);
                     }
                 }
-                // Only add refresh button for non-map-ban stages
+                // CASE 2: Deck Submission with pending submission - show confirm/revise/refresh buttons
+                else if (round.CurrentStage == MatchStage.DeckSubmission && hasPendingDeckSubmission)
+                {
+                    // Find the participant with the pending deck
+                    var participant = team?.Participants?.FirstOrDefault(p => !string.IsNullOrEmpty(p?.TempDeckCode));
+                    if (participant?.Player is not null)
+                    {
+                        var refreshButton = new DiscordButtonComponent(
+                            DiscordButtonStyle.Secondary,
+                            $"refresh_status_{round.Id}",
+                            "Refresh Status",
+                            emoji: new DiscordComponentEmoji("🔄"));
+
+                        var confirmButton = new DiscordButtonComponent(
+                            DiscordButtonStyle.Success,
+                            $"confirm_deck_{participant.Player.Id}",
+                            "Confirm Deck");
+
+                        var reviseButton = new DiscordButtonComponent(
+                            DiscordButtonStyle.Secondary,
+                            $"revise_deck_{participant.Player.Id}",
+                            "Revise Deck");
+
+                        // Add all three buttons
+                        messageBuilder.AddComponents(refreshButton, confirmButton, reviseButton);
+
+                        _logger.LogInformation($"Showing confirm/revise buttons for channel {channel.Id} - team has pending deck submission");
+                    }
+                    else
+                    {
+                        // Fallback to just refresh button if we can't find the participant
+                        var refreshButton = new DiscordButtonComponent(
+                            DiscordButtonStyle.Secondary,
+                            $"refresh_status_{round.Id}",
+                            "Refresh Status",
+                            emoji: new DiscordComponentEmoji("🔄"));
+
+                        messageBuilder.AddComponents(refreshButton);
+                    }
+                }
+                // CASE 3: Not in map ban stage OR team has confirmed bans OR not pending deck submission - show refresh button
                 else
                 {
+                    // Add the refresh button for all other stages or when map bans are confirmed
                     var refreshButton = new DiscordButtonComponent(
                         DiscordButtonStyle.Secondary,
                         $"refresh_status_{round.Id}",
@@ -124,33 +216,29 @@ namespace Wabbit.Services
                         emoji: new DiscordComponentEmoji("🔄"));
 
                     messageBuilder.AddComponents(refreshButton);
-                }
 
-                if (statusMessageId.HasValue && statusMessageId.Value > 0)
-                {
-                    try
+                    if (round.CurrentStage == MatchStage.MapBan && hasConfirmedMapBans)
                     {
-                        // Try to edit the existing message
-                        var message = await channel.GetMessageAsync(statusMessageId.Value);
-                        if (message is not null)
-                        {
-                            return await message.ModifyAsync(messageBuilder);
-                        }
+                        _logger.LogInformation($"Showing refresh button for channel {channel.Id} - team has already confirmed map bans");
                     }
-                    catch (Exception ex)
+                    else if (round.CurrentStage == MatchStage.DeckSubmission && !hasPendingDeckSubmission)
                     {
-                        _logger.LogWarning(ex, $"Could not edit existing status message. Creating a new one. {ex.Message}");
+                        _logger.LogInformation($"Showing refresh button for channel {channel.Id} - no pending deck submission");
+                    }
+                    else
+                    {
+                        _logger.LogInformation($"Showing refresh button for channel {channel.Id} - stage: {round.CurrentStage}");
                     }
                 }
 
-                // If we couldn't edit the message, create a new one
-                var statusMessage = await channel.SendMessageAsync(messageBuilder);
-                round.StatusMessageId = statusMessage.Id;
-                return statusMessage;
+                // Update the message
+                await message.ModifyAsync(messageBuilder);
+
+                return message;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Failed to update match status in channel {channel.Id}: {ex.Message}");
+                _logger.LogError(ex, $"Error updating match status: {ex.Message}");
                 throw;
             }
         }
@@ -544,43 +632,17 @@ namespace Wabbit.Services
                 var messageBuilder = new DiscordMessageBuilder()
                     .AddEmbed(embed);
 
-                // Add refresh button if appropriate (only in non-map-ban stages)
-                if (round.CurrentStage != MatchStage.MapBan)
-                {
-                    var refreshButton = new DiscordButtonComponent(
-                        DiscordButtonStyle.Secondary,
-                        $"refresh_status_{round.Id}",
-                        "Refresh Status",
-                        emoji: new DiscordComponentEmoji("🔄"));
+                // Add refresh button after team has confirmed their map bans
+                // We always want to show the refresh button for a team that has confirmed their bans
+                var refreshButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"refresh_status_{round.Id}",
+                    "Refresh Status",
+                    emoji: new DiscordComponentEmoji("🔄"));
 
-                    messageBuilder.AddComponents(refreshButton);
-                }
-                // If still in map ban stage and map ban dropdown is needed, add it
-                else if (round.CurrentStage == MatchStage.MapBan)
-                {
-                    var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
-                    if (mapPool?.Any() == true)
-                    {
-                        var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
-                        if (availableMaps.Any())
-                        {
-                            // Bo1 matches (including group stage) and Bo3 matches have 3 bans
-                            // Bo5 matches have 2 bans
-                            int numBans = round.Length == 5 ? 2 : 3;
+                messageBuilder.AddComponents(refreshButton);
 
-                            messageBuilder.AddComponents(new DiscordSelectComponent(
-                                $"map_ban_{round.GetHashCode()}",
-                                $"Select {numBans} maps to ban (in order of priority)",
-                                availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
-                                false,
-                                minOptions: numBans,
-                                maxOptions: numBans
-                            ));
-                        }
-                    }
-                }
-
-                // Update the message with the new embed and appropriate buttons
+                // Update the message with the new embed and refresh button
                 await message.ModifyAsync(messageBuilder);
 
                 // Only update other team threads automatically if we've transitioned to a new stage
@@ -663,43 +725,17 @@ namespace Wabbit.Services
             var messageBuilder = new DiscordMessageBuilder()
                 .AddEmbed(embed);
 
-            // Add refresh button if appropriate (only in non-map-ban stages)
-            if (round.CurrentStage != MatchStage.MapBan)
-            {
-                var refreshButton = new DiscordButtonComponent(
-                    DiscordButtonStyle.Secondary,
-                    $"refresh_status_{round.Id}",
-                    "Refresh Status",
-                    emoji: new DiscordComponentEmoji("🔄"));
+            // Add refresh button after team has confirmed their map bans
+            // We always want to show the refresh button for a team that has confirmed their bans
+            var refreshButton = new DiscordButtonComponent(
+                DiscordButtonStyle.Secondary,
+                $"refresh_status_{round.Id}",
+                "Refresh Status",
+                emoji: new DiscordComponentEmoji("🔄"));
 
-                messageBuilder.AddComponents(refreshButton);
-            }
-            // If still in map ban stage and map ban dropdown is needed, add it
-            else if (round.CurrentStage == MatchStage.MapBan)
-            {
-                var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
-                if (mapPool?.Any() == true)
-                {
-                    var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
-                    if (availableMaps.Any())
-                    {
-                        // Bo1 matches (including group stage) and Bo3 matches have 3 bans
-                        // Bo5 matches have 2 bans
-                        int numBans = round.Length == 5 ? 2 : 3;
+            messageBuilder.AddComponents(refreshButton);
 
-                        messageBuilder.AddComponents(new DiscordSelectComponent(
-                            $"map_ban_{round.GetHashCode()}",
-                            $"Select {numBans} maps to ban (in order of priority)",
-                            availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
-                            false,
-                            minOptions: numBans,
-                            maxOptions: numBans
-                        ));
-                    }
-                }
-            }
-
-            // Update the message with the new embed and appropriate buttons
+            // Update the message with the new embed and refresh button
             await message.ModifyAsync(messageBuilder);
 
             // Only update other team threads automatically if we've transitioned to a new stage
@@ -894,7 +930,7 @@ namespace Wabbit.Services
                 .WithContent($"**SLOT MACHINE RESULT** 🎉")
                 .AddEmbed(new DiscordEmbedBuilder()
                     .WithTitle($"🎰 We Have a Winner! 🎊")
-                    .WithDescription($"The slot machine has selected a winner!\n\n**{winnerName}** gets the trophy! 🏆\n\nJACKPOT! 💰💰💰")
+                    .WithDescription($"The slot machine has selected a winner!\n\n**{winnerName}** gets the trophy! ��\n\nJACKPOT! 💰💰💰")
                     .WithColor(new DiscordColor(255, 215, 0))
                     .AddField(team1Name, team1Final, true)
                     .AddField(team2Name, team2Final, true)
@@ -1178,114 +1214,57 @@ namespace Wabbit.Services
         /// Records a deck submission and updates the match status
         /// Deck submissions are handled via the /tournament submit_deck command, which creates a separate message with confirm/revise buttons
         /// </summary>
-        public async Task RecordDeckSubmissionAsync(
-            DiscordChannel channel,
-            Round round,
-            ulong playerId,
-            string deckCode,
-            int gameNumber,
-            DiscordClient client)
+        public async Task RecordDeckSubmissionAsync(DiscordChannel channel, Round round, ulong playerId, string deckCode, int gameNumber, DiscordClient client)
         {
             try
             {
-                _logger.LogInformation($"Recording deck submission for user {playerId} in channel {channel.Id}");
+                _logger.LogInformation($"Recording deck submission for user {playerId} in channel {channel.Id}, game number: {gameNumber}");
 
-                // Remember the current stage before changes
-                var previousStage = round.CurrentStage;
-
-                // Find the team and participant for proper tracking
+                // Find the participant and team
                 var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == channel.Id);
                 var participant = team?.Participants?.FirstOrDefault(p => p.Player?.Id == playerId);
-                if (participant != null)
+
+                if (participant == null)
                 {
-                    // Record the deck code directly in the participant object
-                    participant.Deck = deckCode;
-
-                    // Store in game-specific history if available
-                    if (participant.DeckHistory is null)
-                    {
-                        participant.DeckHistory = new Dictionary<string, string>();
-                    }
-
-                    // Get current map to use as key
-                    string mapName = "Unknown Map";
-                    if (round.CustomProperties?.TryGetValue("CurrentMap", out var currentMapObj) == true &&
-                        currentMapObj is string currentMap)
-                    {
-                        mapName = currentMap;
-                    }
-                    participant.DeckHistory[mapName] = deckCode;
-                }
-
-                // Check if all decks are submitted, which could trigger a stage transition
-                bool allDecksSubmitted = round.Teams?.All(t => t?.Participants?.All(p => !string.IsNullOrEmpty(p?.Deck)) ?? false) ?? false;
-
-                // If all decks are submitted and we're in deck submission stage, we might transition
-                if (round.CustomProperties is not null)
-                {
-                    if (allDecksSubmitted && round.CurrentStage == MatchStage.DeckSubmission)
-                    {
-                        // The actual transition to GameResults would happen elsewhere, 
-                        // but we need to track that a critical milestone was reached
-                        round.CustomProperties["AllDecksSubmitted"] = true;
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("Round or custom properties are null");
+                    _logger.LogWarning($"Failed to find participant with ID {playerId} in round {round.Id}");
                     return;
                 }
 
-                // Ensure the message exists before trying to update it
-                var message = await EnsureMatchStatusMessageExistsAsync(channel, round, client);
-                if (message is null) return;
+                // Store the deck code as temporary until confirmed
+                participant.TempDeckCode = deckCode;
 
-                var embed = message.Embeds.FirstOrDefault();
-                if (embed is null) return;
+                // Create a message to send in the channel
+                var deckContent = new StringBuilder();
+                deckContent.AppendLine("**Current Submission:**");
+                deckContent.AppendLine($"Deck Code: `{deckCode}`");
+                deckContent.AppendLine("\nPlease confirm or revise your submission using the buttons below.");
 
-                var builder = new DiscordEmbedBuilder(embed);
-
-                // Find the player name
-                string playerName = "Unknown Player";
-                if (round?.Teams is not null)
+                // Mark this team as having a pending deck submission
+                if (round.CustomProperties == null)
                 {
-                    foreach (var t in round.Teams)
-                    {
-                        if (t?.Participants is not null)
-                        {
-                            var p = t.Participants.FirstOrDefault(p => p?.Player?.Id == playerId);
-                            if (p?.Player is not null)
-                            {
-                                playerName = p.Player.Username;
-                                break;
-                            }
-                        }
-                    }
+                    round.CustomProperties = new Dictionary<string, object>();
+                }
+                if (team != null)
+                {
+                    round.CustomProperties[$"PendingDeckSubmission_{team.Name}"] = true;
                 }
 
-                // Find if we already have a deck submissions field
-                var deckField = builder.Fields?.FirstOrDefault(f => f?.Name != null && f.Name.Contains("Deck Submissions", StringComparison.OrdinalIgnoreCase));
-
-                StringBuilder deckContent = new();
-                if (deckField is not null && !string.IsNullOrEmpty(deckField.Value))
+                // Get the message
+                var message = await GetMatchStatusMessageAsync(channel, client);
+                if (message == null)
                 {
-                    deckContent.AppendLine(deckField.Value);
+                    _logger.LogWarning($"Failed to get match status message for channel {channel.Id}");
+                    return;
                 }
 
-                // Add the new deck submission
-                deckContent.AppendLine($"Game {gameNumber + 1}: **{playerName}** submitted deck `{deckCode}`");
+                // Create a fresh embed
+                var embed = CreateMatchStatusEmbed(round);
+                var newBuilder = new DiscordEmbedBuilder(embed);
 
-                // Create a new builder with all fields except the deck field, then add the updated field
-                var newBuilder = new DiscordEmbedBuilder()
-                    .WithTitle(builder.Title ?? "Match Status")
-                    .WithDescription(builder.Description ?? "")
-                    .WithColor(builder.Color ?? DiscordColor.NotQuiteBlack)
-                    .WithTimestamp(builder.Timestamp);
-
-                // Add all fields except the deck field we're updating
-                if (builder.Fields is not null)
+                // Replace specific fields if needed
+                if (newBuilder.Fields != null)
                 {
-                    foreach (var field in builder.Fields)
+                    foreach (var field in newBuilder.Fields)
                     {
                         if (field is not null && field.Name is not null &&
                             !field.Name.Contains("Deck Submissions", StringComparison.OrdinalIgnoreCase))
@@ -1298,49 +1277,44 @@ namespace Wabbit.Services
                 // Add the updated deck submissions field
                 newBuilder.AddField("Deck Submissions", deckContent.ToString() ?? "No submissions yet", false);
 
-                // Create message builder with the updated embed
+                // Add a custom instruction to the embed
+                newBuilder.AddField("Instructions", "Please confirm or revise your deck submission using the buttons below.");
+
+                // Create message builder with the updated embed and buttons
                 var messageBuilder = new DiscordMessageBuilder()
                     .AddEmbed(newBuilder.Build());
 
-                // Add a refresh button 
-                if (round is not null)
-                {
-                    var refreshButton = new DiscordButtonComponent(
-                        DiscordButtonStyle.Secondary,
-                        $"refresh_status_{round.Id}",
-                        "Refresh Status",
-                        emoji: new DiscordComponentEmoji("🔄"));
+                // Add buttons: refresh, confirm, and revise
+                var refreshButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"refresh_status_{round.Id}",
+                    "Refresh Status",
+                    emoji: new DiscordComponentEmoji("🔄"));
 
-                    messageBuilder.AddComponents(refreshButton);
-                }
-                else
-                {
-                    _logger.LogWarning("Round is null");
-                    return;
-                }
+                var confirmButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Success,
+                    $"confirm_deck_{playerId}",
+                    "Confirm Deck");
 
-                // Update the message with the new embed and refresh button
+                var reviseButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"revise_deck_{playerId}",
+                    "Revise Deck");
+
+                // Add all three buttons
+                messageBuilder.AddComponents(refreshButton, confirmButton, reviseButton);
+
+                // Update the message with the new embed and buttons
                 await message.ModifyAsync(messageBuilder);
 
-                // Check if a stage transition occurred or if a critical milestone was reached
-                if (round is not null && round.CustomProperties is not null)
+                // Save tournament state to preserve the temp deck code
+                if (round.CustomProperties is not null)
                 {
-                    bool stageChanged = previousStage != round.CurrentStage;
-                    bool criticalMilestone = round.CustomProperties.ContainsKey("AllDecksSubmitted");
+                    // Let callers handle saving the state
+                    round.CustomProperties["DeckSubmissionPending"] = true;
+                }
 
-                    // Only update other threads automatically in these cases
-                    if ((stageChanged || criticalMilestone) && (round.Teams?.Any(t => t is not null && t.Thread?.Id != channel.Id) ?? false))
-                    {
-                        _logger.LogInformation($"Critical milestone reached in match. Automatically updating all team threads.");
-                        await UpdateMatchStatusInAllThreadsAsync(round, client);
-                    }
-                    // Otherwise, teams need to manually refresh to see updates
-                }
-                else
-                {
-                    _logger.LogWarning("Round or custom properties are null");
-                    return;
-                }
+                _logger.LogInformation($"Deck submission recorded for user {playerId} in channel {channel.Id}, waiting for confirmation");
             }
             catch (Exception ex)
             {
@@ -1902,23 +1876,23 @@ namespace Wabbit.Services
 
         private void AddTeamMapBansFieldWithDivider(DiscordEmbedBuilder builder, Round round)
         {
-            if (round.Teams is null) return;
+            if (round.Teams == null || !round.Teams.Any())
+                return;
 
             var banBuilder = new StringBuilder();
 
-            // Process the teams (we'll show detailed bans for the first team, and just status for other teams)
+            // Figure out which team the embed is for (assumed to be first team)
             var userTeam = round.Teams.FirstOrDefault();
-            var opponentTeams = round.Teams.Skip(1).ToList();
+            if (userTeam == null) return;
 
-            if (userTeam is null) return;
+            // Get opponent team
+            var opponentTeam = round.Teams.Skip(1).FirstOrDefault();
 
-            // User's team map bans
-            if (userTeam.UnconfirmedMapBans?.Any() == true && userTeam.MapBans?.Any() != true)
+            // First handle the user's team bans
+            if (userTeam.UnconfirmedMapBans?.Any() == true && (userTeam.MapBans == null || !userTeam.MapBans.Any()))
             {
                 // Display unconfirmed bans with proper formatting
                 banBuilder.AppendLine("My Team Map Bans (unconfirmed):");
-
-                // Use code blocks for better alignment
                 banBuilder.AppendLine("```");
                 banBuilder.AppendLine("Priority #1          Priority #2          Priority #3");
 
@@ -1934,25 +1908,24 @@ namespace Wabbit.Services
                 banBuilder.AppendLine("```");
 
                 // Add guarantee information based on match length
+                banBuilder.AppendLine();
                 if (round.Length == 1)
                 {
                     banBuilder.AppendLine("All bans are guaranteed in Bo1 matches");
                 }
                 else if (round.Length == 3)
                 {
-                    banBuilder.AppendLine("Priority #1 and #2 are guaranteed bans");
-                    banBuilder.AppendLine("Priority #3 is conditional (if duplicate guaranteed bans + coinflip win)");
+                    banBuilder.AppendLine("First 2 bans are guaranteed in Bo3 matches");
                 }
                 else if (round.Length == 5)
                 {
-                    banBuilder.AppendLine("Only Priority #1 is a guaranteed ban");
-                    banBuilder.AppendLine("Priority #2 is conditional (if duplicate guaranteed bans + coinflip win)");
+                    banBuilder.AppendLine("First ban is guaranteed in Bo5 matches");
                 }
             }
             else if (userTeam.MapBans?.Any() == true)
             {
                 // Display confirmed bans
-                banBuilder.AppendLine("My Team Map Bans:");
+                banBuilder.AppendLine("My Team Map Bans: ✅");
 
                 // Use code blocks for better alignment of confirmed bans too
                 banBuilder.AppendLine("```");
@@ -1977,20 +1950,21 @@ namespace Wabbit.Services
             }
             else
             {
-                banBuilder.AppendLine("My Team Map Bans:");
-                banBuilder.AppendLine("(Not yet submitted)");
+                banBuilder.AppendLine("My Team Map Bans: Not submitted yet");
             }
 
-            // Add opponent teams (only show submission status, not the actual maps)
-            foreach (var team in opponentTeams)
+            // Now handle opponent team's bans if they exist
+            if (opponentTeam != null)
             {
-                if (team is null) continue;
-
-                string banStatus = team.MapBans?.Any() == true
-                    ? "✅ Submitted"
-                    : "⏳ Waiting for submission";
-
-                banBuilder.AppendLine($"Opponent Map Bans: {banStatus}");
+                banBuilder.AppendLine();
+                if (opponentTeam.MapBans?.Any() == true)
+                {
+                    banBuilder.AppendLine("Opponent Map Bans: ✅ Submitted");
+                }
+                else
+                {
+                    banBuilder.AppendLine("Opponent Map Bans: ⏳ Waiting for submission");
+                }
             }
 
             // Add divider at the end
@@ -2013,25 +1987,35 @@ namespace Wabbit.Services
                 {
                     if (participant?.Player is null) continue;
 
-                    string userId = participant.Player.Id.ToString();
-                    bool hasSubmitted = !string.IsNullOrEmpty(participant.Deck);
+                    // Check if there's a confirmed deck or a pending deck
+                    bool hasConfirmedDeck = !string.IsNullOrEmpty(participant.Deck);
+                    bool hasPendingDeck = !string.IsNullOrEmpty(participant.TempDeckCode);
 
-                    string status = hasSubmitted ? "✅ Deck submitted" : "⏳ Waiting for deck";
-                    deckBuilder.AppendLine($"\n{team.Name}: {status}");
-
-                    // Only show deck code to the submitting player's team
-                    if (round is not null && round.Teams is not null)
+                    if (hasConfirmedDeck)
                     {
-                        if (hasSubmitted && team == round.Teams.FirstOrDefault())
+                        deckBuilder.AppendLine($"\n{team.Name}: ✅ Deck submitted and confirmed");
+
+                        // Only show deck code to the submitting player's team
+                        if (round.Teams is not null && team == round.Teams.FirstOrDefault())
                         {
                             // Add deck code in a separate line with monospace formatting
                             deckBuilder.AppendLine($"Your deck code: `{participant.Deck}`");
                         }
                     }
+                    else if (hasPendingDeck)
+                    {
+                        deckBuilder.AppendLine($"\n{team.Name}: ⏳ Deck submitted (pending confirmation)");
+
+                        // Only show deck code to the submitting player's team
+                        if (round.Teams is not null && team == round.Teams.FirstOrDefault())
+                        {
+                            // Add deck code in a separate line with monospace formatting
+                            deckBuilder.AppendLine($"Your pending deck code: `{participant.TempDeckCode}`");
+                        }
+                    }
                     else
                     {
-                        _logger.LogWarning("Round or teams are null");
-                        return;
+                        deckBuilder.AppendLine($"\n{team.Name}: ⏳ Waiting for deck submission");
                     }
                 }
             }
@@ -2312,6 +2296,157 @@ namespace Wabbit.Services
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Confirms a player's deck submission
+        /// </summary>
+        public async Task ConfirmDeckAsync(DiscordChannel channel, Round round, ulong playerId, DiscordClient client)
+        {
+            try
+            {
+                _logger.LogInformation($"Confirming deck submission for user {playerId} in channel {channel.Id}");
+
+                // Find the team and participant for proper tracking
+                var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == channel.Id);
+                var participant = team?.Participants?.FirstOrDefault(p => p.Player?.Id == playerId);
+
+                if (participant == null || string.IsNullOrEmpty(participant.TempDeckCode))
+                {
+                    _logger.LogWarning($"No pending deck submission found for user {playerId}");
+                    return;
+                }
+
+                // Move temp deck code to permanent deck field
+                participant.Deck = participant.TempDeckCode;
+                participant.TempDeckCode = null;
+
+                // Clear the pending deck submission flag
+                if (round.CustomProperties != null && team != null)
+                {
+                    if (round.CustomProperties.ContainsKey($"PendingDeckSubmission_{team.Name}"))
+                    {
+                        round.CustomProperties.Remove($"PendingDeckSubmission_{team.Name}");
+                    }
+                }
+
+                // Check if all decks are submitted, which could trigger a stage transition
+                bool allDecksSubmitted = round.Teams?.All(t => t?.Participants?.All(p => !string.IsNullOrEmpty(p?.Deck)) ?? false) ?? false;
+
+                // If all decks are submitted and we're in deck submission stage, we might transition
+                if (round.CustomProperties != null && allDecksSubmitted && round.CurrentStage == MatchStage.DeckSubmission)
+                {
+                    // The actual transition to GameResults would happen elsewhere, 
+                    // but we need to track that a critical milestone was reached
+                    round.CustomProperties["AllDecksSubmitted"] = true;
+                }
+
+                // Ensure the message exists
+                var message = await GetMatchStatusMessageAsync(channel, client);
+                if (message == null)
+                {
+                    _logger.LogWarning("Could not find message to update after confirming deck");
+                    return;
+                }
+
+                // Create a fresh embed
+                var embed = CreateMatchStatusEmbed(round);
+
+                // Add custom instructions about the successful confirmation
+                var newBuilder = new DiscordEmbedBuilder(embed);
+                newBuilder.AddField("Instructions", "Your deck has been successfully confirmed and submitted.");
+
+                // Create a message builder with refresh button only
+                var messageBuilder = new DiscordMessageBuilder()
+                    .AddEmbed(newBuilder.Build());
+
+                // Add refresh button
+                var refreshButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"refresh_status_{round.Id}",
+                    "Refresh Status",
+                    emoji: new DiscordComponentEmoji("🔄"));
+
+                messageBuilder.AddComponents(refreshButton);
+
+                // Update the message
+                await message.ModifyAsync(messageBuilder);
+
+                // Update all team threads if any critical milestone was reached
+                if (allDecksSubmitted)
+                {
+                    _logger.LogInformation($"All decks submitted. Automatically updating all team threads.");
+                    await UpdateMatchStatusInAllThreadsAsync(round, client);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error confirming deck: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Revises a player's deck submission by clearing the temporary deck code
+        /// </summary>
+        public async Task ReviseDeckAsync(DiscordChannel channel, Round round, ulong playerId, DiscordClient client)
+        {
+            try
+            {
+                _logger.LogInformation($"Revising deck submission for user {playerId} in channel {channel.Id}");
+
+                // Find the team and participant
+                var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == channel.Id);
+                var participant = team?.Participants?.FirstOrDefault(p => p.Player?.Id == playerId);
+
+                if (participant == null)
+                {
+                    _logger.LogWarning($"No participant found for user {playerId}");
+                    return;
+                }
+
+                // Clear the temp deck code
+                participant.TempDeckCode = null;
+
+                // Clear the pending deck submission flag
+                if (round.CustomProperties != null && team != null)
+                {
+                    if (round.CustomProperties.ContainsKey($"PendingDeckSubmission_{team.Name}"))
+                    {
+                        round.CustomProperties.Remove($"PendingDeckSubmission_{team.Name}");
+                    }
+                }
+
+                // Get the message
+                var message = await GetMatchStatusMessageAsync(channel, client);
+                if (message == null) return;
+
+                // Create a fresh embed
+                var embed = CreateMatchStatusEmbed(round);
+
+                // Add instructions for revision
+                var newBuilder = new DiscordEmbedBuilder(embed);
+                newBuilder.AddField("Instructions", "Deck submission canceled. Please submit a new deck using `/tournament submit_deck`.");
+
+                // Create a message builder with refresh button only
+                var messageBuilder = new DiscordMessageBuilder()
+                    .AddEmbed(newBuilder.Build());
+
+                // Add refresh button
+                var refreshButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"refresh_status_{round.Id}",
+                    "Refresh Status",
+                    emoji: new DiscordComponentEmoji("🔄"));
+
+                messageBuilder.AddComponents(refreshButton);
+
+                // Update the message
+                await message.ModifyAsync(messageBuilder);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error revising deck: {ex.Message}");
+            }
         }
     }
 }

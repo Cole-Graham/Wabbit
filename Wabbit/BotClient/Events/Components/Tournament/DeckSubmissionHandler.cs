@@ -186,7 +186,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         {
             try
             {
-                // Only try to defer if not already deferred
+                // Check if the interaction is already deferred
                 if (!hasBeenDeferred)
                 {
                     await SafeDeferAsync(e.Interaction);
@@ -201,34 +201,6 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     return;
                 }
 
-                // Find the tournament round
-                var round = _roundsHolder.TourneyRounds.FirstOrDefault(r =>
-                    r.Teams is not null &&
-                    r.Teams.Any(t => t.Thread?.Id == e.Channel.Id));
-
-                if (round == null)
-                {
-                    await SendErrorResponseAsync(e, "Could not find an active tournament round for this channel.", hasBeenDeferred);
-                    return;
-                }
-
-                // Find the team and participant
-                var team = round.Teams?.FirstOrDefault(t => t.Thread?.Id == e.Channel.Id);
-                if (team == null)
-                {
-                    await SendErrorResponseAsync(e, "Could not find your team data.", hasBeenDeferred);
-                    return;
-                }
-
-                var participant = team.Participants?.FirstOrDefault(p =>
-                    p is not null && p.Player is not null && p.Player.Id == userId);
-
-                if (participant == null || participant.TempDeckCode == null)
-                {
-                    await SendErrorResponseAsync(e, "Could not find your participant data or temporary deck code.", hasBeenDeferred);
-                    return;
-                }
-
                 // Only allow the user who submitted the deck to confirm it
                 if (e.User.Id != userId)
                 {
@@ -236,106 +208,52 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     return;
                 }
 
-                // Store the confirmed deck code
-                participant.Deck = participant.TempDeckCode;
-
-                // Also store in deck history with the current map if available
-                if (round.Maps != null && round.Maps.Count > 0 && round.Cycle < round.Maps.Count)
+                // Get channel, round, and participant info
+                var channel = e.Channel;
+                if (channel is null)
                 {
-                    // Get the current map based on the cycle
-                    int mapIndex = Math.Min(round.Cycle, round.Maps.Count - 1);
-                    if (mapIndex >= 0 && mapIndex < round.Maps.Count)
-                    {
-                        string mapName = round.Maps[mapIndex];
-                        if (participant.DeckHistory == null)
-                        {
-                            participant.DeckHistory = new Dictionary<string, string>();
-                        }
-                        participant.DeckHistory[mapName] = participant.Deck;
-                    }
+                    _logger.LogError("Channel is null for deck confirmation");
+                    await SendErrorResponseAsync(e, "Error processing deck confirmation: Channel not found", hasBeenDeferred);
+                    return;
                 }
 
-                // Clear temporary deck code
-                participant.TempDeckCode = null;
-
-                // Add confirmation message to the round's custom instructions
-                if (round.CustomProperties == null)
+                // Find the round and participant
+                var round = _roundsHolder.GetRoundByThreadIdOrDefault(channel.Id);
+                if (round == null)
                 {
-                    round.CustomProperties = new Dictionary<string, object>();
+                    _logger.LogError("Could not find round for channel {ChannelId}", channel.Id);
+                    await SendErrorResponseAsync(e, "Error processing deck confirmation: Match not found", hasBeenDeferred);
+                    return;
                 }
 
-                // Set the custom instruction message
-                round.CustomProperties["Instructions"] = "Your deck code has been successfully confirmed and submitted.";
+                // Call the MatchStatusService to handle the deck confirmation
+                await _matchStatusService.ConfirmDeckAsync(channel, round, userId, client);
 
-                // Update the match status to show the confirmation in the embed
-                await _matchStatusService.UpdateMatchStatusAsync(e.Channel, round, client);
-
-                // Delete the confirmation message with the buttons (this is the message with the confirm/revise buttons)
+                // Delete the confirmation message to reduce clutter
                 try
                 {
                     await e.Message.DeleteAsync();
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Could not delete confirmation message");
+                    _logger.LogWarning(ex, "Could not delete the confirmation message");
                 }
 
-                // Save both tournament state and tournament data files
-                // This ensures deck codes are preserved in both runtime and persistent storage
-                bool saveSuccess = await _stateService.SafeSaveTournamentStateAsync(client, "DeckSubmissionHandler.HandleConfirmDeckButton");
-                if (!saveSuccess)
+                // Send an ephemeral confirmation to the user
+                if (hasBeenDeferred)
                 {
-                    _logger.LogWarning("Failed to save tournament state after deck confirmation. " +
-                        "The deck has been confirmed but may not persist through a restart.");
+                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                        .WithContent("Deck confirmed. Please check the updated match status above.")
+                        .AsEphemeral());
                 }
-
-                using (var scope = _scopeFactory.CreateScope())
+                else
                 {
-                    try
-                    {
-                        var tournamentManager = scope.ServiceProvider.GetRequiredService<ITournamentManagerService>();
-                        await tournamentManager.SaveAllDataAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to save tournament data after deck confirmation");
-                    }
-                }
-
-                // Check if all participants have submitted their decks
-                bool allSubmitted = round.Teams?.All(t =>
-                    t.Participants is not null &&
-                    t.Participants.All(p => p is not null && !string.IsNullOrEmpty(p.Deck))) ?? false;
-
-                if (allSubmitted)
-                {
-                    // All decks submitted - set InGame to true
-                    round.InGame = true;
-
-                    // Update all team threads with the completion message in the embed
-                    foreach (var t in round.Teams ?? new List<Round.Team>())
-                    {
-                        if (t.Thread is not null)
-                        {
-                            // Update the instruction message for each team
-                            if (round.CustomProperties == null)
-                            {
-                                round.CustomProperties = new Dictionary<string, object>();
-                            }
-                            round.CustomProperties["Instructions"] = "All decks have been submitted! The game will now proceed.";
-
-                            // Update status embed to show the message
-                            await _matchStatusService.UpdateMatchStatusAsync(t.Thread, round, client);
-                        }
-                    }
-
-                    // Save state again after updating all instructions
-                    saveSuccess = await _stateService.SafeSaveTournamentStateAsync(client, "DeckSubmissionHandler.HandleConfirmDeckButton (all decks submitted)");
-                    if (!saveSuccess)
-                    {
-                        _logger.LogError("Failed to save tournament state after all decks were submitted. " +
-                            "The match may not transition correctly to the next stage.");
-                    }
+                    await e.Interaction.CreateResponseAsync(
+                        DiscordInteractionResponseType.ChannelMessageWithSource,
+                        new DiscordInteractionResponseBuilder()
+                            .WithContent("Deck confirmed. Please check the updated match status above.")
+                            .AsEphemeral()
+                    );
                 }
             }
             catch (Exception ex)
@@ -387,40 +305,20 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     _logger.LogWarning(ex, "Could not delete the confirmation message");
                 }
 
-                // Clean up any existing deck submission prompts in the channel
-                await CleanupDeckSubmissionMessages(e.Channel, userId);
-
-                // Get the tournament and match from the tournament manager service
-                var tournament = _tournamentManagerService.GetAllTournaments()
-                    .FirstOrDefault(t => (t.Groups?.Any(g => g.Matches?.Any(m =>
-                        m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true) ?? false) == true) ||
-                        (t.PlayoffMatches?.Any(m =>
-                            m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true) ?? false) == true);
-
-                if (tournament is not null)
+                // Find the round
+                var channel = e.Channel;
+                if (channel is null)
                 {
-                    var match = tournament.Groups?.SelectMany(g => g.Matches)
-                        .Concat(tournament.PlayoffMatches ?? Enumerable.Empty<Models.Tournament.Match>())
-                        .FirstOrDefault(m => m.LinkedRound?.Teams?.Any(team => team.Thread?.Id == e.Channel.Id) == true);
+                    _logger.LogError("Channel is null for deck revision");
+                    await SendErrorResponseAsync(e, "Error processing deck revision: Channel not found", hasBeenDeferred);
+                    return;
+                }
 
-                    if (match?.LinkedRound is not null)
-                    {
-                        // Update the match status to show deck revision instructions
-                        match.LinkedRound.CurrentStage = MatchStage.DeckRevision;
-
-                        // Add the revision instruction to the custom properties
-                        if (match.LinkedRound.CustomProperties == null)
-                        {
-                            match.LinkedRound.CustomProperties = new Dictionary<string, object>();
-                        }
-                        match.LinkedRound.CustomProperties["Instructions"] = "You can now submit your revised deck.";
-
-                        // Update the status embed with the new instructions
-                        await _matchStatusService.UpdateMatchStatusAsync(e.Channel, match.LinkedRound, client);
-
-                        // Save the tournament state
-                        await _stateService.SaveTournamentStateAsync(client);
-                    }
+                var round = _roundsHolder.GetRoundByThreadIdOrDefault(channel.Id);
+                if (round != null)
+                {
+                    // Call the MatchStatusService to handle the deck revision
+                    await _matchStatusService.ReviseDeckAsync(channel, round, userId, client);
 
                     // Send an ephemeral confirmation to the user just to acknowledge the button action
                     if (hasBeenDeferred)
