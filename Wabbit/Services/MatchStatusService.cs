@@ -93,7 +93,32 @@ namespace Wabbit.Services
                 // Add a refresh button, but never during the map ban stage
                 bool showRefreshButton = round.CurrentStage != MatchStage.MapBan;
 
-                if (showRefreshButton)
+                // Add map ban dropdown during map ban stage
+                if (round.CurrentStage == MatchStage.MapBan)
+                {
+                    var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
+                    if (mapPool?.Any() == true)
+                    {
+                        var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
+                        if (availableMaps.Any())
+                        {
+                            // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+                            // Bo5 matches have 2 bans
+                            int numBans = round.Length == 5 ? 2 : 3;
+
+                            messageBuilder.AddComponents(new DiscordSelectComponent(
+                                $"map_ban_{round.GetHashCode()}",
+                                $"Select {numBans} maps to ban (in order of priority)",
+                                availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                                false,
+                                minOptions: numBans,
+                                maxOptions: numBans
+                            ));
+                        }
+                    }
+                }
+                // Only add refresh button for non-map-ban stages
+                else if (showRefreshButton)
                 {
                     var refreshButton = new DiscordButtonComponent(
                         DiscordButtonStyle.Secondary,
