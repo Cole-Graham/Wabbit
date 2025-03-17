@@ -86,12 +86,9 @@ namespace Wabbit.Services
                 // Get the status message ID
                 ulong? statusMessageId = round.StatusMessageId;
 
-                // Create message builder with refresh button
+                // Create message builder with appropriate components
                 var messageBuilder = new DiscordMessageBuilder()
                     .AddEmbed(embed);
-
-                // Add a refresh button, but never during the map ban stage
-                bool showRefreshButton = round.CurrentStage != MatchStage.MapBan;
 
                 // Add map ban dropdown during map ban stage
                 if (round.CurrentStage == MatchStage.MapBan)
@@ -118,7 +115,7 @@ namespace Wabbit.Services
                     }
                 }
                 // Only add refresh button for non-map-ban stages
-                else if (showRefreshButton)
+                else
                 {
                     var refreshButton = new DiscordButtonComponent(
                         DiscordButtonStyle.Secondary,
@@ -532,8 +529,59 @@ namespace Wabbit.Services
                     round.CurrentStage = MatchStage.DeckSubmission;
                 }
 
-                // Update match status in the current channel
-                await UpdateMatchStatusAsync(channel, round, client);
+                // Get the existing message to update
+                var message = await GetMatchStatusMessageAsync(channel, client);
+                if (message is null)
+                {
+                    _logger.LogWarning("Could not find message to update after confirming map bans");
+                    return false;
+                }
+
+                // Create a fresh embed without any buttons
+                var embed = CreateMatchStatusEmbed(round);
+
+                // Update match status in the current channel without confirm/revise buttons
+                var messageBuilder = new DiscordMessageBuilder()
+                    .AddEmbed(embed);
+
+                // Add refresh button if appropriate (only in non-map-ban stages)
+                if (round.CurrentStage != MatchStage.MapBan)
+                {
+                    var refreshButton = new DiscordButtonComponent(
+                        DiscordButtonStyle.Secondary,
+                        $"refresh_status_{round.Id}",
+                        "Refresh Status",
+                        emoji: new DiscordComponentEmoji("🔄"));
+
+                    messageBuilder.AddComponents(refreshButton);
+                }
+                // If still in map ban stage and map ban dropdown is needed, add it
+                else if (round.CurrentStage == MatchStage.MapBan)
+                {
+                    var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
+                    if (mapPool?.Any() == true)
+                    {
+                        var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
+                        if (availableMaps.Any())
+                        {
+                            // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+                            // Bo5 matches have 2 bans
+                            int numBans = round.Length == 5 ? 2 : 3;
+
+                            messageBuilder.AddComponents(new DiscordSelectComponent(
+                                $"map_ban_{round.GetHashCode()}",
+                                $"Select {numBans} maps to ban (in order of priority)",
+                                availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                                false,
+                                minOptions: numBans,
+                                maxOptions: numBans
+                            ));
+                        }
+                    }
+                }
+
+                // Update the message with the new embed and appropriate buttons
+                await message.ModifyAsync(messageBuilder);
 
                 // Only update other team threads automatically if we've transitioned to a new stage
                 bool stageChanged = previousStage != round.CurrentStage;
@@ -559,15 +607,24 @@ namespace Wabbit.Services
         public async Task ConfirmMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client)
         {
             if (round.CurrentStage != MatchStage.MapBan)
+            {
                 throw new InvalidOperationException($"Cannot confirm map bans in stage {round.CurrentStage}");
+            }
 
             // Find the team by name
             var team = round.Teams.FirstOrDefault(t => string.Equals(t.Name, teamName, StringComparison.OrdinalIgnoreCase));
             if (team == null)
+            {
                 throw new ArgumentException($"Team '{teamName}' not found in round", nameof(teamName));
+            }
 
             if (team.UnconfirmedMapBans == null || !team.UnconfirmedMapBans.Any())
+            {
                 throw new InvalidOperationException("No map bans to confirm");
+            }
+
+            // Remember the current stage before changes
+            var previousStage = round.CurrentStage;
 
             // Transfer unconfirmed bans to confirmed bans
             if (team.MapBans is null)
@@ -576,8 +633,83 @@ namespace Wabbit.Services
             team.MapBans.Clear();
             team.MapBans.AddRange(team.UnconfirmedMapBans);
 
-            // Update the status message
-            await UpdateMatchStatusAsync(channel, round, client);
+            // Check if all teams have submitted map bans
+            bool allTeamsSubmitted = round.Teams.All(t => t.MapBans?.Any() ?? false);
+
+            // If all teams have submitted, move to deck submission stage
+            if (allTeamsSubmitted)
+            {
+                // Perform coinflip for conditional bans if needed
+                if (round.Teams.Count == 2 && (round.Length == 3 || round.Length == 5) && !round.CoinflipPerformed)
+                {
+                    await PerformConditionalBanCoinflipAsync(channel, round, client);
+                }
+
+                round.CurrentStage = MatchStage.DeckSubmission;
+            }
+
+            // Get the existing message
+            var message = await GetMatchStatusMessageAsync(channel, client);
+            if (message is null)
+            {
+                _logger.LogWarning("Could not find message to update after confirming map bans");
+                throw new InvalidOperationException("Could not find message to update");
+            }
+
+            // Create a fresh embed without any buttons
+            var embed = CreateMatchStatusEmbed(round);
+
+            // Update match status in the current channel without confirm/revise buttons
+            var messageBuilder = new DiscordMessageBuilder()
+                .AddEmbed(embed);
+
+            // Add refresh button if appropriate (only in non-map-ban stages)
+            if (round.CurrentStage != MatchStage.MapBan)
+            {
+                var refreshButton = new DiscordButtonComponent(
+                    DiscordButtonStyle.Secondary,
+                    $"refresh_status_{round.Id}",
+                    "Refresh Status",
+                    emoji: new DiscordComponentEmoji("🔄"));
+
+                messageBuilder.AddComponents(refreshButton);
+            }
+            // If still in map ban stage and map ban dropdown is needed, add it
+            else if (round.CurrentStage == MatchStage.MapBan)
+            {
+                var mapPool = _mapService.GetTournamentMapPool(round.OneVOne);
+                if (mapPool?.Any() == true)
+                {
+                    var availableMaps = mapPool.Where(m => !round.Maps.Contains(m));
+                    if (availableMaps.Any())
+                    {
+                        // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+                        // Bo5 matches have 2 bans
+                        int numBans = round.Length == 5 ? 2 : 3;
+
+                        messageBuilder.AddComponents(new DiscordSelectComponent(
+                            $"map_ban_{round.GetHashCode()}",
+                            $"Select {numBans} maps to ban (in order of priority)",
+                            availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                            false,
+                            minOptions: numBans,
+                            maxOptions: numBans
+                        ));
+                    }
+                }
+            }
+
+            // Update the message with the new embed and appropriate buttons
+            await message.ModifyAsync(messageBuilder);
+
+            // Only update other team threads automatically if we've transitioned to a new stage
+            bool stageChanged = previousStage != round.CurrentStage;
+            if (stageChanged && (round.Teams?.Any(t => t is not null && t.Thread?.Id != channel.Id) ?? false))
+            {
+                _logger.LogInformation($"Match advanced to {round.CurrentStage} stage. Automatically updating all team threads.");
+                await UpdateMatchStatusInAllThreadsAsync(round, client);
+            }
+            // Otherwise, teams will need to manually refresh to see updates
         }
 
         /// <summary>
@@ -1044,11 +1176,16 @@ namespace Wabbit.Services
 
         /// <summary>
         /// Records a deck submission and updates the match status
+        /// Deck submissions are handled via the /tournament submit_deck command, which creates a separate message with confirm/revise buttons
         /// </summary>
-        public async Task RecordDeckSubmissionAsync(DiscordChannel channel, Round round, ulong playerId, string deckCode, int gameNumber, DiscordClient client)
+        public async Task RecordDeckSubmissionAsync(
+            DiscordChannel channel,
+            Round round,
+            ulong playerId,
+            string deckCode,
+            int gameNumber,
+            DiscordClient client)
         {
-            if (round is null) throw new ArgumentNullException(nameof(round));
-
             try
             {
                 _logger.LogInformation($"Recording deck submission for user {playerId} in channel {channel.Id}");
@@ -1084,7 +1221,7 @@ namespace Wabbit.Services
                 bool allDecksSubmitted = round.Teams?.All(t => t?.Participants?.All(p => !string.IsNullOrEmpty(p?.Deck)) ?? false) ?? false;
 
                 // If all decks are submitted and we're in deck submission stage, we might transition
-                if (round is not null && round.CustomProperties is not null)
+                if (round.CustomProperties is not null)
                 {
                     if (allDecksSubmitted && round.CurrentStage == MatchStage.DeckSubmission)
                     {
@@ -1095,7 +1232,7 @@ namespace Wabbit.Services
                 }
                 else
                 {
-                    _logger.LogWarning("Round is null");
+                    _logger.LogWarning("Round or custom properties are null");
                     return;
                 }
 
@@ -1161,11 +1298,11 @@ namespace Wabbit.Services
                 // Add the updated deck submissions field
                 newBuilder.AddField("Deck Submissions", deckContent.ToString() ?? "No submissions yet", false);
 
-                // Create message builder with refresh button
+                // Create message builder with the updated embed
                 var messageBuilder = new DiscordMessageBuilder()
                     .AddEmbed(newBuilder.Build());
 
-                // Add a refresh button
+                // Add a refresh button 
                 if (round is not null)
                 {
                     var refreshButton = new DiscordButtonComponent(
@@ -1174,16 +1311,16 @@ namespace Wabbit.Services
                         "Refresh Status",
                         emoji: new DiscordComponentEmoji("🔄"));
 
-
                     messageBuilder.AddComponents(refreshButton);
-
-                    await message.ModifyAsync(messageBuilder);
                 }
                 else
                 {
                     _logger.LogWarning("Round is null");
                     return;
                 }
+
+                // Update the message with the new embed and refresh button
+                await message.ModifyAsync(messageBuilder);
 
                 // Check if a stage transition occurred or if a critical milestone was reached
                 if (round is not null && round.CustomProperties is not null)
