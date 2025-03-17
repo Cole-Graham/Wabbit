@@ -258,44 +258,17 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 // Clear temporary deck code
                 participant.TempDeckCode = null;
 
-                // Update the message to show it's been confirmed
-                var confirmedEmbed = new DiscordEmbedBuilder()
-                    .WithTitle("Deck Code Confirmed")
-                    .WithDescription("Your deck code has been successfully confirmed and submitted.")
-                    .WithColor(DiscordColor.Green);
-
-                // Send a confirmation message using the appropriate method
-                DiscordMessage? confirmedMessage = null;
-                if (hasBeenDeferred)
+                // Add confirmation message to the round's custom instructions
+                if (round.CustomProperties == null)
                 {
-                    var response = await e.Interaction.CreateFollowupMessageAsync(
-                        new DiscordFollowupMessageBuilder()
-                            .WithContent($"{e.User.Mention} Your deck code has been confirmed!")
-                            .AddEmbed(confirmedEmbed));
-
-                    // Get the actual message for auto-deletion
-                    if (e.Channel is not null)
-                    {
-                        try
-                        {
-                            confirmedMessage = await e.Channel.GetMessageAsync(response.Id);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to get message for auto-deletion");
-                        }
-                    }
-                }
-                else
-                {
-                    confirmedMessage = await e.Channel.SendMessageAsync(
-                        new DiscordMessageBuilder()
-                            .WithContent($"**{e.User.Username}** has confirmed their deck submission!")
-                            .AddEmbed(confirmedEmbed));
+                    round.CustomProperties = new Dictionary<string, object>();
                 }
 
-                // Don't auto-delete the confirmation message - this is important tournament information
-                // that should remain visible to all participants
+                // Set the custom instruction message
+                round.CustomProperties["Instructions"] = "Your deck code has been successfully confirmed and submitted.";
+
+                // Update the match status to show the confirmation in the embed
+                await _matchStatusService.UpdateMatchStatusAsync(e.Channel, round, client);
 
                 // Delete the confirmation message with the buttons (this is the message with the confirm/revise buttons)
                 try
@@ -339,59 +312,30 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     // All decks submitted - set InGame to true
                     round.InGame = true;
 
-                    // Notify players
+                    // Update all team threads with the completion message in the embed
                     foreach (var t in round.Teams ?? new List<Round.Team>())
                     {
                         if (t.Thread is not null)
                         {
-                            await t.Thread.SendMessageAsync("**All decks have been submitted!** The game will now proceed.");
+                            // Update the instruction message for each team
+                            if (round.CustomProperties == null)
+                            {
+                                round.CustomProperties = new Dictionary<string, object>();
+                            }
+                            round.CustomProperties["Instructions"] = "All decks have been submitted! The game will now proceed.";
+
+                            // Update status embed to show the message
+                            await _matchStatusService.UpdateMatchStatusAsync(t.Thread, round, client);
                         }
                     }
 
-                    // Save both tournament state and tournament data files
+                    // Save state again after updating all instructions
                     saveSuccess = await _stateService.SafeSaveTournamentStateAsync(client, "DeckSubmissionHandler.HandleConfirmDeckButton (all decks submitted)");
                     if (!saveSuccess)
                     {
                         _logger.LogError("Failed to save tournament state after all decks were submitted. " +
-                            "This may affect match progression.");
+                            "The match may not transition correctly to the next stage.");
                     }
-
-                    using (var scope = _scopeFactory.CreateScope())
-                    {
-                        try
-                        {
-                            var tournamentManager = scope.ServiceProvider.GetRequiredService<ITournamentManagerService>();
-                            await tournamentManager.SaveAllDataAsync();
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to save tournament data after all decks were submitted");
-                        }
-                    }
-                }
-
-                // Update match status with the new deck submission
-                try
-                {
-                    if (e.Channel is not null && participant?.Deck != null)
-                    {
-                        await _matchStatusService.RecordDeckSubmissionAsync(
-                            e.Channel,
-                            round,
-                            e.User.Id,
-                            participant.Deck,
-                            round.Cycle,
-                            client);
-
-                        string username = participant.Player?.Username ?? "Unknown Player";
-                        _logger.LogInformation(
-                            $"Updated match status for deck submission by {username} in thread {e.Channel.Id}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ulong channelId = e.Channel?.Id ?? 0;
-                    _logger.LogError(ex, $"Failed to update match status for deck submission in thread {channelId}");
                 }
             }
             catch (Exception ex)
@@ -463,28 +407,37 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     {
                         // Update the match status to show deck revision instructions
                         match.LinkedRound.CurrentStage = MatchStage.DeckRevision;
+
+                        // Add the revision instruction to the custom properties
+                        if (match.LinkedRound.CustomProperties == null)
+                        {
+                            match.LinkedRound.CustomProperties = new Dictionary<string, object>();
+                        }
+                        match.LinkedRound.CustomProperties["Instructions"] = "You can now submit your revised deck.";
+
+                        // Update the status embed with the new instructions
                         await _matchStatusService.UpdateMatchStatusAsync(e.Channel, match.LinkedRound, client);
 
                         // Save the tournament state
                         await _stateService.SaveTournamentStateAsync(client);
                     }
-                }
 
-                // Send ephemeral confirmation to the user
-                if (hasBeenDeferred)
-                {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("You can now submit your revised deck.")
-                        .AsEphemeral());
-                }
-                else
-                {
-                    await e.Interaction.CreateResponseAsync(
-                        DiscordInteractionResponseType.ChannelMessageWithSource,
-                        new DiscordInteractionResponseBuilder()
-                            .WithContent("You can now submit your revised deck.")
-                            .AsEphemeral()
-                    );
+                    // Send an ephemeral confirmation to the user just to acknowledge the button action
+                    if (hasBeenDeferred)
+                    {
+                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
+                            .WithContent("Deck revision initiated. Please check the updated match status above.")
+                            .AsEphemeral());
+                    }
+                    else
+                    {
+                        await e.Interaction.CreateResponseAsync(
+                            DiscordInteractionResponseType.ChannelMessageWithSource,
+                            new DiscordInteractionResponseBuilder()
+                                .WithContent("Deck revision initiated. Please check the updated match status above.")
+                                .AsEphemeral()
+                        );
+                    }
                 }
             }
             catch (Exception ex)

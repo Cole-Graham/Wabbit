@@ -140,6 +140,7 @@ namespace Wabbit
                     services.AddSingleton<ComponentHandlerBase, MapBanHandler>();
                     services.AddSingleton<ComponentHandlerBase, TournamentSignupHandler>();
                     services.AddSingleton<ComponentHandlerBase, AdminThirdPlaceMatchHandler>();
+                    services.AddSingleton<ComponentHandlerBase, RefreshStatusHandler>();
 
                     // Register the new ComponentInteractionHandler (will replace Event_Button in Phase 2)
                     services.AddSingleton<ComponentInteractionHandler>();

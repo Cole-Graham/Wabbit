@@ -1,11 +1,13 @@
 ﻿using DSharpPlus.Entities;
 using System.Collections.Generic;
 using System.Linq;
+using System;
 
 namespace Wabbit.Models
 {
     public class Round
     {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
         public string? Name { get; set; }
         public int Length { get; set; } = 3;
         public List<Team> Teams { get; set; } = [];

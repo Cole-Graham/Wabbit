@@ -153,6 +153,23 @@ namespace Wabbit.Services.Interfaces
         Task ConfirmMapBansAsync(DiscordChannel channel, Round round, string teamName, DiscordClient client);
 
         /// <summary>
+        /// Confirms a team's map bans using the team from the current channel
+        /// </summary>
+        /// <param name="channel">The match thread channel</param>
+        /// <param name="round">The tournament round</param>
+        /// <param name="client">The Discord client</param>
+        /// <returns>True if the maps were successfully confirmed, false otherwise</returns>
+        Task<bool> ConfirmMapBansAsync(DiscordChannel channel, Round round, DiscordClient client);
+
+        /// <summary>
+        /// Checks if a refresh button is on cooldown for a specific user
+        /// </summary>
+        /// <param name="roundId">The ID of the round</param>
+        /// <param name="userId">The ID of the user</param>
+        /// <returns>True if the button is on cooldown, false otherwise</returns>
+        bool IsRefreshButtonOnCooldown(string roundId, ulong userId);
+
+        /// <summary>
         /// Revises a team's map ban selection by returning to the selection dropdown
         /// </summary>
         /// <param name="channel">The match thread channel</param>
