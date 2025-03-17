@@ -90,9 +90,8 @@ namespace Wabbit.Services
                 var messageBuilder = new DiscordMessageBuilder()
                     .AddEmbed(embed);
 
-                // Add a refresh button, unless we're in a dropdown state
-                bool showRefreshButton = round.CurrentStage != MatchStage.MapBan ||
-                                        !round.CustomProperties.ContainsKey("ShowingMapBanDropdown");
+                // Add a refresh button, but never during the map ban stage
+                bool showRefreshButton = round.CurrentStage != MatchStage.MapBan;
 
                 if (showRefreshButton)
                 {
@@ -1553,7 +1552,7 @@ namespace Wabbit.Services
             // Create embed with progress bar included in the description
             var builder = new DiscordEmbedBuilder()
                 .WithTitle(title)
-                .WithDescription(subtitle + "\n\n" + progressBar + "_______________________________________________")
+                .WithDescription(subtitle + "\n\n" + progressBar + "\n_______________________________________________")
                 .WithColor(embedColor)
                 .WithTimestamp(DateTimeOffset.Now);
 
@@ -1819,9 +1818,6 @@ namespace Wabbit.Services
                 banBuilder.AppendLine("My Team Map Bans:");
                 banBuilder.AppendLine("(Not yet submitted)");
             }
-
-            // Add divider between user team and opponent teams
-            banBuilder.AppendLine();
 
             // Add opponent teams (only show submission status, not the actual maps)
             foreach (var team in opponentTeams)
