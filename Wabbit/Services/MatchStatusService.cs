@@ -140,30 +140,19 @@ namespace Wabbit.Services
                             .ToList();
                     }
 
-                    // Check if there are enough maps to ban
-                    int numBans = round.Length;
-                    if (availableMaps.Count < numBans)
-                    {
-                        _logger.LogError($"Not enough maps available to ban. Available: {availableMaps.Count}, Required: {numBans}");
-                        var refreshButton = new DiscordButtonComponent(
-                            DiscordButtonStyle.Secondary,
-                            $"refresh_status_{round.Id}",
-                            "Refresh Status",
-                            emoji: new DiscordComponentEmoji("🔄"));
-                        messageBuilder.AddComponents(refreshButton);
-                    }
-                    else
-                    {
-                        // Add the map ban dropdown
-                        var selectComponent = new DiscordSelectComponent(
-                            $"map_ban_{round.GetHashCode()}",
-                            $"Select {numBans} maps to ban (in order of priority)",
-                            availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
-                            false,
-                            minOptions: numBans,
-                            maxOptions: numBans);
-                        messageBuilder.AddComponents(selectComponent);
-                    }
+                    // Bo1 matches (including group stage) and Bo3 matches have 3 bans
+                    // Bo5 matches have 2 bans
+                    int numBans = round.Length == 5 ? 2 : 3;
+
+                    // Add the map ban dropdown
+                    var selectComponent = new DiscordSelectComponent(
+                        $"map_ban_{round.GetHashCode()}",
+                        $"Select {numBans} maps to ban (in order of priority)",
+                        availableMaps.Select(m => new DiscordSelectComponentOption(m, m)),
+                        false,
+                        minOptions: numBans,
+                        maxOptions: numBans);
+                    messageBuilder.AddComponents(selectComponent);
                 }
                 // CASE 2: Deck Submission with pending submission - show confirm/revise/refresh buttons
                 else if (round.CurrentStage == MatchStage.DeckSubmission && hasPendingDeckSubmission)
