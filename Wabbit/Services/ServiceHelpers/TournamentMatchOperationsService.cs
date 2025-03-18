@@ -28,8 +28,8 @@ namespace Wabbit.Services.ServiceHelpers
             string matchName,
             TournamentMatchType matchType,
             int bestOf,
-            DiscordMember player1,
-            DiscordMember player2,
+            DiscordMember team1,
+            DiscordMember team2,
             Tournament.Group? sourceGroup = null)
         {
             var match = new Tournament.Match
@@ -41,12 +41,12 @@ namespace Wabbit.Services.ServiceHelpers
                 {
                     new Tournament.MatchParticipant
                     {
-                        Player = player1,
+                        Player = team1,
                         SourceGroup = sourceGroup
                     },
                     new Tournament.MatchParticipant
                     {
-                        Player = player2,
+                        Player = team2,
                         SourceGroup = sourceGroup
                     }
                 }
@@ -97,32 +97,33 @@ namespace Wabbit.Services.ServiceHelpers
         /// <inheritdoc/>
         public bool ValidateMatchCreation(
             Tournament tournament,
-            DiscordMember player1,
-            DiscordMember player2)
+            DiscordMember team1,
+            DiscordMember team2)
         {
             if (tournament == null)
                 throw new ArgumentNullException(nameof(tournament));
 
-            // Check if players are different
-            if (player1.Id == player2.Id)
+            // Check if teams are different
+            if (team1.Id == team2.Id)
             {
-                _logger.LogError("Cannot create match between the same player");
+                _logger.LogError("Cannot create match between the same team");
                 return false;
             }
 
-            // Check if players are in the tournament
+            // Check if teams are in the tournament
             if (tournament.Groups == null) return false;
 
+            // Get all tournament participants
             var allParticipants = tournament.Groups
                 .SelectMany(g => g.Participants ?? Enumerable.Empty<Tournament.GroupParticipant>())
-                .Select(p => p.Player as DiscordMember)
-                .Where(p => p is not null)
-                .Select(p => p!.Id)
+                .Select(p => p.Player)
+                .OfType<DiscordMember>()
+                .Select(m => m.Id)
                 .ToList();
 
-            if (!allParticipants.Contains(player1.Id) || !allParticipants.Contains(player2.Id))
+            if (!allParticipants.Contains(team1.Id) || !allParticipants.Contains(team2.Id))
             {
-                _logger.LogError("One or both players are not in the tournament");
+                _logger.LogError("One or both teams are not in the tournament");
                 return false;
             }
 

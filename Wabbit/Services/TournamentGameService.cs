@@ -65,10 +65,54 @@ namespace Wabbit.Services
                 // Update the match status with the game result
                 await _matchStatusService.UpdateMatchStatusAsync(thread, round, client);
 
-                // If the match is not complete, select the next map
-                if (!round.IsCompleted)
+                // Check if the match is complete based on required wins
+                bool isMatchComplete = IsMatchComplete(round);
+
+                // Set the round's IsCompleted flag based on the match completion check
+                round.IsCompleted = isMatchComplete;
+
+                // If the match is not complete, prepare for the next game
+                if (!isMatchComplete)
                 {
+                    // Update map information for the next game
                     await _matchStatusService.UpdateMapInformationAsync(thread, round, client);
+
+                    // Update the game cycle counter
+                    round.Cycle++;
+
+                    // Important: Reset stage back to DeckSubmission for the next game
+                    round.CurrentStage = MatchStage.DeckSubmission;
+
+                    // Update all team threads with the new deck submission stage
+                    if (round.Teams != null)
+                    {
+                        foreach (var team in round.Teams)
+                        {
+                            if (team?.Thread is not null)
+                            {
+                                try
+                                {
+                                    // Reset deck fields for all participants for the next game
+                                    if (team.Participants != null)
+                                    {
+                                        foreach (var participant in team.Participants)
+                                        {
+                                            participant.Deck = null;
+                                            participant.TempDeckCode = null;
+                                        }
+                                    }
+
+                                    // Update to deck submission stage in the team's thread
+                                    await _matchStatusService.UpdateToDeckSubmissionStageAsync(team.Thread, round, client);
+                                    _logger.LogInformation($"Reset to deck submission stage in thread {team.Thread.Id} for team {team.Name} for the next game");
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, $"Error resetting to deck submission stage in thread {team.Thread.Id}");
+                                }
+                            }
+                        }
+                    }
                 }
                 else
                 {
@@ -428,16 +472,22 @@ namespace Wabbit.Services
 
         public int GetPlayerScore(Round round, ulong playerId)
         {
+            // Forward to new method with team terminology
+            return GetTeamScore(round, playerId);
+        }
+
+        public int GetTeamScore(Round round, ulong teamId)
+        {
             if (round.CustomProperties == null)
                 return 0;
 
-            string playerKey = playerId.ToString();
-            if (round.Teams?.FirstOrDefault()?.Participants?.FirstOrDefault()?.Player?.Id.ToString() == playerKey)
+            string teamKey = teamId.ToString();
+            if (round.Teams?.FirstOrDefault()?.Participants?.FirstOrDefault()?.Player?.Id.ToString() == teamKey)
             {
                 return round.CustomProperties.ContainsKey("Player1Wins") ?
                     Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
             }
-            else if (round.Teams?.LastOrDefault()?.Participants?.FirstOrDefault()?.Player?.Id.ToString() == playerKey)
+            else if (round.Teams?.LastOrDefault()?.Participants?.FirstOrDefault()?.Player?.Id.ToString() == teamKey)
             {
                 return round.CustomProperties.ContainsKey("Player2Wins") ?
                     Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
@@ -451,13 +501,13 @@ namespace Wabbit.Services
             if (round.CustomProperties == null)
                 return false;
 
-            int player1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
+            int team1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
                 Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
-            int player2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
+            int team2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
                 Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
 
             int winsNeeded = (round.Length + 1) / 2;
-            return player1Wins >= winsNeeded || player2Wins >= winsNeeded;
+            return team1Wins >= winsNeeded || team2Wins >= winsNeeded;
         }
 
         public DiscordMember? GetMatchWinner(Round round)
@@ -465,14 +515,14 @@ namespace Wabbit.Services
             if (!IsMatchComplete(round) || round.Teams == null)
                 return null;
 
-            int player1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
+            int team1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
                 Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
-            int player2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
+            int team2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
                 Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
 
-            if (player1Wins > player2Wins)
+            if (team1Wins > team2Wins)
                 return round.Teams.FirstOrDefault()?.Participants?.FirstOrDefault()?.Player as DiscordMember;
-            else if (player2Wins > player1Wins)
+            else if (team2Wins > team1Wins)
                 return round.Teams.LastOrDefault()?.Participants?.FirstOrDefault()?.Player as DiscordMember;
 
             return null;
@@ -483,12 +533,12 @@ namespace Wabbit.Services
             if (round.CustomProperties == null)
                 return (0, 0);
 
-            int player1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
+            int team1Wins = round.CustomProperties.ContainsKey("Player1Wins") ?
                 Convert.ToInt32(round.CustomProperties["Player1Wins"]) : 0;
-            int player2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
+            int team2Wins = round.CustomProperties.ContainsKey("Player2Wins") ?
                 Convert.ToInt32(round.CustomProperties["Player2Wins"]) : 0;
 
-            return player1Wins > player2Wins ? (player1Wins, player2Wins) : (player2Wins, player1Wins);
+            return team1Wins > team2Wins ? (team1Wins, team2Wins) : (team2Wins, team1Wins);
         }
     }
 }

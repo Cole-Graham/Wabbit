@@ -163,14 +163,14 @@ namespace Wabbit.Services
         /// </summary>
         public async Task StartMatchRoundAsync(Tournament tournament, Tournament.Match match, DiscordChannel channel, DiscordClient client)
         {
-            // Get player members
-            var player1 = _groupService.ConvertToDiscordMember(match.Participants[0].Player);
-            var player2 = _groupService.ConvertToDiscordMember(match.Participants[1].Player);
+            // Get team members
+            var team1 = _groupService.ConvertToDiscordMember(match.Participants[0].Player);
+            var team2 = _groupService.ConvertToDiscordMember(match.Participants[1].Player);
 
-            // Ensure both players are valid
-            if (player1 is null || player2 is null)
+            // Ensure both teams are valid
+            if (team1 is null || team2 is null)
             {
-                _logger.LogError($"Cannot start match {match.Name}: One or both players could not be converted to DiscordMember");
+                _logger.LogError($"Cannot start match {match.Name}: One or both teams could not be converted to DiscordMember");
                 return;
             }
 
@@ -178,8 +178,8 @@ namespace Wabbit.Services
             await _matchService.CreateAndStart1v1Match(
                 tournament,
                 match.Participants[0].SourceGroup,
-                player1,
-                player2,
+                team1,
+                team2,
                 client,
                 match.BestOf,
                 match);
@@ -487,24 +487,24 @@ namespace Wabbit.Services
                 // Debug participant types
                 foreach (var participant in group.Participants)
                 {
-                    var playerType = participant.Player?.GetType().Name ?? "null";
+                    var teamType = participant.Player?.GetType().Name ?? "null";
                     var isDiscordMember = participant.Player is DiscordMember;
-                    _logger.LogInformation($"Participant Player: Type={playerType}, IsDiscordMember={isDiscordMember}, DisplayName={participant.Player?.ToString() ?? "null"}");
+                    _logger.LogInformation($"Participant Player: Type={teamType}, IsDiscordMember={isDiscordMember}, DisplayName={participant.Player?.ToString() ?? "null"}");
                 }
 
-                // Create matches for each player pair in this group
+                // Create matches for each team pair in this group
                 for (int i = 0; i < group.Participants.Count; i++)
                 {
                     for (int j = i + 1; j < group.Participants.Count; j++)
                     {
-                        var player1 = group.Participants[i].Player as DiscordMember;
-                        var player2 = group.Participants[j].Player as DiscordMember;
+                        var team1 = group.Participants[i].Player as DiscordMember;
+                        var team2 = group.Participants[j].Player as DiscordMember;
 
-                        _logger.LogInformation($"Checking pair: Player1={player1?.DisplayName ?? "null"}, Player2={player2?.DisplayName ?? "null"}");
+                        _logger.LogInformation($"Checking pair: Team1={team1?.DisplayName ?? "null"}, Team2={team2?.DisplayName ?? "null"}");
 
-                        if (player1 is not null && player2 is not null)
+                        if (team1 is not null && team2 is not null)
                         {
-                            // Check if a match already exists between these players
+                            // Check if a match already exists between these teams
                             bool matchExists = false;
                             bool matchNeedsExecution = false;
                             Tournament.Match? existingMatch = null;
@@ -513,10 +513,10 @@ namespace Wabbit.Services
                             {
                                 existingMatch = group.Matches.FirstOrDefault(m =>
                                     m.Participants?.Count == 2 &&
-                                    ((m.Participants[0].Player is DiscordMember p1 && p1.Id == player1.Id &&
-                                      m.Participants[1].Player is DiscordMember p2 && p2.Id == player2.Id) ||
-                                     (m.Participants[0].Player is DiscordMember p3 && p3.Id == player2.Id &&
-                                      m.Participants[1].Player is DiscordMember p4 && p4.Id == player1.Id)));
+                                    ((m.Participants[0].Player is DiscordMember p1 && p1.Id == team1.Id &&
+                                      m.Participants[1].Player is DiscordMember p2 && p2.Id == team2.Id) ||
+                                     (m.Participants[0].Player is DiscordMember p3 && p3.Id == team2.Id &&
+                                      m.Participants[1].Player is DiscordMember p4 && p4.Id == team1.Id)));
 
                                 matchExists = existingMatch != null;
 
@@ -524,18 +524,18 @@ namespace Wabbit.Services
                                 matchNeedsExecution = matchExists && existingMatch?.LinkedRound == null;
                             }
 
-                            _logger.LogInformation($"Match already exists for {player1.DisplayName} vs {player2.DisplayName}: {matchExists}, Needs execution: {matchNeedsExecution}");
+                            _logger.LogInformation($"Match already exists for {team1.DisplayName} vs {team2.DisplayName}: {matchExists}, Needs execution: {matchNeedsExecution}");
 
                             // Add match for scheduling if it doesn't exist OR if it exists but needs execution
                             if (!matchExists || matchNeedsExecution)
                             {
-                                _logger.LogInformation($"Adding pending match: {player1.DisplayName} vs {player2.DisplayName}");
-                                pendingMatches.Add((group, new List<DiscordMember> { player1 }, new List<DiscordMember> { player2 }));
+                                _logger.LogInformation($"Adding pending match: {team1.DisplayName} vs {team2.DisplayName}");
+                                pendingMatches.Add((group, new List<DiscordMember> { team1 }, new List<DiscordMember> { team2 }));
                             }
                         }
                         else
                         {
-                            _logger.LogWarning($"Invalid player pair in group {group.Name}: Player1={player1?.DisplayName ?? "null"}, Player2={player2?.DisplayName ?? "null"}");
+                            _logger.LogWarning($"Invalid team pair in group {group.Name}: Team1={team1?.DisplayName ?? "null"}, Team2={team2?.DisplayName ?? "null"}");
                         }
                     }
                 }

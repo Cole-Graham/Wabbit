@@ -238,23 +238,6 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 {
                     _logger.LogWarning(ex, "Could not delete the confirmation message");
                 }
-
-                // Send an ephemeral confirmation to the user
-                if (hasBeenDeferred)
-                {
-                    await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                        .WithContent("Deck confirmed. Please check the updated match status above.")
-                        .AsEphemeral());
-                }
-                else
-                {
-                    await e.Interaction.CreateResponseAsync(
-                        DiscordInteractionResponseType.ChannelMessageWithSource,
-                        new DiscordInteractionResponseBuilder()
-                            .WithContent("Deck confirmed. Please check the updated match status above.")
-                            .AsEphemeral()
-                    );
-                }
             }
             catch (Exception ex)
             {
@@ -319,77 +302,12 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 {
                     // Call the MatchStatusService to handle the deck revision
                     await _matchStatusService.ReviseDeckAsync(channel, round, userId, client);
-
-                    // Send an ephemeral confirmation to the user just to acknowledge the button action
-                    if (hasBeenDeferred)
-                    {
-                        await e.Interaction.CreateFollowupMessageAsync(new DiscordFollowupMessageBuilder()
-                            .WithContent("Deck revision initiated. Please check the updated match status above.")
-                            .AsEphemeral());
-                    }
-                    else
-                    {
-                        await e.Interaction.CreateResponseAsync(
-                            DiscordInteractionResponseType.ChannelMessageWithSource,
-                            new DiscordInteractionResponseBuilder()
-                                .WithContent("Deck revision initiated. Please check the updated match status above.")
-                                .AsEphemeral()
-                        );
-                    }
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error revising deck");
                 await SendErrorResponseAsync(e, $"There was an error revising your deck: {ex.Message}", hasBeenDeferred);
-            }
-        }
-
-        /// <summary>
-        /// Cleans up deck submission related messages in a channel for a specific user
-        /// </summary>
-        /// <param name="channel">The Discord channel</param>
-        /// <param name="userId">The user ID to clean up messages for</param>
-        private async Task CleanupDeckSubmissionMessages(DiscordChannel channel, ulong userId)
-        {
-            try
-            {
-                // Get recent messages in the channel
-                var messages = channel.GetMessagesAsync(50);
-                var messageList = new List<DiscordMessage>();
-
-                // Manually collect messages from the async enumerable
-                await foreach (var message in messages)
-                {
-                    messageList.Add(message);
-                }
-
-                // Find and delete deck submission related messages for this user
-                var messagesToDelete = messageList.Where(m =>
-                    (m.Author?.IsBot == true && m.Content?.Contains("Please enter your") == true && m.Content?.Contains(userId.ToString()) == true) ||
-                    (m.Author?.IsBot == true && m.Content?.Contains("Please review your deck code") == true) ||
-                    (m.Author?.IsBot == true && m.Content?.Contains("deck code submission") == true) ||
-                    (m.Author?.IsBot == true && m.Content?.Contains("map ban selections") == true) ||
-                    (m.Author?.IsBot == true && m.Content?.Contains("Please submit your deck code") == true)
-                ).ToList();
-
-                foreach (var message in messagesToDelete)
-                {
-                    try
-                    {
-                        await message.DeleteAsync();
-                        // Add a small delay to avoid rate limiting
-                        await Task.Delay(100);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete message during cleanup");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error cleaning up deck submission messages");
             }
         }
 

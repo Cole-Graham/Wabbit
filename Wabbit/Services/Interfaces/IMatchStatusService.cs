@@ -131,9 +131,6 @@ namespace Wabbit.Services.Interfaces
         /// <summary>
         /// Updates the match status to show the current map and map pool
         /// </summary>
-        /// <param name="channel">The match thread channel</param>
-        /// <param name="round">The tournament round</param>
-        /// <param name="client">The Discord client</param>
         Task UpdateMapInformationAsync(DiscordChannel channel, Round round, DiscordClient client);
 
         /// <summary>

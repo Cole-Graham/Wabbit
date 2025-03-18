@@ -3,6 +3,7 @@ using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using DSharpPlus.Exceptions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
@@ -25,6 +26,7 @@ namespace Wabbit.Services
     {
         private readonly ILogger<MatchStatusService> _logger;
         private readonly ITournamentMapService _mapService;
+        private readonly ITournamentGameService _gameService;
         private readonly Dictionary<ulong, ulong> _channelToMessageMap = new();
 
         // Add cooldown tracking for refresh buttons
@@ -33,10 +35,12 @@ namespace Wabbit.Services
 
         public MatchStatusService(
             ILogger<MatchStatusService> logger,
-            ITournamentMapService mapService)
+            ITournamentMapService mapService,
+            ITournamentGameService gameService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mapService = mapService ?? throw new ArgumentNullException(nameof(mapService));
+            _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
         }
 
         /// <summary>
@@ -80,8 +84,8 @@ namespace Wabbit.Services
                     throw new Exception("Failed to create or retrieve match status message");
                 }
 
-                // Create the embed based on the round state
-                var embed = CreateMatchStatusEmbed(round);
+                // Create the embed based on the round state - pass channel ID
+                var embed = CreateMatchStatusEmbed(round, null, channel.Id);
 
                 // Create a message builder with the updated embed
                 var messageBuilder = new DiscordMessageBuilder()
@@ -411,10 +415,13 @@ namespace Wabbit.Services
             // Update the round's current stage
             round.CurrentStage = MatchStage.GameResults;
 
+            // Get the existing message or create a new one
             var message = await GetMatchStatusMessageAsync(channel, client);
-            var embed = CreateMatchStatusEmbed(round);
 
-            // Get participating players
+            // Create the standard embed using the channel ID for context
+            var embed = CreateMatchStatusEmbed(round, null, channel.Id);
+
+            // Get participating players for the dropdown
             List<DiscordMember> players = new();
             if (round.Teams is not null)
             {
@@ -453,37 +460,20 @@ namespace Wabbit.Services
                 "Select Game Winner",
                 options);
 
-            // Add game results instructions with emoji
-            embed.AddField("🏆 Current Stage: Report Game Result",
-                "Select the winner of the game from the dropdown below.");
+            // Create a message builder with the embed and dropdown
+            var messageBuilder = new DiscordMessageBuilder()
+                .AddEmbed(embed)
+                .AddComponents(gameWinnerDropdown);
 
-            // Add progress bar to show current stage
-            embed.AddField("Match Progress",
-                "✅ Map Bans\n" +
-                "✅ Deck Submission\n" +
-                "▶️ Game Results",
-                false);
-
-            // Use green color for game results stage
-            embed.WithColor(new DiscordColor(75, 181, 67));
-
-            string description = embed.Description ?? "";
-            embed.Description = $"{description}\n\n**Game Results Stage**\n" +
-                               "Select the winner of the current game from the dropdown.";
-
+            // Update the existing message or send a new one
             if (message is not null)
             {
-                await message.ModifyAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(gameWinnerDropdown));
+                await message.ModifyAsync(messageBuilder);
                 return message;
             }
             else
             {
-                var newMessage = await channel.SendMessageAsync(new DiscordMessageBuilder()
-                    .AddEmbed(embed)
-                    .AddComponents(gameWinnerDropdown));
-
+                var newMessage = await channel.SendMessageAsync(messageBuilder);
                 _channelToMessageMap[channel.Id] = newMessage.Id;
                 return newMessage;
             }
@@ -525,9 +515,9 @@ namespace Wabbit.Services
                 await UpdateMatchStatusInAllThreadsAsync(round, client);
             }
 
-            // Add confirm/revise buttons
+            // Add confirm/revise buttons - pass channel ID to show proper priorities
             var builder = new DiscordMessageBuilder()
-                .AddEmbed(CreateMatchStatusEmbed(round, null))
+                .AddEmbed(CreateMatchStatusEmbed(round, null, channel.Id))
                 .AddComponents(
                     new DiscordButtonComponent(
                         DiscordButtonStyle.Success,
@@ -1594,7 +1584,7 @@ namespace Wabbit.Services
         /// <summary>
         /// Creates the basic match status embed with common information
         /// </summary>
-        private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round, List<string>? cachedMapPool = null)
+        private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round, List<string>? cachedMapPool = null, ulong? channelId = null)
         {
             // Default titles for regular matches
             string title = "Match Status";
@@ -1688,20 +1678,20 @@ namespace Wabbit.Services
                 AddMapPoolFieldWithDivider(builder, round, mapPool);
             }
 
-            // Add team map bans with divider
-            AddTeamMapBansFieldWithDivider(builder, round);
+            // Add team map bans with divider, passing the channel ID
+            AddTeamMapBansFieldWithDivider(builder, round, channelId);
 
-            // Add deck submissions area if applicable
+            // Add deck submissions area if applicable, also passing channel ID
             if (round.CurrentStage >= MatchStage.DeckSubmission)
             {
-                AddDeckSubmissionsAreaWithDivider(builder, round);
+                AddDeckSubmissionsAreaWithDivider(builder, round, channelId);
             }
 
             // Add game results area with divider
             AddGameResultsAreaWithDivider(builder, round);
 
             // Add stage-specific instructions at the bottom (no divider needed after this)
-            AddStageInstructions(builder, round);
+            AddStageInstructions(builder, round, channelId);
 
             return builder;
         }
@@ -1863,19 +1853,29 @@ namespace Wabbit.Services
             return "🟩"; // Green for available maps
         }
 
-        private void AddTeamMapBansFieldWithDivider(DiscordEmbedBuilder builder, Round round)
+        private void AddTeamMapBansFieldWithDivider(DiscordEmbedBuilder builder, Round round, ulong? channelId = null)
         {
             if (round.Teams == null || !round.Teams.Any())
                 return;
 
             var banBuilder = new StringBuilder();
 
-            // Figure out which team the embed is for (assumed to be first team)
-            var userTeam = round.Teams.FirstOrDefault();
-            if (userTeam == null) return;
+            // Determine which team's thread we're in based on the channel ID
+            // This ensures we only show each team their own map bans
+            var userTeam = channelId.HasValue
+                ? round.Teams.FirstOrDefault(t => t?.Thread?.Id == channelId.Value)
+                : null;
+
+            // If we can't determine the team by channel ID (e.g., in admin view),
+            // default to the standard behavior but without showing specific bans
+            if (userTeam == null)
+            {
+                userTeam = round.Teams.FirstOrDefault();
+                if (userTeam == null) return;
+            }
 
             // Get opponent team
-            var opponentTeam = round.Teams.Skip(1).FirstOrDefault();
+            var opponentTeam = round.Teams.FirstOrDefault(t => t != userTeam);
 
             // First handle the user's team bans
             if (userTeam.UnconfirmedMapBans?.Any() == true && (userTeam.MapBans == null || !userTeam.MapBans.Any()))
@@ -1963,12 +1963,16 @@ namespace Wabbit.Services
             builder.AddField("\u200B", banBuilder.ToString().Trim(), false);
         }
 
-        private void AddDeckSubmissionsAreaWithDivider(DiscordEmbedBuilder builder, Round round)
+        private void AddDeckSubmissionsAreaWithDivider(DiscordEmbedBuilder builder, Round round, ulong? channelId = null)
         {
             if (round.Teams == null || round.Teams.Count == 0) return;
 
             var deckBuilder = new StringBuilder();
-            deckBuilder.AppendLine("**Deck Submission Status**");
+
+            // Determine which team's thread we're in based on the channel ID
+            var userTeam = channelId.HasValue
+                ? round.Teams.FirstOrDefault(t => t?.Thread?.Id == channelId.Value)
+                : null;
 
             foreach (var team in round.Teams ?? Enumerable.Empty<Round.Team>())
             {
@@ -1984,8 +1988,8 @@ namespace Wabbit.Services
                     {
                         deckBuilder.AppendLine($"\n{team.Name}: ✅ Deck submitted and confirmed");
 
-                        // Only show deck code to the submitting player's team
-                        if (round.Teams is not null && team == round.Teams.FirstOrDefault())
+                        // Only show deck code to the user's team
+                        if (userTeam != null && team == userTeam)
                         {
                             // Add deck code in a separate line with monospace formatting
                             deckBuilder.AppendLine($"Your deck code: `{participant.Deck}`");
@@ -1995,8 +1999,8 @@ namespace Wabbit.Services
                     {
                         deckBuilder.AppendLine($"\n{team.Name}: ⏳ Deck submitted (pending confirmation)");
 
-                        // Only show deck code to the submitting player's team
-                        if (round.Teams is not null && team == round.Teams.FirstOrDefault())
+                        // Only show deck code to the user's team
+                        if (userTeam != null && team == userTeam)
                         {
                             // Add deck code in a separate line with monospace formatting
                             deckBuilder.AppendLine($"Your pending deck code: `{participant.TempDeckCode}`");
@@ -2058,19 +2062,72 @@ namespace Wabbit.Services
             builder.AddField("🎮 Game Results", resultsBuilder.ToString().Trim(), false);
         }
 
-        private void AddStageInstructions(DiscordEmbedBuilder builder, Round round)
+        private void AddStageInstructions(DiscordEmbedBuilder builder, Round round, ulong? channelId = null)
         {
-            string instructions = round.CurrentStage switch
+            string instructions = "";
+
+            // Determine which instructions to show based on stage
+            switch (round.CurrentStage)
             {
-                MatchStage.MapBan => round.Teams?.FirstOrDefault()?.UnconfirmedMapBans?.Any() == true
-                    ? "Review your map ban selections above and choose to confirm or revise them."
-                    : "Select maps to ban using the dropdown below, ordered by priority.",
-                MatchStage.DeckSubmission => "Submit your deck using `/tournament submit_deck`.",
-                MatchStage.DeckRevision => "Please submit your revised deck using `/tournament submit_deck`.",
-                MatchStage.GameResults => "Select the winner from the dropdown below.",
-                MatchStage.Completed => $"Match completed! {round.WinMsg}",
-                _ => ""
-            };
+                case MatchStage.MapBan:
+                    instructions = round.Teams?.FirstOrDefault()?.UnconfirmedMapBans?.Any() == true
+                        ? "Review your map ban selections above and choose to confirm or revise them."
+                        : "Select maps to ban using the dropdown below, ordered by priority.";
+                    break;
+
+                case MatchStage.DeckSubmission:
+                    // Only show deck submission instructions if ALL players on the team in this channel have confirmed their decks
+                    if (channelId.HasValue)
+                    {
+                        var currentTeam = round.Teams?.FirstOrDefault(t => t?.Thread?.Id == channelId.Value);
+                        if (currentTeam != null && currentTeam.Participants != null && currentTeam.Participants.Any())
+                        {
+                            // Check if ANY team member is missing a confirmed deck
+                            bool anyTeamMemberMissingDeck = false;
+
+                            foreach (var teamMember in currentTeam.Participants)
+                            {
+                                if (teamMember != null && string.IsNullOrEmpty(teamMember.Deck))
+                                {
+                                    anyTeamMemberMissingDeck = true;
+                                    break;
+                                }
+                            }
+
+                            if (anyTeamMemberMissingDeck)
+                            {
+                                instructions = "Submit your deck using `/tournament submit_deck`.";
+                            }
+                            else
+                            {
+                                instructions = "Waiting for the match to begin...";
+                            }
+                        }
+                        else
+                        {
+                            // Default if team not found or no participants
+                            instructions = "Submit your deck using `/tournament submit_deck`.";
+                        }
+                    }
+                    else
+                    {
+                        // Default if no channel ID provided
+                        instructions = "Submit your deck using `/tournament submit_deck`.";
+                    }
+                    break;
+
+                case MatchStage.DeckRevision:
+                    instructions = "Please submit your revised deck using `/tournament submit_deck`.";
+                    break;
+
+                case MatchStage.GameResults:
+                    instructions = "Select the winner from the dropdown below.";
+                    break;
+
+                case MatchStage.Completed:
+                    instructions = $"Match completed! {round.WinMsg}";
+                    break;
+            }
 
             if (!string.IsNullOrEmpty(instructions))
             {
@@ -2186,17 +2243,14 @@ namespace Wabbit.Services
                     return;
                 }
 
-                // Get available maps for the next game
-                var availableMaps = _mapService.GetAvailableMapsForNextGame(round);
-                if (availableMaps.Count == 0)
+                // Get a random map for the next game
+                string? nextMap = _gameService.GetRandomMapForNextGame(round);
+
+                if (nextMap == null)
                 {
-                    _logger.LogWarning("No maps available for next game");
+                    _logger.LogWarning("Failed to get random map for next game");
                     return;
                 }
-
-                // Select a random map for the next game
-                var random = new Random();
-                string nextMap = availableMaps[random.Next(availableMaps.Count)];
 
                 // Update the round's current map
                 if (round.CustomProperties is null)
@@ -2328,6 +2382,33 @@ namespace Wabbit.Services
                     // The actual transition to GameResults would happen elsewhere, 
                     // but we need to track that a critical milestone was reached
                     round.CustomProperties["AllDecksSubmitted"] = true;
+
+                    // Auto-transition to game results stage
+                    _logger.LogInformation("All decks submitted. Automatically transitioning to game results stage.");
+
+                    // Update the round's current stage
+                    round.CurrentStage = MatchStage.GameResults;
+
+                    // Create game winner dropdown in all team threads
+                    if (round.Teams != null)
+                    {
+                        foreach (var teamObj in round.Teams)
+                        {
+                            if (teamObj?.Thread is not null)
+                            {
+                                try
+                                {
+                                    // Call UpdateToGameResultsStageAsync for each team's thread
+                                    await UpdateToGameResultsStageAsync(teamObj.Thread, round, client);
+                                    _logger.LogInformation($"Updated game results stage in thread {teamObj.Thread.Id} for team {teamObj.Name}");
+                                }
+                                catch (Exception threadEx)
+                                {
+                                    _logger.LogError(threadEx, $"Error updating game results stage in thread {teamObj.Thread.Id} for team {teamObj.Name}");
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Ensure the message exists

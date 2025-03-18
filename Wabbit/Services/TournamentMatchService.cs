@@ -54,36 +54,36 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Creates and starts a 1v1 match between two players
+        /// Creates and starts a 1v1 match between two teams
         /// </summary>
         /// <remarks>
-        /// This method assumes that player scheduling (ensuring players aren't double-booked)
+        /// This method assumes that team scheduling (ensuring teams aren't double-booked)
         /// has already been handled by the TournamentManagerService's scheduling system.
         /// </remarks>
         /// <param name="tournament">The tournament the match belongs to</param>
         /// <param name="group">The group the match belongs to (null for playoff matches)</param>
-        /// <param name="player1">The first player</param>
-        /// <param name="player2">The second player</param>
+        /// <param name="team1">The first team</param>
+        /// <param name="team2">The second team</param>
         /// <param name="client">The Discord client</param>
         /// <param name="matchLength">The length/format of the match (usually 1 for Bo1, 3 for Bo3, etc.)</param>
         /// <param name="existingMatch">An existing match to use, if any</param>
         public async Task CreateAndStart1v1Match(
             Tournament tournament,
             Tournament.Group? group,
-            DiscordMember player1,
-            DiscordMember player2,
+            DiscordMember team1,
+            DiscordMember team2,
             DiscordClient client,
             int matchLength,
             Tournament.Match? existingMatch = null)
         {
             try
             {
-                if (!_matchOperations.ValidateMatchCreation(tournament, player1, player2))
+                if (!_matchOperations.ValidateMatchCreation(tournament, team1, team2))
                 {
                     _logger.LogError("Match creation validation failed");
                     return;
                 }
-                // Note: We no longer need to check if players are in active matches
+                // Note: We no longer need to check if teams are in active matches
                 // This is now handled by the TournamentManagerService's scheduling system
 
                 Tournament.Match match;
@@ -94,18 +94,19 @@ namespace Wabbit.Services
                 else
                 {
                     // Add null checks before accessing DisplayName
-                    string matchName = $"{player1?.DisplayName ?? "Player 1"} vs {player2?.DisplayName ?? "Player 2"}";
-                    if (player1 is null || player2 is null)
+                    string matchName = $"{team1?.DisplayName ?? "Team 1"} vs {team2?.DisplayName ?? "Team 2"}";
+                    if (team1 is null || team2 is null)
                     {
-                        _logger.LogError("Cannot create match: player1 or player2 is null");
+                        _logger.LogError("Cannot create match: team1 or team2 is null");
                         return;
                     }
+
                     match = _matchOperations.CreateMatch(
                         matchName,
                         group != null ? TournamentMatchType.GroupStage : TournamentMatchType.Quarterfinal,
                         matchLength,
-                        player1,
-                        player2,
+                        team1,
+                        team2,
                         group);
 
                     // Make sure tournament is not null before accessing its properties
@@ -132,22 +133,22 @@ namespace Wabbit.Services
                 // Set group stage match information
                 if (match.Type == TournamentMatchType.GroupStage && group is not null)
                 {
-                    // Calculate total matches per player in this group
+                    // Calculate total matches per team in this group
                     int groupSize = group.Participants?.Count ?? 0;
-                    int totalMatchesPerPlayer = Math.Max(0, groupSize - 1); // Each player plays against every other player once
+                    int totalMatchesPerTeam = Math.Max(0, groupSize - 1); // Each team plays against every other team once
 
-                    // Find completed matches for player1
+                    // Find completed matches for team1
                     int completedMatches = 0;
 
                     // If there's an existing tournament, check for previous matches in this group
-                    if (tournament != null && player1 is not null)
+                    if (tournament != null && team1 is not null)
                     {
-                        // Get all completed matches for this player in the group
+                        // Get all completed matches for this team in the group
                         completedMatches = group.Matches?
                             .Where(m => m != match) // Don't count current match
                             .Where(m => m.IsComplete)
                             .Count(m => m.Participants
-                                .Any(p => (p.Player as DiscordMember)?.Id == player1.Id)) ?? 0;
+                                .Any(p => (p.Player as DiscordMember)?.Id == team1.Id)) ?? 0;
 
                         // GroupMatchNumber should be completedMatches + 1 (i.e., next match number)
                         round.CustomProperties["GroupMatchNumber"] = completedMatches + 1;
@@ -158,45 +159,45 @@ namespace Wabbit.Services
                         round.CustomProperties["GroupMatchNumber"] = 1;
                     }
 
-                    round.CustomProperties["TotalGroupMatches"] = totalMatchesPerPlayer;
+                    round.CustomProperties["TotalGroupMatches"] = totalMatchesPerTeam;
                 }
 
                 // Create team objects
-                var team1 = new Round.Team
+                var team1Object = new Round.Team
                 {
-                    Name = player1?.DisplayName ?? "Player 1",
+                    Name = team1?.DisplayName ?? "Team 1",
                     Participants = new List<Round.Participant>
                     {
-                        new Round.Participant { Player = player1 }
+                        new Round.Participant { Player = team1 }
                     },
                     MapBans = new List<string>()
                 };
 
-                var team2 = new Round.Team
+                var team2Object = new Round.Team
                 {
-                    Name = player2?.DisplayName ?? "Player 2",
+                    Name = team2?.DisplayName ?? "Team 2",
                     Participants = new List<Round.Participant>
                     {
-                        new Round.Participant { Player = player2 }
+                        new Round.Participant { Player = team2 }
                     },
                     MapBans = new List<string>()
                 };
 
                 // Add teams to round
-                round.Teams.Add(team1);
-                round.Teams.Add(team2);
+                round.Teams.Add(team1Object);
+                round.Teams.Add(team2Object);
 
                 // Set up metadata for the match
-                round.CustomProperties["Player1Name"] = player1?.DisplayName ?? "Player 1";
-                round.CustomProperties["Player2Name"] = player2?.DisplayName ?? "Player 2";
+                round.CustomProperties["Player1Name"] = team1?.DisplayName ?? "Team 1";
+                round.CustomProperties["Player2Name"] = team2?.DisplayName ?? "Team 2";
                 round.CustomProperties["Player1Score"] = 0;
                 round.CustomProperties["Player2Score"] = 0;
                 round.CustomProperties["Player1Wins"] = 0;
                 round.CustomProperties["Player2Wins"] = 0;
                 round.CustomProperties["Draws"] = 0;
                 round.CustomProperties["MatchLength"] = matchLength;
-                round.CustomProperties["Player1Id"] = player1?.Id ?? 0;
-                round.CustomProperties["Player2Id"] = player2?.Id ?? 0;
+                round.CustomProperties["Player1Id"] = team1?.Id ?? 0;
+                round.CustomProperties["Player2Id"] = team2?.Id ?? 0;
 
                 // Add the round to ongoing rounds
                 _ongoingRounds.TourneyRounds.Add(round);
@@ -213,19 +214,19 @@ namespace Wabbit.Services
 
                 await GetOrCreateTeamThreadsAsync(tournament, round.Teams, client);
 
-                // Check if this is a subsequent match for the players
+                // Check if this is a subsequent match for the teams
                 bool isFirstMatch = true;
                 if (group != null)
                 {
                     isFirstMatch = (group.Matches?.Count(m =>
-                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player1?.Id) ?? false) ||
-                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player2?.Id) ?? false)) ?? 0) <= 1;
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == team1?.Id) ?? false) ||
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == team2?.Id) ?? false)) ?? 0) <= 1;
                 }
                 else if (tournament.PlayoffMatches != null)
                 {
                     isFirstMatch = tournament.PlayoffMatches.Count(m =>
-                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player1?.Id) ?? false) ||
-                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == player2?.Id) ?? false)) <= 1;
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == team1?.Id) ?? false) ||
+                        (m.Participants?.Any(p => (p.Player as DiscordMember)?.Id == team2?.Id) ?? false)) <= 1;
                 }
 
                 // Initialize the match status system
@@ -322,8 +323,7 @@ namespace Wabbit.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating match");
-                throw;
+                _logger.LogError(ex, "Error creating match round");
             }
         }
 
@@ -531,7 +531,7 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Checks if both players have submitted their decks for the current game
+        /// Checks if both teams have submitted their decks for the current game
         /// </summary>
         private bool AreDeckSubmissionsComplete(Round round, int gameNumber)
         {
@@ -542,7 +542,7 @@ namespace Wabbit.Services
             if (deckCodes == null)
                 return false;
 
-            // Check if both players have submitted decks for this game
+            // Check if both teams have submitted decks for this game
             int submissionCount = 0;
             foreach (var team in round.Teams ?? Enumerable.Empty<Round.Team>())
             {
@@ -641,7 +641,7 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Handles deck submission and reveals map if both players have submitted
+        /// Handles deck submission and reveals map if both teams have submitted
         /// </summary>
         public async Task HandleDeckSubmissionAsync(Round round, DiscordChannel channel, DiscordClient client)
         {
@@ -650,10 +650,10 @@ namespace Wabbit.Services
                 // Get the current game number
                 int currentGame = round.Maps?.Count ?? 0;
 
-                // Check if both players have submitted their decks
+                // Check if both teams have submitted their decks
                 if (AreDeckSubmissionsComplete(round, currentGame))
                 {
-                    _logger.LogInformation($"Both players have submitted decks for game {currentGame + 1}. Revealing map...");
+                    _logger.LogInformation($"Both teams have submitted decks for game {currentGame + 1}. Revealing map...");
 
                     // Get available maps
                     var availableMaps = _mapService.GetAvailableMapsForNextGame(round);

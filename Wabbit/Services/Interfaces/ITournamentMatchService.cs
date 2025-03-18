@@ -11,17 +11,17 @@ namespace Wabbit.Services.Interfaces
     public interface ITournamentMatchService
     {
         /// <summary>
-        /// Creates and starts a match between two players or teams
+        /// Creates and starts a match between two teams
         /// </summary>
         /// <remarks>
-        /// This method assumes that participant scheduling (ensuring players/teams aren't double-booked)
+        /// This method assumes that team scheduling (ensuring teams aren't double-booked)
         /// has already been handled by the TournamentManagerService's scheduling system.
         /// </remarks>
         Task CreateAndStart1v1Match(
             Tournament tournament,
             Tournament.Group? group,
-            DiscordMember player1,
-            DiscordMember player2,
+            DiscordMember team1,
+            DiscordMember team2,
             DiscordClient client,
             int matchLength,
             Tournament.Match? existingMatch = null);

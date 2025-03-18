@@ -42,6 +42,11 @@ namespace Wabbit.Services.Interfaces
         int GetPlayerScore(Round round, ulong playerId);
 
         /// <summary>
+        /// Gets the score for a given team in a round
+        /// </summary>
+        int GetTeamScore(Round round, ulong teamId);
+
+        /// <summary>
         /// Determines if a match is complete based on game results
         /// </summary>
         bool IsMatchComplete(Round round);
@@ -55,5 +60,15 @@ namespace Wabbit.Services.Interfaces
         /// Gets the final match score
         /// </summary>
         (int winner, int loser) GetFinalScore(Round round);
+
+        /// <summary>
+        /// Gets available maps for the next game in a match
+        /// </summary>
+        List<string> GetAvailableMapsForNextGame(Round round);
+
+        /// <summary>
+        /// Gets a random map for the next game, considering banned and played maps
+        /// </summary>
+        string? GetRandomMapForNextGame(Round round);
     }
 }
