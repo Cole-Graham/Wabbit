@@ -98,7 +98,7 @@ namespace Wabbit.BotClient.Events.Modals.Tournament
                     new List<DiscordMember> { member },
                     format,
                     e.Interaction.Channel,
-                    GameType.OneVOne);
+                    TournamentGameType.OneVOne);
 
                 if (tournament is null)
                 {
