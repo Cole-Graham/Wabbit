@@ -14,6 +14,7 @@
             public ulong? DeckChannelId { get; set; }
             public ulong? SignupChannelId { get; set; }
             public ulong? StandingsChannelId { get; set; }
+            public ulong? ScrimmageChannelId { get; set; }
         }
 
         public class TournamentConfig

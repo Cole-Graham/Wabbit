@@ -62,11 +62,6 @@ namespace Wabbit.Services.Interfaces
         (int winner, int loser) GetFinalScore(Round round);
 
         /// <summary>
-        /// Gets available maps for the next game in a match
-        /// </summary>
-        List<string> GetAvailableMapsForNextGame(Round round);
-
-        /// <summary>
         /// Gets a random map for the next game, considering banned and played maps
         /// </summary>
         string? GetRandomMapForNextGame(Round round);

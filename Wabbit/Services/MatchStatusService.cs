@@ -26,7 +26,6 @@ namespace Wabbit.Services
     {
         private readonly ILogger<MatchStatusService> _logger;
         private readonly ITournamentMapService _mapService;
-        private readonly ITournamentGameService _gameService;
         private readonly Dictionary<ulong, ulong> _channelToMessageMap = new();
 
         // Add cooldown tracking for refresh buttons
@@ -35,12 +34,10 @@ namespace Wabbit.Services
 
         public MatchStatusService(
             ILogger<MatchStatusService> logger,
-            ITournamentMapService mapService,
-            ITournamentGameService gameService)
+            ITournamentMapService mapService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mapService = mapService ?? throw new ArgumentNullException(nameof(mapService));
-            _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
         }
 
         /// <summary>
@@ -2244,7 +2241,7 @@ namespace Wabbit.Services
                 }
 
                 // Get a random map for the next game
-                string? nextMap = _gameService.GetRandomMapForNextGame(round);
+                string? nextMap = _mapService.GetRandomMapForNextGame(round);
 
                 if (nextMap == null)
                 {

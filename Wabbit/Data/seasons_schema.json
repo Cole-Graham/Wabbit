@@ -1,0 +1,191 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Seasons Schema",
+    "description": "Schema for competitive seasons",
+    "type": "object",
+    "properties": {
+        "seasons": {
+            "type": "array",
+            "description": "List of competitive seasons",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "seasonId": {
+                        "type": "string",
+                        "description": "Unique identifier for the season"
+                    },
+                    "seasonName": {
+                        "type": "string",
+                        "description": "Display name for the season"
+                    },
+                    "startDate": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When the season started"
+                    },
+                    "endDate": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time",
+                        "description": "When the season ended (null if still active)"
+                    },
+                    "isActive": {
+                        "type": "boolean",
+                        "description": "Whether this is the currently active season"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of the season"
+                    },
+                    "creatorId": {
+                        "type": "string",
+                        "description": "Discord User ID of the creator"
+                    },
+                    "creatorUsername": {
+                        "type": "string",
+                        "description": "Username of the creator"
+                    },
+                    "finalRankings": {
+                        "type": "object",
+                        "description": "Leaderboard snapshots at the end of the season",
+                        "properties": {
+                            "OneVOne": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/seasonRanking"
+                                }
+                            },
+                            "TwoVTwo": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/seasonRanking"
+                                }
+                            },
+                            "ThreeVThree": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/seasonRanking"
+                                }
+                            },
+                            "FourVFour": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/seasonRanking"
+                                }
+                            }
+                        }
+                    },
+                    "relatedMessages": {
+                        "type": "array",
+                        "description": "Related messaging for the season",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "channelId": {
+                                    "type": "string",
+                                    "description": "Discord channel ID where the message was sent"
+                                },
+                                "messageId": {
+                                    "type": "string",
+                                    "description": "Discord message ID"
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "description": "Type of message (e.g., 'Announcement', 'Leaderboard')"
+                                }
+                            },
+                            "required": [
+                                "channelId",
+                                "messageId",
+                                "type"
+                            ]
+                        }
+                    }
+                },
+                "required": [
+                    "seasonId",
+                    "seasonName",
+                    "startDate",
+                    "isActive",
+                    "creatorId",
+                    "creatorUsername"
+                ]
+            }
+        },
+        "currentSeason": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "ID of the current active season (null if no active season)"
+        }
+    },
+    "definitions": {
+        "seasonRanking": {
+            "type": "object",
+            "properties": {
+                "rank": {
+                    "type": "integer",
+                    "description": "Final position in the rankings"
+                },
+                "isTeam": {
+                    "type": "boolean",
+                    "description": "Whether this is a team (true) or individual player (false)"
+                },
+                "teamId": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Team ID if this is a team ranking"
+                },
+                "teamName": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Team name if this is a team ranking"
+                },
+                "playerId": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Player ID if this is an individual player ranking"
+                },
+                "playerUsername": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Player username if this is an individual player ranking"
+                },
+                "rating": {
+                    "type": "integer",
+                    "description": "Final rating at the end of the season"
+                },
+                "wins": {
+                    "type": "integer",
+                    "description": "Total wins during the season"
+                },
+                "losses": {
+                    "type": "integer",
+                    "description": "Total losses during the season"
+                }
+            },
+            "required": [
+                "rank",
+                "isTeam",
+                "rating",
+                "wins",
+                "losses"
+            ]
+        }
+    },
+    "required": [
+        "seasons",
+        "currentSeason"
+    ]
+}

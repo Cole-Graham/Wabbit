@@ -26,7 +26,7 @@ namespace Wabbit.Services.Interfaces
             List<DiscordMember> players,
             TournamentFormat format,
             DiscordChannel announcementChannel,
-            GameType gameType = GameType.OneVsOne,
+            GameType gameType = GameType.OneVOne,
             Dictionary<DiscordMember, int>? playerSeeds = null);
 
         /// <summary>

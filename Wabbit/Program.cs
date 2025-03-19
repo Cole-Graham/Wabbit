@@ -1,6 +1,12 @@
-﻿using DSharpPlus;
+﻿using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using DSharpPlus;
 using DSharpPlus.Commands;
-using DSharpPlus.Entities;
+using Wabbit.BotClient.Events.Components;
+using Wabbit.BotClient.Events.Modals;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
@@ -20,6 +26,8 @@ using Wabbit.Data;
 using Wabbit.Services;
 using Wabbit.Services.Interfaces;
 using Wabbit.Services.ServiceHelpers;
+using Wabbit.Models;
+
 
 namespace Wabbit
 {
@@ -126,9 +134,25 @@ namespace Wabbit
 
                     // Register utility services
                     services.AddSingleton<IRandomProvider, RandomProvider>();
+                    services.AddSingleton<IMapService, MapService>();
                     services.AddSingleton<IMapBanExt, MapBanExt>();
                     services.AddSingleton<IRandomMapExt, RandomMapExt>();
+                    services.AddSingleton<IScrimmageStatusService, ScrimmageStatusService>();
                     services.AddSingleton<TournamentManagementGroup>();
+
+                    // Register rating and season services
+
+                    // Register team and rating repository services
+                    services.AddSingleton<ITeamRepositoryService, TeamRepositoryService>();
+                    services.AddSingleton<IPlayerRatingRepositoryService, PlayerRatingRepositoryService>();
+                    services.AddSingleton<ISeasonRepositoryService, SeasonRepositoryService>();
+
+                    // Register team and season state services
+                    services.AddSingleton<ITeamStateService, TeamStateService>();
+                    services.AddSingleton<ISeasonStateService, SeasonStateService>();
+
+                    // Register leaderboard service
+                    services.AddSingleton<ILeaderboardService, LeaderboardService>();
 
                     // Register component handler factory and handlers - New for Phase 1
                     services.AddSingleton<ComponentHandlerFactory>();
@@ -141,6 +165,8 @@ namespace Wabbit
                     services.AddSingleton<ComponentHandlerBase, TournamentSignupHandler>();
                     services.AddSingleton<ComponentHandlerBase, AdminThirdPlaceMatchHandler>();
                     services.AddSingleton<ComponentHandlerBase, RefreshStatusHandler>();
+                    services.AddSingleton<ComponentHandlerBase, SeasonHandler>();
+                    services.AddSingleton<ComponentHandlerBase, LeaderboardHandler>();
 
                     // Register the new ComponentInteractionHandler (will replace Event_Button in Phase 2)
                     services.AddSingleton<ComponentInteractionHandler>();
@@ -181,7 +207,9 @@ namespace Wabbit
                         typeof(ConfigGroup),
                         typeof(TournamentGroup),
                         typeof(MapManagementGroup),
-                        typeof(TournamentManagementGroup)
+                        typeof(TournamentManagementGroup),
+                        typeof(ScrimmageGroup),
+                        typeof(SeasonGroup)
                     ]);
                 }, new CommandsConfiguration()
                 {
@@ -193,7 +221,7 @@ namespace Wabbit
 
                 DiscordClient client = builder.Build();
 
-                await client.ConnectAsync(status: DiscordUserStatus.Online);
+                await client.ConnectAsync();
 
                 // Load tournament state using the state service
                 var stateService = client.ServiceProvider.GetRequiredService<ITournamentStateService>();
@@ -202,6 +230,10 @@ namespace Wabbit
                 // Load tournament participants
                 var tournamentManagerService = client.ServiceProvider.GetRequiredService<ITournamentManagerService>();
                 await tournamentManagerService.LoadAllParticipantsAsync(client);
+
+                // Initialize season state service
+                var seasonStateService = client.ServiceProvider.GetRequiredService<ISeasonStateService>();
+                await seasonStateService.Initialize();
 
                 await Task.Delay(-1);
             }

@@ -50,7 +50,7 @@ namespace Wabbit.Services
             List<DiscordMember> players,
             TournamentFormat format,
             DiscordChannel announcementChannel,
-            GameType gameType = GameType.OneVsOne,
+            GameType gameType = GameType.OneVOne,
             Dictionary<DiscordMember, int>? playerSeeds = null)
         {
             _logger.LogInformation($"Creating tournament {name} with {players.Count} players");

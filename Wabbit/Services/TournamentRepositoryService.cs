@@ -195,7 +195,7 @@ namespace Wabbit.Services
                 Name = tournament.Name,
                 Format = tournament.Format,
                 CurrentStage = tournament.CurrentStage,
-                GameType = tournament.GameType,
+                TournamentGameType = tournament.TournamentGameType,
                 MatchesPerPlayer = tournament.MatchesPerPlayer,
                 IsComplete = tournament.IsComplete,
                 CustomProperties = tournament.CustomProperties,

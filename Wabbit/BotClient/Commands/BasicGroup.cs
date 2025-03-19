@@ -14,10 +14,18 @@ using System.Runtime.InteropServices;
 namespace Wabbit.BotClient.Commands
 {
     [Command("General")]
-    public class BasicGroup(IRandomMapExt randomMap, OngoingRounds roundsHolder)
+    public class BasicGroup
     {
-        private readonly IRandomMapExt _randomMap = randomMap;
-        private readonly OngoingRounds _roundsHolder = roundsHolder;
+        private readonly IRandomMapExt _randomMap;
+        private readonly OngoingRounds _roundsHolder;
+        private readonly IMapService _mapService;
+
+        public BasicGroup(IRandomMapExt randomMap, OngoingRounds roundsHolder, IMapService mapService)
+        {
+            _randomMap = randomMap;
+            _roundsHolder = roundsHolder;
+            _mapService = mapService;
+        }
 
         [Command("random_map")]
         [Description("Gives a random map 1v1 map")]
@@ -33,77 +41,21 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            // Create an embed with the map details
-            var embed = new DiscordEmbedBuilder
+            // Use the MapService to create and send the map embed
+            try
             {
-                Title = map.Name
-            };
-
-            // Handle the thumbnail
-            if (map.Thumbnail != null)
-            {
-                if (map.Thumbnail.StartsWith("http"))
-                {
-                    // It's a URL, use it directly
-                    embed.ImageUrl = map.Thumbnail;
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-                }
-                else
-                {
-                    // It's a local file, we need to attach it
-                    string relativePath = map.Thumbnail;
-
-                    // The relativePath from map.Thumbnail already includes the full correct path
-                    // e.g. "Data/images/maps/WA_DeathRow_1v1.jpg"
-                    // Just normalize the path separators
-                    relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
-                                             .Replace('/', Path.DirectorySeparatorChar);
-
-                    // Construct the full path by combining with the base directory
-                    string baseDirectory = Directory.GetCurrentDirectory();
-                    string fullPath = Path.Combine(baseDirectory, relativePath);
-
-                    // Don't use Path.GetFullPath as it might modify the path further
-                    Console.WriteLine($"Attempting to access image at: {fullPath}");
-
-                    if (!File.Exists(fullPath))
-                    {
-                        // Image not found, but we can still show the map details
-                        embed.AddField("Thumbnail", "Image file not found", true);
-                        await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-                        return;
-                    }
-
-                    // Create a webhook builder with the embed
-                    var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
-
-                    // Add the file as an attachment
-                    using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-                    webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
-
-                    // Send the response with the file attachment
-                    await context.EditResponseAsync(webhookBuilder);
-                }
+                await _mapService.SendMapEmbedAsync(context.Channel, map, "Random map from the pool", 0);
+                await context.EditResponseAsync("Map displayed below");
             }
-            else
+            catch
             {
-                // No thumbnail
+                // Fallback if there's an error with the map service
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle(map.Name)
+                    .WithDescription("Random map from the pool");
+
                 await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
             }
-        }
-
-        [Command("regular_1v1")]
-        [Description("Start a 1v1 round")]
-        public async Task OneVsOneStart(CommandContext context, [Description("Select player 1")] DiscordUser Player1, [Description("Select player 2")] DiscordUser Player2)
-        {
-            await context.DeferResponseAsync();
-
-            Regular1v1 round = new() { Player1 = Player1, Player2 = Player2 };
-
-            var btn = new DiscordButtonComponent(DiscordButtonStyle.Primary, "btn_deck", "Deck");
-            var message = await context.EditResponseAsync(new DiscordWebhookBuilder().AddComponents(btn).WithContent($"{Player1.Mention} {Player2.Mention} \nPress the button to submit your deck"));
-            round.Messages.Add(message);
-            _roundsHolder.RegularRounds.Add(round);
         }
 
         [Command("list_maps")]
@@ -248,78 +200,30 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            // Find the map by name (case-insensitive)
-            var map = Maps.MapCollection.FirstOrDefault(m =>
-                string.Equals(m.Name, mapName, StringComparison.OrdinalIgnoreCase));
-
+            // Find the map
+            var map = _mapService.GetMapByName(mapName);
             if (map == null)
             {
                 await context.EditResponseAsync($"Map '{mapName}' not found. Use the list_maps command to see available maps.");
                 return;
             }
 
-            // Create an embed with the map details
-            var embed = new DiscordEmbedBuilder
+            // Use the MapService to create and send the map embed
+            try
             {
-                Title = map.Name,
-                Description = $"ID: {map.Id ?? "Not specified"}"
-            };
-
-            embed.AddField("Size", map.Size ?? "Unknown", true);
-
-            string inRandomPool = map.IsInRandomPool ? "Yes" : "No";
-            embed.AddField("In random pool", inRandomPool, true);
-
-            // Handle the thumbnail
-            if (map.Thumbnail != null)
-            {
-                if (map.Thumbnail.StartsWith("http"))
-                {
-                    // It's a URL, use it directly
-                    embed.ImageUrl = map.Thumbnail;
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-                }
-                else
-                {
-                    // It's a local file, we need to attach it
-                    string relativePath = map.Thumbnail;
-
-                    // The relativePath from map.Thumbnail already includes the full correct path
-                    // e.g. "Data/images/maps/WA_DeathRow_1v1.jpg"
-                    // Just normalize the path separators
-                    relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
-                                             .Replace('/', Path.DirectorySeparatorChar);
-
-                    // Construct the full path by combining with the base directory
-                    string baseDirectory = Directory.GetCurrentDirectory();
-                    string fullPath = Path.Combine(baseDirectory, relativePath);
-
-                    // Don't use Path.GetFullPath as it might modify the path further
-                    Console.WriteLine($"Attempting to access image at: {fullPath}");
-
-                    if (!File.Exists(fullPath))
-                    {
-                        // Image not found, but we can still show the map details
-                        embed.AddField("Thumbnail", "Image file not found", true);
-                        await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-                        return;
-                    }
-
-                    // Create a webhook builder with the embed
-                    var webhookBuilder = new DiscordWebhookBuilder().AddEmbed(embed);
-
-                    // Add the file as an attachment
-                    using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-                    webhookBuilder.AddFile(Path.GetFileName(fullPath), fileStream);
-
-                    // Send the response with the file attachment
-                    await context.EditResponseAsync(webhookBuilder);
-                }
+                string description = $"ID: {map.Id ?? "Not specified"}";
+                await _mapService.SendMapEmbedAsync(context.Channel, map, description, 0);
+                await context.EditResponseAsync("Map displayed below");
             }
-            else
+            catch
             {
-                // No thumbnail
-                embed.AddField("Thumbnail", "None", true);
+                // Fallback if there's an error with the map service
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle(map.Name)
+                    .WithDescription($"ID: {map.Id ?? "Not specified"}")
+                    .AddField("Size", map.Size ?? "Unknown", true)
+                    .AddField("In random pool", map.IsInRandomPool ? "Yes" : "No", true);
+
                 await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
             }
         }

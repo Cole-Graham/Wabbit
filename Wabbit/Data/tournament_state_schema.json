@@ -1,0 +1,212 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Tournament State Schema",
+    "description": "Schema for tournament state persistence",
+    "type": "object",
+    "properties": {
+        "tournaments": {
+            "type": "array",
+            "description": "List of tournaments",
+            "items": {
+                "$ref": "tournaments_schema.json#/properties/tournaments/items"
+            }
+        },
+        "activeRounds": {
+            "type": "array",
+            "description": "List of active rounds",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique identifier for the round"
+                    },
+                    "tournamentId": {
+                        "type": "string",
+                        "description": "ID of the tournament this round belongs to"
+                    },
+                    "matchId": {
+                        "type": "string",
+                        "description": "ID of the match this round belongs to"
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Type of round (1v1 or 2v2)",
+                        "default": "1v1"
+                    },
+                    "length": {
+                        "type": "integer",
+                        "description": "Length of the round (best of X)",
+                        "default": 3
+                    },
+                    "oneVOne": {
+                        "type": "boolean",
+                        "description": "Whether this is a 1v1 round",
+                        "default": true
+                    },
+                    "cycle": {
+                        "type": "integer",
+                        "description": "Current game cycle (0-based index)",
+                        "default": 0
+                    },
+                    "inGame": {
+                        "type": "boolean",
+                        "description": "Whether a game is currently in progress",
+                        "default": false
+                    },
+                    "teams": {
+                        "type": "array",
+                        "description": "Teams participating in this round",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Name of the team"
+                                },
+                                "threadId": {
+                                    "type": "string",
+                                    "description": "Discord thread ID for team communication"
+                                },
+                                "participants": {
+                                    "type": "array",
+                                    "description": "Participants in the team",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "playerId": {
+                                                "type": "string",
+                                                "description": "Discord user ID of the player"
+                                            },
+                                            "playerName": {
+                                                "type": "string",
+                                                "description": "Username of the player"
+                                            },
+                                            "deck": {
+                                                "type": "string",
+                                                "description": "Deck code submitted by the player"
+                                            }
+                                        },
+                                        "required": [
+                                            "playerId",
+                                            "playerName"
+                                        ]
+                                    }
+                                },
+                                "wins": {
+                                    "type": "integer",
+                                    "description": "Number of wins for this team",
+                                    "default": 0
+                                },
+                                "mapBans": {
+                                    "type": "array",
+                                    "description": "Maps banned by this team",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "required": [
+                                "name",
+                                "participants"
+                            ]
+                        }
+                    },
+                    "maps": {
+                        "type": "array",
+                        "description": "Maps selected for this round",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "playedMaps": {
+                        "type": "array",
+                        "description": "Maps that have been played in this round",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "tournamentMapPool": {
+                        "type": "array",
+                        "description": "Maps that are available in the tournament pool",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "currentMapIndex": {
+                        "type": "integer",
+                        "description": "Index of the current map being played",
+                        "default": 0
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Current status of the round",
+                        "enum": [
+                            "Created",
+                            "MapBanning",
+                            "DeckSubmission",
+                            "InProgress",
+                            "Completed"
+                        ],
+                        "default": "Created"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When the round was created"
+                    },
+                    "lastUpdatedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When the round was last updated"
+                    },
+                    "channelId": {
+                        "type": "string",
+                        "description": "Discord channel ID where the round is being played"
+                    },
+                    "gameResults": {
+                        "type": "array",
+                        "description": "Game results for this round",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "map": {
+                                    "type": "string",
+                                    "description": "Map played"
+                                },
+                                "winnerId": {
+                                    "type": "string",
+                                    "description": "ID of the winning player"
+                                },
+                                "completedAt": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "When the game was completed"
+                                }
+                            },
+                            "required": [
+                                "map",
+                                "winnerId",
+                                "completedAt"
+                            ]
+                        }
+                    }
+                },
+                "required": [
+                    "id",
+                    "tournamentId",
+                    "matchId",
+                    "teams",
+                    "status",
+                    "createdAt",
+                    "lastUpdatedAt",
+                    "channelId"
+                ]
+            }
+        }
+    },
+    "required": [
+        "tournaments",
+        "activeRounds"
+    ]
+}

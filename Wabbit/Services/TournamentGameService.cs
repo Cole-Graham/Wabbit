@@ -265,47 +265,6 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Gets available maps for the next game in a match
-        /// </summary>
-        /// <param name="round">The current round</param>
-        /// <returns>List of available map names</returns>
-        public List<string> GetAvailableMapsForNextGame(Round round)
-        {
-            if (round == null)
-            {
-                _logger.LogWarning("Cannot get available maps: round is null");
-                return new List<string>();
-            }
-
-            try
-            {
-                _logger.LogInformation($"Getting available maps for next game in {round.Name}");
-
-                // Get the initial map pool based on game type (1v1 or team)
-                var initialMapPool = _mapService.GetTournamentMapPool(round.OneVOne);
-
-                // Get all banned maps from both teams
-                var bannedMaps = round.Teams
-                    .SelectMany(t => t.MapBans ?? new List<string>())
-                    .ToList();
-
-                // Get maps that have already been played in this round
-                var playedMaps = round.Maps ?? new List<string>();
-
-                // Remove banned and played maps from the pool
-                return initialMapPool
-                    .Except(bannedMaps)
-                    .Except(playedMaps)
-                    .ToList();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting available maps");
-                return new List<string>();
-            }
-        }
-
-        /// <summary>
         /// Gets a random map for the next game, considering banned and played maps
         /// </summary>
         /// <param name="round">The current round</param>
@@ -318,29 +277,8 @@ namespace Wabbit.Services
                 return null;
             }
 
-            try
-            {
-                var availableMaps = GetAvailableMapsForNextGame(round);
-
-                if (availableMaps.Count == 0)
-                {
-                    _logger.LogWarning("No maps available for random selection");
-                    return null;
-                }
-
-                // Select a random map
-                var random = new Random();
-                int index = random.Next(availableMaps.Count);
-                string selectedMap = availableMaps[index];
-
-                _logger.LogInformation($"Randomly selected map: {selectedMap}");
-                return selectedMap;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting random map for next game");
-                return null;
-            }
+            // Delegate to the TournamentMapService
+            return _mapService.GetRandomMapForNextGame(round);
         }
 
         public async Task RecordGameResultAsync(Round round, string winnerId, int gameNumber, DiscordClient client)

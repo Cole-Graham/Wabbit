@@ -4,12 +4,6 @@ using System.Collections.Generic;
 
 namespace Wabbit.Models
 {
-    public enum GameType
-    {
-        OneVsOne,
-        TwoVsTwo
-    }
-
     public class TournamentSignup
     {
         public string Name { get; set; } = string.Empty;
@@ -27,7 +21,7 @@ namespace Wabbit.Models
         public DiscordMessage? SignupListMessage { get; set; }
 
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
-        public GameType Type { get; set; } = GameType.OneVsOne;
+        public TournamentGameType SignupGameType { get; set; } = TournamentGameType.OneVOne;
         public DateTime? ScheduledStartTime { get; set; }
 
         [System.Text.Json.Serialization.JsonIgnore]

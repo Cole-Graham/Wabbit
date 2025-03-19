@@ -1,0 +1,420 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Tournaments Schema",
+    "description": "Schema for tournament definitions",
+    "type": "object",
+    "properties": {
+        "tournaments": {
+            "type": "array",
+            "description": "List of tournaments",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique name of the tournament"
+                    },
+                    "groups": {
+                        "type": "array",
+                        "description": "Tournament groups for group stage",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Name of the group"
+                                },
+                                "participants": {
+                                    "type": "array",
+                                    "description": "Participants in this group",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "player": {
+                                                "type": "object",
+                                                "description": "Player object (serialized from DiscordMember)",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "string",
+                                                        "description": "Discord ID of the player"
+                                                    },
+                                                    "username": {
+                                                        "type": "string",
+                                                        "description": "Username of the player"
+                                                    }
+                                                }
+                                            },
+                                            "wins": {
+                                                "type": "integer",
+                                                "description": "Number of wins"
+                                            },
+                                            "draws": {
+                                                "type": "integer",
+                                                "description": "Number of draws"
+                                            },
+                                            "losses": {
+                                                "type": "integer",
+                                                "description": "Number of losses"
+                                            },
+                                            "seed": {
+                                                "type": "integer",
+                                                "description": "Seed of the player (0 = unseeded)"
+                                            },
+                                            "gamesWon": {
+                                                "type": "integer",
+                                                "description": "Number of games won (for tiebreakers)"
+                                            },
+                                            "gamesLost": {
+                                                "type": "integer",
+                                                "description": "Number of games lost (for tiebreakers)"
+                                            },
+                                            "advancedToPlayoffs": {
+                                                "type": "boolean",
+                                                "description": "Whether the participant advanced to playoffs"
+                                            },
+                                            "position": {
+                                                "type": "integer",
+                                                "description": "Position in the group standings"
+                                            },
+                                            "qualificationInfo": {
+                                                "type": "string",
+                                                "description": "Information about qualification status"
+                                            }
+                                        }
+                                    }
+                                },
+                                "matches": {
+                                    "type": "array",
+                                    "description": "Matches in this group",
+                                    "items": {
+                                        "$ref": "#/definitions/match"
+                                    }
+                                },
+                                "isComplete": {
+                                    "type": "boolean",
+                                    "description": "Whether the group stage is complete"
+                                }
+                            }
+                        }
+                    },
+                    "playoffMatches": {
+                        "type": "array",
+                        "description": "Playoff matches",
+                        "items": {
+                            "$ref": "#/definitions/match"
+                        }
+                    },
+                    "currentStage": {
+                        "type": "string",
+                        "description": "Current stage of the tournament",
+                        "enum": [
+                            "SignupOpen",
+                            "Groups",
+                            "Playoffs",
+                            "Complete"
+                        ]
+                    },
+                    "defaultMatchLength": {
+                        "type": "integer",
+                        "description": "Default match length in minutes",
+                        "default": 10
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Tournament format",
+                        "enum": [
+                            "GroupStageWithPlayoffs",
+                            "SingleElimination",
+                            "DoubleElimination",
+                            "RoundRobin"
+                        ]
+                    },
+                    "tournamentGameType": {
+                        "type": "string",
+                        "description": "Type of game for this tournament",
+                        "enum": [
+                            "OneVOne",
+                            "TwoVTwo",
+                            "ThreeVThree",
+                            "FourVFour"
+                        ]
+                    },
+                    "matchesPerPlayer": {
+                        "type": "integer",
+                        "description": "Number of matches per player (0 for round robin)",
+                        "default": 0
+                    },
+                    "isComplete": {
+                        "type": "boolean",
+                        "description": "Whether the tournament is complete"
+                    },
+                    "settings": {
+                        "type": "object",
+                        "description": "Tournament settings",
+                        "properties": {
+                            "minPlayers": {
+                                "type": "integer",
+                                "description": "Minimum players required for tournament",
+                                "default": 7
+                            },
+                            "maxPlayers": {
+                                "type": "integer",
+                                "description": "Maximum players allowed in tournament",
+                                "default": 32
+                            },
+                            "includeThirdPlaceMatch": {
+                                "type": "boolean",
+                                "description": "Whether to include a third place match",
+                                "default": false
+                            },
+                            "bestOfFinals": {
+                                "type": "integer",
+                                "description": "Best-of setting for finals",
+                                "default": 3
+                            },
+                            "bestOfSemifinals": {
+                                "type": "integer",
+                                "description": "Best-of setting for semifinals",
+                                "default": 3
+                            },
+                            "bestOfQuarterfinals": {
+                                "type": "integer",
+                                "description": "Best-of setting for quarterfinals",
+                                "default": 3
+                            },
+                            "bestOfGroupStage": {
+                                "type": "integer",
+                                "description": "Best-of setting for group stage",
+                                "default": 1
+                            }
+                        }
+                    },
+                    "relatedMessages": {
+                        "type": "array",
+                        "description": "Related Discord messages",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "channelId": {
+                                    "type": "string",
+                                    "description": "Discord channel ID"
+                                },
+                                "messageId": {
+                                    "type": "string",
+                                    "description": "Discord message ID"
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "description": "Type of message"
+                                }
+                            }
+                        }
+                    },
+                    "customProperties": {
+                        "type": "object",
+                        "description": "Custom properties for the tournament"
+                    },
+                    "signedUpPlayers": {
+                        "type": "array",
+                        "description": "List of signed up players",
+                        "items": {
+                            "type": "object",
+                            "description": "Player info",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Discord ID of the player"
+                                },
+                                "username": {
+                                    "type": "string",
+                                    "description": "Username of the player"
+                                }
+                            }
+                        }
+                    },
+                    "winner": {
+                        "type": "object",
+                        "description": "Tournament winner",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "Discord ID of the winner"
+                            },
+                            "username": {
+                                "type": "string",
+                                "description": "Username of the winner"
+                            }
+                        }
+                    }
+                },
+                "required": [
+                    "name",
+                    "currentStage",
+                    "format",
+                    "tournamentGameType"
+                ]
+            }
+        }
+    },
+    "definitions": {
+        "match": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Unique ID of the match"
+                },
+                "tournamentId": {
+                    "type": "string",
+                    "description": "ID of the tournament this match belongs to"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Name of the match"
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Type of match",
+                    "enum": [
+                        "GroupStage",
+                        "GroupStageTiebreaker",
+                        "RoundOf16",
+                        "Quarterfinal",
+                        "Semifinal",
+                        "Final",
+                        "PlayoffThirdPlace"
+                    ]
+                },
+                "participants": {
+                    "type": "array",
+                    "description": "Participants in the match",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "player": {
+                                "type": "object",
+                                "description": "Player object",
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "description": "Discord ID of the player"
+                                    },
+                                    "username": {
+                                        "type": "string",
+                                        "description": "Username of the player"
+                                    }
+                                }
+                            },
+                            "sourceGroupPosition": {
+                                "type": "integer",
+                                "description": "Position in source group"
+                            },
+                            "score": {
+                                "type": "integer",
+                                "description": "Score in this match"
+                            },
+                            "teamIdentifier": {
+                                "type": "string",
+                                "description": "Team identifier for this participant"
+                            }
+                        }
+                    }
+                },
+                "result": {
+                    "type": "object",
+                    "description": "Result of the match",
+                    "properties": {
+                        "winner": {
+                            "type": "object",
+                            "description": "Winner of the match",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Discord ID of the winner"
+                                },
+                                "username": {
+                                    "type": "string",
+                                    "description": "Username of the winner"
+                                }
+                            }
+                        },
+                        "winnerScore": {
+                            "type": "integer",
+                            "description": "Score of the winner"
+                        },
+                        "loserScore": {
+                            "type": "integer",
+                            "description": "Score of the loser"
+                        },
+                        "mapResults": {
+                            "type": "array",
+                            "description": "Results for each map played",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "completedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When the match was completed"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Status of the match",
+                            "enum": [
+                                "Pending",
+                                "InProgress",
+                                "Completed",
+                                "Cancelled"
+                            ]
+                        },
+                        "resultType": {
+                            "type": "string",
+                            "description": "Type of result",
+                            "enum": [
+                                "Normal",
+                                "Forfeit",
+                                "Disqualification",
+                                "Tiebreaker",
+                                "Default"
+                            ]
+                        },
+                        "deckCodes": {
+                            "type": "object",
+                            "description": "Deck codes used in the match",
+                            "additionalProperties": {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                },
+                "bestOf": {
+                    "type": "integer",
+                    "description": "Best-of setting for this match",
+                    "default": 3
+                },
+                "displayPosition": {
+                    "type": "string",
+                    "description": "Display position for bracket visualization"
+                },
+                "isTiebreakerMatch": {
+                    "type": "boolean",
+                    "description": "Whether this is a tiebreaker match"
+                }
+            },
+            "required": [
+                "id",
+                "tournamentId",
+                "name",
+                "type",
+                "participants"
+            ]
+        }
+    },
+    "required": [
+        "tournaments"
+    ]
+}

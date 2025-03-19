@@ -20,7 +20,7 @@ namespace Wabbit.Services.Interfaces
             List<DiscordMember> players,
             TournamentFormat format,
             DiscordChannel announcementChannel,
-            GameType gameType = GameType.OneVsOne,
+            TournamentGameType gameType = TournamentGameType.OneVOne,
             Dictionary<DiscordMember, int>? playerSeeds = null);
 
         /// <summary>
@@ -61,7 +61,7 @@ namespace Wabbit.Services.Interfaces
             TournamentFormat format,
             DiscordUser creator,
             ulong signupChannelId,
-            GameType gameType = GameType.OneVsOne,
+            GameType gameType = GameType.OneVOne,
             DateTime? scheduledStartTime = null);
 
         /// <summary>

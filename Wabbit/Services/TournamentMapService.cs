@@ -8,6 +8,7 @@ using Wabbit.Models;
 using Wabbit.Data;
 using Wabbit.Services.Interfaces;
 using Wabbit.Misc;
+using Wabbit.Services.ServiceHelpers;
 
 namespace Wabbit.Services
 {
@@ -17,7 +18,8 @@ namespace Wabbit.Services
     public class TournamentMapService : ITournamentMapService
     {
         private readonly ILogger<TournamentMapService> _logger;
-        private readonly Random _random;
+        private readonly IRandomProvider _randomProvider;
+        private readonly IMapService _mapService;
 
         // Minimum number of maps required for a valid tournament
         private const int MinimumRequiredMaps = 5;
@@ -28,10 +30,13 @@ namespace Wabbit.Services
         /// Constructor
         /// </summary>
         public TournamentMapService(
-            ILogger<TournamentMapService> logger)
+            ILogger<TournamentMapService> logger,
+            IRandomProvider randomProvider,
+            IMapService mapService)
         {
             _logger = logger;
-            _random = new Random();
+            _randomProvider = randomProvider;
+            _mapService = mapService;
         }
 
         /// <summary>
@@ -92,7 +97,7 @@ namespace Wabbit.Services
                     return "Default Map";
                 }
 
-                int randomIndex = _random.Next(mapPool.Count);
+                int randomIndex = _randomProvider.Instance.Next(mapPool.Count);
                 return mapPool[randomIndex];
             }
             catch (Exception ex)
@@ -130,7 +135,7 @@ namespace Wabbit.Services
                 }
 
                 // Shuffle the map pool and take the requested number of maps
-                var shuffledMaps = mapPool.OrderBy(_ => _random.Next()).Take(count).ToList();
+                var shuffledMaps = mapPool.OrderBy(_ => _randomProvider.Instance.Next()).Take(count).ToList();
                 return shuffledMaps;
             }
             catch (Exception ex)
@@ -267,7 +272,7 @@ namespace Wabbit.Services
                 }
 
                 // Shuffle and take required number of maps
-                var selectedMaps = availableMaps.OrderBy(_ => _random.Next()).Take(matchLength).ToList();
+                var selectedMaps = availableMaps.OrderBy(_ => _randomProvider.Instance.Next()).Take(matchLength).ToList();
                 _logger.LogInformation($"Generated map list with {selectedMaps.Count} maps");
                 return selectedMaps;
             }
@@ -444,22 +449,64 @@ namespace Wabbit.Services
 
         public (Map? map, DiscordEmbedBuilder embed) GetRandomMapWithVisualization()
         {
-            var map = Maps.MapCollection?.OrderBy(_ => _random.Next()).FirstOrDefault();
-            var embed = new DiscordEmbedBuilder()
-                .WithTitle(map?.Name ?? "Default Map")
+            var map = Maps.MapCollection?.OrderBy(_ => _randomProvider.Instance.Next()).FirstOrDefault();
+            if (map != null)
+            {
+                return (map, _mapService.CreateMapEmbed(map, "Random map selection"));
+            }
+
+            var fallbackEmbed = new DiscordEmbedBuilder()
+                .WithTitle("Default Map")
                 .WithDescription("Random map selection");
-            return (map, embed);
+
+            return (null, fallbackEmbed);
         }
 
         public Map? GetMapByName(string mapName)
         {
-            return Maps.MapCollection?.FirstOrDefault(m => m.Name == mapName);
+            return _mapService.GetMapByName(mapName);
         }
 
         public Task<(string? url, byte[]? data)> GetMapThumbnailAsync(string mapName)
         {
-            // TODO: Implement thumbnail retrieval
-            return Task.FromResult<(string? url, byte[]? data)>((null, null));
+            return _mapService.GetMapThumbnailAsync(mapName);
+        }
+
+        /// <summary>
+        /// Gets a random map for the next game, considering banned and played maps
+        /// </summary>
+        /// <param name="round">The current round</param>
+        /// <returns>A random map name, or null if no maps are available</returns>
+        public string? GetRandomMapForNextGame(Round round)
+        {
+            if (round == null)
+            {
+                _logger.LogWarning("Cannot get random map: round is null");
+                return null;
+            }
+
+            try
+            {
+                var availableMaps = GetAvailableMapsForNextGame(round);
+
+                if (availableMaps.Count == 0)
+                {
+                    _logger.LogWarning("No maps available for random selection");
+                    return null;
+                }
+
+                // Select a random map
+                int index = _randomProvider.Instance.Next(availableMaps.Count);
+                string selectedMap = availableMaps[index];
+
+                _logger.LogInformation($"Randomly selected map: {selectedMap}");
+                return selectedMap;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting random map for next game");
+                return null;
+            }
         }
     }
 }

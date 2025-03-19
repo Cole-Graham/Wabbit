@@ -63,7 +63,7 @@ namespace Wabbit.Services
             List<DiscordMember> players,
             TournamentFormat format,
             DiscordChannel announcementChannel,
-            GameType gameType = GameType.OneVsOne,
+            TournamentGameType gameType = TournamentGameType.OneVOne,
             Dictionary<DiscordMember, int>? playerSeeds = null)
         {
             // Create tournament with basic properties
@@ -71,7 +71,7 @@ namespace Wabbit.Services
             {
                 Name = name,
                 Format = format,
-                GameType = gameType,
+                TournamentGameType = gameType,
                 AnnouncementChannel = announcementChannel
             };
 
@@ -193,10 +193,12 @@ namespace Wabbit.Services
             TournamentFormat format,
             DiscordUser creator,
             ulong signupChannelId,
-            GameType gameType = GameType.OneVsOne,
+            GameType gameType = GameType.OneVOne,
             DateTime? scheduledStartTime = null)
         {
-            return _signupService.CreateSignup(name, format, creator, signupChannelId, gameType, scheduledStartTime);
+            // Convert GameType to TournamentGameType
+            var tournamentGameType = (TournamentGameType)(int)gameType;
+            return _signupService.CreateSignup(name, format, creator, signupChannelId, tournamentGameType, scheduledStartTime);
         }
 
         /// <summary>
@@ -362,7 +364,7 @@ namespace Wabbit.Services
                 int bestOf = match.Group != null ? 1 : 3; // Bo1 for group stage, Bo3 for playoffs
 
                 // Check what game type we're dealing with
-                if (tournament.GameType == GameType.OneVsOne && match.TeamA.Count == 1 && match.TeamB.Count == 1)
+                if (tournament.TournamentGameType == TournamentGameType.OneVOne && match.TeamA.Count == 1 && match.TeamB.Count == 1)
                 {
                     // Find if there's an existing match object for this pair in the group
                     Tournament.Match? existingMatch = null;
@@ -422,21 +424,21 @@ namespace Wabbit.Services
                 return pendingMatches;
             }
 
-            _logger.LogInformation($"Generating matches for tournament {tournament.Name} with game type {tournament.GameType}");
+            _logger.LogInformation($"Generating matches for tournament {tournament.Name} with game type {tournament.TournamentGameType}");
 
             // Handle different game types
-            switch (tournament.GameType)
+            switch (tournament.TournamentGameType)
             {
-                case GameType.OneVsOne:
+                case TournamentGameType.OneVOne:
                     _logger.LogInformation("Using 1v1 match generation");
                     return Generate1v1Matches(tournament);
 
-                case GameType.TwoVsTwo:
+                case TournamentGameType.TwoVTwo:
                     _logger.LogInformation("Using 2v2 match generation");
                     return Generate2v2Matches(tournament);
 
                 default:
-                    _logger.LogWarning($"Unrecognized game type: {tournament.GameType}, falling back to 1v1 matches");
+                    _logger.LogWarning($"Unrecognized game type: {tournament.TournamentGameType}, falling back to 1v1 matches");
                     return Generate1v1Matches(tournament);
             }
         }
@@ -487,9 +489,9 @@ namespace Wabbit.Services
                 // Debug participant types
                 foreach (var participant in group.Participants)
                 {
-                    var teamType = participant.Player?.GetType().Name ?? "null";
+                    var teamGameType = participant.Player?.GetType().Name ?? "null";
                     var isDiscordMember = participant.Player is DiscordMember;
-                    _logger.LogInformation($"Participant Player: Type={teamType}, IsDiscordMember={isDiscordMember}, DisplayName={participant.Player?.ToString() ?? "null"}");
+                    _logger.LogInformation($"Participant Player: Type={teamGameType}, IsDiscordMember={isDiscordMember}, DisplayName={participant.Player?.ToString() ?? "null"}");
                 }
 
                 // Create matches for each team pair in this group
@@ -711,6 +713,36 @@ namespace Wabbit.Services
             {
                 _logger.LogError(ex, $"Error handling tournament progression for {tournament.Name}");
             }
+        }
+
+        /// <summary>
+        /// Creates a standard tournament with default settings
+        /// </summary>
+        public async Task<Tournament> CreateStandardTournamentAsync(
+            string name,
+            TournamentFormat format,
+            List<DiscordMember> participants,
+            DiscordChannel announcementChannel,
+            TournamentGameType gameType = TournamentGameType.OneVOne,
+            Dictionary<DiscordMember, int>? playerSeeds = null)
+        {
+            // Create tournament with basic properties
+            var tournament = new Tournament
+            {
+                Name = name,
+                Format = format,
+                TournamentGameType = gameType,
+                AnnouncementChannel = announcementChannel
+            };
+
+            // Set up groups based on format and player count
+            _groupService.CreateGroups(tournament, participants, playerSeeds);
+
+            // Add tournament to repository
+            _repositoryService.AddTournament(tournament);
+            await _repositoryService.SaveTournamentsAsync();
+
+            return tournament;
         }
     }
 }

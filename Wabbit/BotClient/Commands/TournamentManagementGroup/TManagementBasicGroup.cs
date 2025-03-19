@@ -62,7 +62,7 @@ namespace Wabbit.BotClient.Commands
             {
                 Name = signup.Name,
                 Format = signup.Format,
-                GameType = signup.Type,
+                TournamentGameType = (TournamentGameType)(int)signup.SignupGameType,
                 CurrentStage = TournamentStage.Groups,
                 AnnouncementChannel = channel,
                 Groups = new List<Tournament.Group>()  // Initialize Groups
@@ -556,7 +556,7 @@ namespace Wabbit.BotClient.Commands
             await _tournamentGameService.HandleGameResultAsync(round, thread, winnerId, client);
         }
 
-        private async Task StartGroupStageMatches(Tournament tournament, DiscordClient client, GameType gameType)
+        private async Task StartGroupStageMatches(Tournament tournament, DiscordClient client, TournamentGameType gameType)
         {
             _logger.LogInformation($"Starting group stage for tournament {tournament.Name}");
             // First check that we have at least one group

@@ -1,0 +1,156 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Tournament Signups Schema",
+    "description": "Schema for tournament signups",
+    "type": "object",
+    "properties": {
+        "signups": {
+            "type": "array",
+            "description": "List of tournament signups",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the tournament"
+                    },
+                    "isOpen": {
+                        "type": "boolean",
+                        "description": "Whether signups are still open",
+                        "default": true
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When the signup was created"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Tournament format",
+                        "enum": [
+                            "GroupStageWithPlayoffs",
+                            "SingleElimination",
+                            "DoubleElimination",
+                            "RoundRobin"
+                        ]
+                    },
+                    "signupGameType": {
+                        "type": "string",
+                        "description": "Type of game for this tournament",
+                        "enum": [
+                            "OneVOne",
+                            "TwoVTwo",
+                            "ThreeVThree",
+                            "FourVFour"
+                        ]
+                    },
+                    "scheduledStartTime": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time",
+                        "description": "When the tournament is scheduled to start (if set)"
+                    },
+                    "creatorId": {
+                        "type": "string",
+                        "description": "Discord ID of the user who created this signup"
+                    },
+                    "creatorUsername": {
+                        "type": "string",
+                        "description": "Username of the user who created this signup"
+                    },
+                    "signupChannelId": {
+                        "type": "string",
+                        "description": "Discord channel ID where the signup was posted"
+                    },
+                    "messageId": {
+                        "type": "string",
+                        "description": "Discord message ID of the signup message"
+                    },
+                    "relatedMessages": {
+                        "type": "array",
+                        "description": "Related Discord messages",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "channelId": {
+                                    "type": "string",
+                                    "description": "Discord channel ID"
+                                },
+                                "messageId": {
+                                    "type": "string",
+                                    "description": "Discord message ID"
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "description": "Type of message",
+                                    "default": "Announcement"
+                                }
+                            },
+                            "required": [
+                                "channelId",
+                                "messageId"
+                            ]
+                        }
+                    },
+                    "participantInfo": {
+                        "type": "array",
+                        "description": "Information about participants",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Discord ID of the participant"
+                                },
+                                "username": {
+                                    "type": "string",
+                                    "description": "Username of the participant"
+                                }
+                            },
+                            "required": [
+                                "id",
+                                "username"
+                            ]
+                        }
+                    },
+                    "seedInfo": {
+                        "type": "array",
+                        "description": "Seeding information for participants",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Discord ID of the participant"
+                                },
+                                "seed": {
+                                    "type": "integer",
+                                    "description": "Seed value (0 = unseeded, 1 = first seed, etc.)"
+                                }
+                            },
+                            "required": [
+                                "id",
+                                "seed"
+                            ]
+                        }
+                    }
+                },
+                "required": [
+                    "name",
+                    "isOpen",
+                    "createdAt",
+                    "format",
+                    "signupGameType",
+                    "creatorId",
+                    "signupChannelId",
+                    "messageId"
+                ]
+            }
+        }
+    },
+    "required": [
+        "signups"
+    ]
+}

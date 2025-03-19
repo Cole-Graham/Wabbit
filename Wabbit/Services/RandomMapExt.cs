@@ -5,85 +5,111 @@ using System.IO;
 using Wabbit.Models;
 using System.Linq;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
 
 namespace Wabbit.Services
 {
-    public class RandomMapExt(IRandomProvider random) : IRandomMapExt
+    /// <summary>
+    /// Implementation of IRandomMapExt for casual map operations
+    /// </summary>
+    public class RandomMapExt : IRandomMapExt
     {
-        private readonly Random _random = random.Instance;
+        private readonly IRandomProvider _randomProvider;
+        private readonly IMapService _mapService;
+        private readonly ILogger<RandomMapExt> _logger;
 
+        /// <summary>
+        /// Constructor with dependency injection
+        /// </summary>
+        public RandomMapExt(
+            IRandomProvider randomProvider,
+            IMapService mapService,
+            ILogger<RandomMapExt> logger)
+        {
+            _randomProvider = randomProvider;
+            _mapService = mapService;
+            _logger = logger;
+        }
+
+        /// <inheritdoc />
         public Map? GetRandomMap()
         {
-            var maps = Maps.MapCollection?.Where(m => m.IsInRandomPool == true).ToList();
-            if (maps is null || maps.Count == 0)
+            try
             {
-                Console.WriteLine("No maps found in the random pool");
+                var maps = Maps.MapCollection?.Where(m => m.IsInRandomPool).ToList();
+                if (maps is null || maps.Count == 0)
+                {
+                    _logger.LogWarning("No maps found in the random pool");
+                    return null;
+                }
+
+                int mIndex = _randomProvider.Instance.Next(maps.Count);
+                return maps.ElementAt(mIndex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting random map for casual play");
                 return null;
             }
-            int mIndex = _random.Next(maps.Count);
-            return maps.ElementAt(mIndex);
         }
 
+        /// <inheritdoc />
         public DiscordEmbedBuilder GenerateRandomMap()
         {
-            var map = GetRandomMap();
-            if (map == null)
+            try
             {
-                return new DiscordEmbedBuilder().WithTitle("No maps found in the random pool");
-            }
-
-            var embed = new DiscordEmbedBuilder
-            {
-                Title = map.Name,
-            };
-            if (map.Thumbnail is not null)
-            {
-                // Check if the thumbnail is a URL or a local file path
-                if (map.Thumbnail.StartsWith("http"))
+                var map = GetRandomMap();
+                if (map == null)
                 {
-                    // It's a URL, use it directly
-                    embed.ImageUrl = map.Thumbnail;
+                    _logger.LogWarning("Failed to get a random map from the pool");
+                    return new DiscordEmbedBuilder().WithTitle("No maps found in the random pool");
                 }
-                else
-                {
-                    // For local files, ensure we're using a relative path
-                    // We'll store the path and handle the file attachment when sending the message
-                    string relativePath = map.Thumbnail;
 
-                    // Normalize the path to ensure it uses the correct directory separators
-                    relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
-                                             .Replace('/', Path.DirectorySeparatorChar);
-
-                    // Store the relative path in a footer to be used when sending the message
-                    embed.Footer = new DiscordEmbedBuilder.EmbedFooter
-                    {
-                        Text = $"LOCAL_THUMBNAIL:{relativePath}"
-                    };
-
-                    // Log for debugging
-                    Console.WriteLine($"Using relative path for image: {relativePath}");
-                }
+                // Use the common MapService to create the embed
+                return _mapService.CreateMapEmbed(map, "Random map from the casual pool");
             }
-
-            return embed;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating random map embed");
+                return new DiscordEmbedBuilder().WithTitle("Error").WithDescription("An error occurred while generating a random map");
+            }
         }
 
+        /// <inheritdoc />
         public List<string> GetRandomMaps(bool oneVOne, int count)
         {
-            string mapSize = oneVOne ? "1v1" : "2v2";
-            var maps = Maps.MapCollection?
-                .Where(m => m.Size == mapSize && m.IsInTournamentPool)
-                .Select(m => m.Name)
-                .ToList();
-
-            if (maps == null || maps.Count == 0)
+            try
             {
-                Console.WriteLine($"No {mapSize} maps found in the tournament pool");
+                string mapSize = oneVOne ? "1v1" : "2v2";
+
+                var maps = Maps.MapCollection?
+                    .Where(m => m.Size == mapSize && m.IsInRandomPool)
+                    .Select(m => m.Name)
+                    .ToList();
+
+                if (maps == null || maps.Count == 0)
+                {
+                    _logger.LogWarning($"No {mapSize} maps found in the random pool");
+                    return new List<string>();
+                }
+
+                // Ensure count is valid
+                if (count <= 0)
+                {
+                    _logger.LogWarning($"Invalid map count requested: {count}. Using 1 instead.");
+                    count = 1;
+                }
+
+                // Return random maps up to the requested count
+                return maps.OrderBy(_ => _randomProvider.Instance.Next())
+                          .Take(Math.Min(count, maps.Count))
+                          .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting random maps for casual play");
                 return new List<string>();
             }
-
-            // Return random maps up to the requested count
-            return maps.OrderBy(_ => _random.Next()).Take(Math.Min(count, maps.Count)).ToList();
         }
     }
 }
