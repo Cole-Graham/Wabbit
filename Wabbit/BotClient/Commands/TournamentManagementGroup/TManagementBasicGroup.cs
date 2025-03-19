@@ -62,7 +62,7 @@ namespace Wabbit.BotClient.Commands
             {
                 Name = signup.Name,
                 Format = signup.Format,
-                TournamentGameType = (TournamentGameType)(int)signup.SignupGameType,
+                GameType = signup.GameType.ToTournamentGameType(),
                 CurrentStage = TournamentStage.Groups,
                 AnnouncementChannel = channel,
                 Groups = new List<Tournament.Group>()  // Initialize Groups

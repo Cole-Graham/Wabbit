@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using Wabbit.Models;
 
 namespace Wabbit.Models.Rating
 {
     /// <summary>
-    /// Represents a player's ratings across different game types
+    /// Represents an individual player's 1v1 rating.
+    /// Player ratings are only tracked for 1v1 games; team-based formats use Team ratings.
     /// </summary>
     public class PlayerRating
     {
@@ -20,114 +20,57 @@ namespace Wabbit.Models.Rating
         public string Username { get; set; } = string.Empty;
 
         /// <summary>
-        /// Ratings for different game types
+        /// The player's 1v1 rating
         /// </summary>
-        public Dictionary<TeamGameType, int> Ratings { get; set; } = new Dictionary<TeamGameType, int>
-        {
-            { TeamGameType.OneVOne, 1200 },
-            { TeamGameType.TwoVTwo, 1200 },
-            { TeamGameType.ThreeVThree, 1200 },
-            { TeamGameType.FourVFour, 1200 }
-        };
+        public int Rating { get; set; } = 1200;
 
         /// <summary>
-        /// Separate tournament ratings
+        /// The player's tournament 1v1 rating
         /// </summary>
-        public Dictionary<TeamGameType, int> TournamentRatings { get; set; } = new Dictionary<TeamGameType, int>
-        {
-            { TeamGameType.OneVOne, 1200 },
-            { TeamGameType.TwoVTwo, 1200 },
-            { TeamGameType.ThreeVThree, 1200 },
-            { TeamGameType.FourVFour, 1200 }
-        };
+        public int TournamentRating { get; set; } = 1200;
 
         /// <summary>
-        /// Match record for each game type (wins)
+        /// The player's 1v1 win count
         /// </summary>
-        public Dictionary<TeamGameType, int> Wins { get; set; } = new Dictionary<TeamGameType, int>
-        {
-            { TeamGameType.OneVOne, 0 },
-            { TeamGameType.TwoVTwo, 0 },
-            { TeamGameType.ThreeVThree, 0 },
-            { TeamGameType.FourVFour, 0 }
-        };
+        public int Wins { get; set; } = 0;
 
         /// <summary>
-        /// Match record for each game type (losses)
+        /// The player's 1v1 loss count
         /// </summary>
-        public Dictionary<TeamGameType, int> Losses { get; set; } = new Dictionary<TeamGameType, int>
-        {
-            { TeamGameType.OneVOne, 0 },
-            { TeamGameType.TwoVTwo, 0 },
-            { TeamGameType.ThreeVThree, 0 },
-            { TeamGameType.FourVFour, 0 }
-        };
+        public int Losses { get; set; } = 0;
 
         /// <summary>
         /// History of rating changes
         /// </summary>
-        public Dictionary<TeamGameType, List<PlayerRatingChange>> RatingHistory { get; set; } = new Dictionary<TeamGameType, List<PlayerRatingChange>>
-        {
-            { TeamGameType.OneVOne, new List<PlayerRatingChange>() },
-            { TeamGameType.TwoVTwo, new List<PlayerRatingChange>() },
-            { TeamGameType.ThreeVThree, new List<PlayerRatingChange>() },
-            { TeamGameType.FourVFour, new List<PlayerRatingChange>() }
-        };
+        public List<PlayerRatingChange> RatingHistory { get; set; } = new List<PlayerRatingChange>();
 
         /// <summary>
-        /// Gets the player's rating for a specific game type
+        /// Gets the player's win rate percentage
         /// </summary>
-        public int GetRating(TeamGameType TeamGameType)
-        {
-            return Ratings.TryGetValue(TeamGameType, out int rating) ? rating : 1200;
-        }
+        public double WinRate => Wins + Losses > 0 ? (double)Wins / (Wins + Losses) * 100 : 0;
 
         /// <summary>
-        /// Gets the player's tournament rating for a specific game type
+        /// Gets the total number of matches played
         /// </summary>
-        public int GetTournamentRating(TeamGameType TeamGameType)
-        {
-            return TournamentRatings.TryGetValue(TeamGameType, out int rating) ? rating : 1200;
-        }
+        public int MatchesPlayed => Wins + Losses;
 
         /// <summary>
-        /// Updates the player's rating for a specific game type
+        /// Updates the player's 1v1 rating
         /// </summary>
-        public void UpdateRating(TeamGameType TeamGameType, int newRating, bool isWin, string opponentName, string teamName = "")
+        public void UpdateRating(int newRating, bool isWin, string opponentName, string teamName = "")
         {
-            if (!Ratings.TryGetValue(TeamGameType, out int currentRating))
-            {
-                currentRating = 1200;
-                Ratings[TeamGameType] = currentRating;
-            }
-
-            // Calculate rating change
-            int ratingChange = newRating - currentRating;
-
-            // Update rating
-            Ratings[TeamGameType] = newRating;
+            int ratingChange = newRating - Rating;
 
             // Update win/loss record
             if (isWin)
-            {
-                if (!Wins.ContainsKey(TeamGameType))
-                    Wins[TeamGameType] = 0;
-                Wins[TeamGameType]++;
-            }
+                Wins++;
             else
-            {
-                if (!Losses.ContainsKey(TeamGameType))
-                    Losses[TeamGameType] = 0;
-                Losses[TeamGameType]++;
-            }
+                Losses++;
 
             // Record rating history
-            if (!RatingHistory.ContainsKey(TeamGameType))
-                RatingHistory[TeamGameType] = new List<PlayerRatingChange>();
-
-            RatingHistory[TeamGameType].Add(new PlayerRatingChange
+            RatingHistory.Add(new PlayerRatingChange
             {
-                OldRating = currentRating,
+                OldRating = Rating,
                 NewRating = newRating,
                 Change = ratingChange,
                 Opponent = opponentName,
@@ -135,32 +78,22 @@ namespace Wabbit.Models.Rating
                 IsWin = isWin,
                 Date = DateTimeOffset.UtcNow
             });
+
+            // Update the current rating
+            Rating = newRating;
         }
 
         /// <summary>
-        /// Updates the player's tournament rating for a specific game type
+        /// Updates the player's tournament 1v1 rating
         /// </summary>
-        public void UpdateTournamentRating(TeamGameType TeamGameType, int newRating, bool isWin, string opponentName, string tournamentName)
+        public void UpdateTournamentRating(int newRating, bool isWin, string opponentName, string tournamentName)
         {
-            if (!TournamentRatings.TryGetValue(TeamGameType, out int currentRating))
-            {
-                currentRating = 1200;
-                TournamentRatings[TeamGameType] = currentRating;
-            }
-
-            // Calculate rating change
-            int ratingChange = newRating - currentRating;
-
-            // Update rating
-            TournamentRatings[TeamGameType] = newRating;
+            int ratingChange = newRating - TournamentRating;
 
             // Record rating history
-            if (!RatingHistory.ContainsKey(TeamGameType))
-                RatingHistory[TeamGameType] = new List<PlayerRatingChange>();
-
-            RatingHistory[TeamGameType].Add(new PlayerRatingChange
+            RatingHistory.Add(new PlayerRatingChange
             {
-                OldRating = currentRating,
+                OldRating = TournamentRating,
                 NewRating = newRating,
                 Change = ratingChange,
                 Opponent = opponentName,
@@ -169,28 +102,9 @@ namespace Wabbit.Models.Rating
                 IsWin = isWin,
                 Date = DateTimeOffset.UtcNow
             });
-        }
 
-        /// <summary>
-        /// Gets the player's win rate for a specific game type
-        /// </summary>
-        public double GetWinRate(TeamGameType TeamGameType)
-        {
-            int wins = Wins.TryGetValue(TeamGameType, out int w) ? w : 0;
-            int losses = Losses.TryGetValue(TeamGameType, out int l) ? l : 0;
-
-            return wins + losses > 0 ? (double)wins / (wins + losses) * 100 : 0;
-        }
-
-        /// <summary>
-        /// Gets the total matches played for a specific game type
-        /// </summary>
-        public int GetMatchesPlayed(TeamGameType TeamGameType)
-        {
-            int wins = Wins.TryGetValue(TeamGameType, out int w) ? w : 0;
-            int losses = Losses.TryGetValue(TeamGameType, out int l) ? l : 0;
-
-            return wins + losses;
+            // Update the tournament rating
+            TournamentRating = newRating;
         }
 
         /// <summary>
@@ -198,10 +112,7 @@ namespace Wabbit.Models.Rating
         /// </summary>
         public void ResetRatings()
         {
-            foreach (TeamGameType type in Enum.GetValues(typeof(TeamGameType)))
-            {
-                Ratings[type] = 1200;
-            }
+            Rating = 1200;
         }
 
         /// <summary>
@@ -209,10 +120,7 @@ namespace Wabbit.Models.Rating
         /// </summary>
         public void ResetTournamentRatings()
         {
-            foreach (TeamGameType type in Enum.GetValues(typeof(TeamGameType)))
-            {
-                TournamentRatings[type] = 1200;
-            }
+            TournamentRating = 1200;
         }
     }
 

@@ -21,7 +21,7 @@ namespace Wabbit.Models
         public DiscordMessage? SignupListMessage { get; set; }
 
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
-        public TournamentGameType SignupGameType { get; set; } = TournamentGameType.OneVOne;
+        public SignupGameType GameType { get; set; } = SignupGameType.OneVOne;
         public DateTime? ScheduledStartTime { get; set; }
 
         [System.Text.Json.Serialization.JsonIgnore]

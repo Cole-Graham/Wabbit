@@ -26,8 +26,13 @@ namespace Wabbit.Services
         private readonly TimeSpan _cacheDuration = TimeSpan.FromMinutes(15); // Cache leaderboards for 15 minutes
 
         /// <summary>
-        /// Initializes a new instance of the LeaderboardService class
+        /// Initialize a new LeaderboardService
         /// </summary>
+        /// <param name="logger">Logger</param>
+        /// <param name="playerRatingRepository">Player rating repository</param>
+        /// <param name="teamRepository">Team repository</param>
+        /// <param name="seasonStateService">Season state service</param>
+        /// <param name="teamStateService">Team state service</param>
         public LeaderboardService(
             ILogger<LeaderboardService> logger,
             IPlayerRatingRepositoryService playerRatingRepository,
@@ -44,108 +49,89 @@ namespace Wabbit.Services
             _cacheExpiration = new Dictionary<string, DateTimeOffset>();
         }
 
-        /// <summary>
-        /// Get player and team rankings for a specific game type and season
-        /// </summary>
+        /// <inheritdoc/>
         public async Task<(List<LeaderboardEntry> Rankings, int TotalPages, int TotalEntries)> GetLeaderboardAsync(
             Wabbit.Models.TeamGameType gameType, string? seasonId = null, int page = 1, int itemsPerPage = 25)
         {
-            // Default to current season if not specified
+            // Validate parameters
+            if (page < 1)
+                page = 1;
+            if (itemsPerPage < 1)
+                itemsPerPage = 25;
+
+            // Get current season if not specified
             if (seasonId == null)
             {
                 var currentSeason = await _seasonStateService.GetCurrentSeasonAsync();
-                seasonId = currentSeason?.SeasonId ?? "current";
+                seasonId = currentSeason?.SeasonId ?? "current"; // Use "current" for live leaderboard
             }
 
-            // Check if we have cached data
-            bool isCached = IsCached(seasonId, gameType);
-            List<LeaderboardEntry> allEntries;
-
-            if (!isCached)
+            // Check cache
+            if (!IsCached(seasonId, gameType))
             {
-                // Generate leaderboard data
-                allEntries = await GenerateLeaderboardDataAsync(gameType, seasonId);
-
-                // Cache the results
-                CacheLeaderboard(seasonId, gameType, allEntries);
-            }
-            else
-            {
-                // Use cached data
-                allEntries = _cachedLeaderboards[seasonId][gameType];
+                // Generate and cache leaderboard data
+                var leaderboardData = await GenerateLeaderboardDataAsync(gameType, seasonId);
+                CacheLeaderboard(seasonId, gameType, leaderboardData);
             }
 
-            // Calculate pagination
-            int totalEntries = allEntries.Count;
-            int totalPages = (int)Math.Ceiling(totalEntries / (double)itemsPerPage);
+            // Get leaderboard data from cache
+            var entries = _cachedLeaderboards[seasonId][gameType];
+            var totalEntries = entries.Count;
+            var totalPages = (int)Math.Ceiling((double)totalEntries / itemsPerPage);
 
-            // Adjust page if it's out of range
-            if (page < 1) page = 1;
-            if (page > totalPages && totalPages > 0) page = totalPages;
-
-            // Get the entries for the requested page
-            var pagedEntries = allEntries
+            // Paginate
+            var paginatedEntries = entries
                 .Skip((page - 1) * itemsPerPage)
                 .Take(itemsPerPage)
                 .ToList();
 
-            return (pagedEntries, totalPages, totalEntries);
+            return (paginatedEntries, totalPages, totalEntries);
         }
 
-        /// <summary>
-        /// Create a leaderboard embed for display
-        /// </summary>
+        /// <inheritdoc/>
         public async Task<(DiscordEmbed LeaderboardEmbed, DiscordButtonComponent[] NavigationButtons, DiscordSelectComponent SeasonSelector)>
             CreateLeaderboardEmbedAsync(Wabbit.Models.TeamGameType gameType, string? seasonId = null, int page = 1, int itemsPerPage = 25)
         {
             // Get leaderboard data
             var (rankings, totalPages, totalEntries) = await GetLeaderboardAsync(gameType, seasonId, page, itemsPerPage);
 
-            // Get season information
+            // Get season info
+            Season? season = null;
             string seasonName = "Current Season";
-            if (seasonId != null && seasonId != "current")
+            bool isCurrentSeason = true;
+
+            if (!string.IsNullOrEmpty(seasonId) && seasonId != "current")
             {
-                var season = await _seasonStateService.GetSeasonByIdAsync(seasonId);
-                seasonName = season?.SeasonName ?? "Unknown Season";
+                season = await _seasonStateService.GetSeasonByIdAsync(seasonId);
+                if (season != null)
+                {
+                    seasonName = season.SeasonName;
+                    isCurrentSeason = season.IsActive;
+                }
             }
 
             // Create embed
-            var embed = new DiscordEmbedBuilder()
+            var embedBuilder = new DiscordEmbedBuilder()
                 .WithTitle($"{GetGameTypeDisplayName(gameType)} Leaderboard - {seasonName}")
-                .WithDescription($"Page {page} of {totalPages} • {totalEntries} entries")
+                .WithDescription($"Showing {Math.Min(rankings.Count, totalEntries)} out of {totalEntries} entries (Page {page}/{totalPages})")
                 .WithColor(DiscordColor.Blurple)
-                .WithFooter($"Last updated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+                .WithFooter($"Last updated: {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC");
 
-            // Add rankings to embed
-            if (rankings.Count == 0)
+            // Add leaderboard entries to embed
+            if (rankings.Any())
             {
-                embed.AddField("No Entries", "There are no rankings to display for this game type.", false);
+                var leaderboardText = "";
+                foreach (var entry in rankings)
+                {
+                    string rankEmoji = GetRankEmoji(entry.Rank);
+                    string teamIndicator = entry.IsTeam ? " [Team]" : "";
+                    leaderboardText += $"{rankEmoji} `{entry.Rank.ToString().PadLeft(2)}` | **{entry.DisplayName}**{teamIndicator} | Rating: **{entry.Rating}** | W/L: **{entry.Wins}/{entry.Losses}** | Win Rate: **{entry.WinRate:0.0}%**\n";
+                }
+                embedBuilder.AddField("Rankings", leaderboardText);
             }
             else
             {
-                var playerSection = new List<string>();
-                var teamSection = new List<string>();
-
-                foreach (var entry in rankings)
-                {
-                    var line = $"{GetRankEmoji(entry.Rank)} **{entry.DisplayName}** • {entry.Rating} RP • " +
-                        $"{entry.Wins}W {entry.Losses}L ({entry.WinRate:0.0}%)";
-
-                    if (entry.IsTeam)
-                        teamSection.Add(line);
-                    else
-                        playerSection.Add(line);
-                }
-
-                if (playerSection.Any())
-                {
-                    embed.AddField("Players", string.Join('\n', playerSection), false);
-                }
-
-                if (teamSection.Any())
-                {
-                    embed.AddField("Teams", string.Join('\n', teamSection), false);
-                }
+                embedBuilder.AddField("Rankings", "No entries found for this leaderboard.");
             }
 
             // Create navigation buttons
@@ -153,292 +139,353 @@ namespace Wabbit.Services
 
             // Create season selector
             var seasons = await _seasonStateService.GetAllSeasonsAsync();
-            var seasonSelector = new DiscordSelectComponent(
-                $"leaderboard_season_{gameType}",
-                "Select Season",
-                seasons.Select(s => new DiscordSelectComponentOption(
+            var seasonOptions = new List<DiscordSelectComponentOption>();
+
+            // Add current season option
+            seasonOptions.Add(new DiscordSelectComponentOption("Current Live Rankings", "current", "View current ratings for all players", isCurrentSeason && (seasonId == null || seasonId == "current")));
+
+            // Add past seasons
+            foreach (var s in seasons.OrderByDescending(s => s.StartDate))
+            {
+                seasonOptions.Add(new DiscordSelectComponentOption(
                     s.SeasonName,
                     s.SeasonId,
-                    "",
-                    s.SeasonId == seasonId)).Append(
-                        new DiscordSelectComponentOption(
-                            "Current Season",
-                            "current",
-                            "",
-                            seasonId == null || seasonId == "current")).ToArray());
+                    s.IsActive ? "Active season" : $"Ended: {s.EndDate:yyyy-MM-dd}",
+                    seasonId == s.SeasonId
+                ));
+            }
 
-            return (embed.Build(), navigationButtons, seasonSelector);
+            var seasonSelector = new DiscordSelectComponent(
+                $"season_selector_{gameType}",
+                "Select Season",
+                seasonOptions
+            );
+
+            return (embedBuilder.Build(), navigationButtons, seasonSelector);
         }
 
-        /// <summary>
-        /// Post a leaderboard to a channel
-        /// </summary>
+        /// <inheritdoc/>
         public async Task<DiscordMessage> PostLeaderboardAsync(DiscordChannel channel, Wabbit.Models.TeamGameType gameType, string? seasonId = null)
         {
-            var (embed, navigationButtons, seasonSelector) = await CreateLeaderboardEmbedAsync(gameType, seasonId);
+            var (embedLeaderboard, navigationButtons, seasonSelector) = await CreateLeaderboardEmbedAsync(gameType, seasonId);
 
             // Create game type buttons
             var gameTypeButtons = CreateGameTypeButtons(gameType);
 
-            // Build the message
+            // Create message builder
             var messageBuilder = new DiscordMessageBuilder()
-                .AddEmbed(embed)
-                .AddComponents(seasonSelector)
+                .AddEmbed(embedLeaderboard)
+                .AddComponents(navigationButtons)
                 .AddComponents(gameTypeButtons)
-                .AddComponents(navigationButtons);
+                .AddComponents(seasonSelector);
 
-            // Send the message
-            return await channel.SendMessageAsync(messageBuilder);
+            // Send message
+            return await messageBuilder.SendAsync(channel);
         }
 
-        /// <summary>
-        /// Update an existing leaderboard message
-        /// </summary>
+        /// <inheritdoc/>
         public async Task<DiscordMessage> UpdateLeaderboardAsync(DiscordMessage message, Wabbit.Models.TeamGameType gameType, string? seasonId = null, int page = 1)
         {
-            var (embed, navigationButtons, seasonSelector) = await CreateLeaderboardEmbedAsync(gameType, seasonId, page);
+            var (embedLeaderboard, navigationButtons, seasonSelector) = await CreateLeaderboardEmbedAsync(gameType, seasonId, page);
 
             // Create game type buttons
             var gameTypeButtons = CreateGameTypeButtons(gameType);
 
-            // Build the message
+            // Create message builder
             var messageBuilder = new DiscordMessageBuilder()
-                .AddEmbed(embed)
-                .AddComponents(seasonSelector)
+                .AddEmbed(embedLeaderboard)
+                .AddComponents(navigationButtons)
                 .AddComponents(gameTypeButtons)
-                .AddComponents(navigationButtons);
+                .AddComponents(seasonSelector);
 
-            // Update the message
-            return await message.ModifyAsync(messageBuilder);
+            // Update message
+            return await messageBuilder.ModifyAsync(message);
         }
 
-        /// <summary>
-        /// Get player ranking for a specific player
-        /// </summary>
+        /// <inheritdoc/>
         public async Task<LeaderboardEntry?> GetPlayerRankingAsync(ulong playerId, Wabbit.Models.TeamGameType gameType, string? seasonId = null)
         {
-            // Get the full leaderboard
+            // Get leaderboard data
             var (rankings, _, _) = await GetLeaderboardAsync(gameType, seasonId);
 
-            // Find the player entry
-            return rankings.FirstOrDefault(e => !e.IsTeam && e.PlayerId == playerId);
+            // Find player ranking
+            return rankings.FirstOrDefault(r => !r.IsTeam && r.PlayerId == playerId);
         }
 
-        /// <summary>
-        /// Get team ranking for a specific team
-        /// </summary>
+        /// <inheritdoc/>
         public async Task<LeaderboardEntry?> GetTeamRankingAsync(string teamId, Wabbit.Models.TeamGameType gameType, string? seasonId = null)
         {
-            // Get the full leaderboard
+            // Get leaderboard data
             var (rankings, _, _) = await GetLeaderboardAsync(gameType, seasonId);
 
-            // Find the team entry
-            return rankings.FirstOrDefault(e => e.IsTeam && e.TeamId == teamId);
+            // Find team ranking
+            return rankings.FirstOrDefault(r => r.IsTeam && r.TeamId == teamId);
         }
 
         /// <summary>
-        /// Generate leaderboard data from player and team ratings
+        /// Generate leaderboard data for a specific game type and season
         /// </summary>
         private async Task<List<LeaderboardEntry>> GenerateLeaderboardDataAsync(Wabbit.Models.TeamGameType gameType, string seasonId)
         {
-            var entries = new List<LeaderboardEntry>();
+            List<LeaderboardEntry> entries = new List<LeaderboardEntry>();
 
-            // Get all player ratings
-            var playerRatings = await _playerRatingRepository.GetAllPlayerRatingsAsync();
-
-            // Add player entries
-            int playerRank = 1;
-            foreach (var player in playerRatings
-                .Where(p => GetPlayerRating(p, gameType) > 0 || (GetPlayerWins(p, gameType) + GetPlayerLosses(p, gameType)) > 0)
-                .OrderByDescending(p => GetPlayerRating(p, gameType)))
+            if (seasonId == "current" || (await _seasonStateService.GetSeasonByIdAsync(seasonId)) == null)
             {
-                entries.Add(new LeaderboardEntry
+                // Current leaderboard - get from player and team repositories
+                var allPlayerRatings = await _playerRatingRepository.GetAllPlayerRatingsAsync();
+                var teams = await _teamRepository.GetTeamsByTypeAsync(gameType);
+
+                // For 1v1, add both player and team entries
+                if (gameType == Wabbit.Models.TeamGameType.OneVOne)
                 {
-                    Rank = playerRank++,
-                    IsTeam = false,
-                    PlayerId = player.PlayerId,
-                    PlayerUsername = player.Username,
-                    Rating = GetPlayerRating(player, gameType),
-                    Wins = GetPlayerWins(player, gameType),
-                    Losses = GetPlayerLosses(player, gameType),
-                    RatingChange = 0 // TODO: Calculate rating change
-                });
+                    // Add players
+                    foreach (var player in allPlayerRatings)
+                    {
+                        // Only add players with a rating
+                        if (player.Rating > 0 && player.Wins + player.Losses > 0)
+                        {
+                            entries.Add(new LeaderboardEntry
+                            {
+                                IsTeam = false,
+                                PlayerId = player.PlayerId,
+                                PlayerUsername = player.Username,
+                                Rating = player.Rating,
+                                Wins = player.Wins,
+                                Losses = player.Losses
+                            });
+                        }
+                    }
+                }
+
+                // Add teams for all game types
+                foreach (var team in teams)
+                {
+                    if (team.GameType == gameType && team.Rating > 0)
+                    {
+                        entries.Add(new LeaderboardEntry
+                        {
+                            IsTeam = true,
+                            TeamId = team.TeamId,
+                            TeamName = team.TeamName,
+                            Rating = team.Rating,
+                            Wins = team.Wins,
+                            Losses = team.Losses
+                        });
+                    }
+                }
+            }
+            else
+            {
+                // Historical season leaderboard - get from season repository
+                var season = await _seasonStateService.GetSeasonByIdAsync(seasonId);
+                if (season != null && season.FinalRankings.ContainsKey(gameType))
+                {
+                    // Convert season rankings to leaderboard entries
+                    foreach (var ranking in season.FinalRankings[gameType])
+                    {
+                        entries.Add(new LeaderboardEntry
+                        {
+                            Rank = ranking.Rank,
+                            IsTeam = ranking.IsTeam,
+                            PlayerId = ranking.IsTeam ? null : ranking.PlayerId,
+                            PlayerUsername = ranking.IsTeam ? null : ranking.PlayerUsername,
+                            TeamId = ranking.IsTeam ? ranking.TeamId : null,
+                            TeamName = ranking.IsTeam ? ranking.TeamName : null,
+                            Rating = ranking.Rating,
+                            Wins = ranking.Wins,
+                            Losses = ranking.Losses
+                        });
+                    }
+                }
             }
 
-            // Add team entries
-            // Get teams of this type
-            var teams = await _teamStateService.GetTopTeamsByRatingAsync(gameType, 100);
-
-            // Add team entries
-            int teamRank = 1;
-            foreach (var team in teams
-                .OrderByDescending(t => t.Rating))
+            // Sort by rating (descending) and assign ranks
+            entries = entries.OrderByDescending(e => e.Rating).ToList();
+            for (int i = 0; i < entries.Count; i++)
             {
-                entries.Add(new LeaderboardEntry
-                {
-                    Rank = teamRank++,
-                    IsTeam = true,
-                    TeamId = team.TeamId,
-                    TeamName = team.TeamName,
-                    Rating = team.Rating,
-                    Wins = team.Wins,
-                    Losses = team.Losses,
-                    RatingChange = 0 // TODO: Calculate rating change
-                });
+                entries[i].Rank = i + 1;
             }
 
-            // Sort all entries by rating
-            return entries.OrderByDescending(e => e.Rating).Select((e, i) => { e.Rank = i + 1; return e; }).ToList();
+            return entries;
         }
 
         /// <summary>
-        /// Get player rating for a specific game type
+        /// Get a player's rating for a specific game type
         /// </summary>
         private int GetPlayerRating(PlayerRating player, Wabbit.Models.TeamGameType gameType)
         {
-            // This assumes PlayerRating has a method to get rating by game type
-            return player.GetRating(gameType);
+            // For 1v1 games, return the direct Rating property
+            if (gameType == Wabbit.Models.TeamGameType.OneVOne)
+                return player.Rating;
+
+            // For other game types, PlayerRating doesn't track those anymore
+            return 0;
         }
 
         /// <summary>
-        /// Get player wins for a specific game type
+        /// Get a player's win count for a specific game type
         /// </summary>
         private int GetPlayerWins(PlayerRating player, Wabbit.Models.TeamGameType gameType)
         {
-            return player.Wins.TryGetValue(gameType, out int wins) ? wins : 0;
+            // For 1v1 games, return the direct Wins property
+            if (gameType == Wabbit.Models.TeamGameType.OneVOne)
+                return player.Wins;
+
+            // For other game types, PlayerRating doesn't track those anymore
+            return 0;
         }
 
         /// <summary>
-        /// Get player losses for a specific game type
+        /// Get a player's loss count for a specific game type
         /// </summary>
         private int GetPlayerLosses(PlayerRating player, Wabbit.Models.TeamGameType gameType)
         {
-            return player.Losses.TryGetValue(gameType, out int losses) ? losses : 0;
+            // For 1v1 games, return the direct Losses property
+            if (gameType == Wabbit.Models.TeamGameType.OneVOne)
+                return player.Losses;
+
+            // For other game types, PlayerRating doesn't track those anymore
+            return 0;
         }
 
         /// <summary>
-        /// Check if leaderboard data is cached and not expired
+        /// Check if a leaderboard is cached and still valid
         /// </summary>
         private bool IsCached(string seasonId, Wabbit.Models.TeamGameType gameType)
         {
-            // Check if we have a cache for this season
-            if (!_cachedLeaderboards.TryGetValue(seasonId, out var typeCache))
+            // Check if we have a cached leaderboard for this season and game type
+            if (!_cachedLeaderboards.ContainsKey(seasonId))
                 return false;
 
-            // Check if we have a cache for this game type
-            if (!typeCache.ContainsKey(gameType))
+            if (!_cachedLeaderboards[seasonId].ContainsKey(gameType))
                 return false;
 
-            // Check if cache has expired
-            if (!_cacheExpiration.TryGetValue(seasonId, out var expiration))
+            // Check if the cache has expired
+            if (!_cacheExpiration.ContainsKey(seasonId) || _cacheExpiration[seasonId] < DateTimeOffset.UtcNow)
                 return false;
 
-            return DateTimeOffset.UtcNow < expiration;
+            return true;
         }
 
         /// <summary>
-        /// Cache leaderboard data
+        /// Cache a leaderboard for quick retrieval
         /// </summary>
         private void CacheLeaderboard(string seasonId, Wabbit.Models.TeamGameType gameType, List<LeaderboardEntry> entries)
         {
             // Ensure we have a dictionary for this season
-            if (!_cachedLeaderboards.TryGetValue(seasonId, out var typeCache))
-            {
-                typeCache = new Dictionary<Wabbit.Models.TeamGameType, List<LeaderboardEntry>>();
-                _cachedLeaderboards[seasonId] = typeCache;
-            }
+            if (!_cachedLeaderboards.ContainsKey(seasonId))
+                _cachedLeaderboards[seasonId] = new Dictionary<Wabbit.Models.TeamGameType, List<LeaderboardEntry>>();
 
-            // Store the entries
-            typeCache[gameType] = entries;
+            // Cache the leaderboard
+            _cachedLeaderboards[seasonId][gameType] = entries;
 
             // Set expiration
             _cacheExpiration[seasonId] = DateTimeOffset.UtcNow.Add(_cacheDuration);
+
+            _logger.LogDebug($"Cached leaderboard for season {seasonId}, game type {gameType} with {entries.Count} entries");
         }
 
         /// <summary>
-        /// Get a user-friendly display name for a game type
+        /// Get a friendly display name for a game type
         /// </summary>
         private string GetGameTypeDisplayName(Wabbit.Models.TeamGameType gameType)
         {
-            return GameTypeHelpers.GetDisplayName((Wabbit.Models.GameType)(int)gameType);
+            return gameType switch
+            {
+                Wabbit.Models.TeamGameType.OneVOne => "1v1",
+                Wabbit.Models.TeamGameType.TwoVTwo => "2v2",
+                Wabbit.Models.TeamGameType.ThreeVThree => "3v3",
+                Wabbit.Models.TeamGameType.FourVFour => "4v4",
+                _ => gameType.ToString()
+            };
         }
 
         /// <summary>
-        /// Get emoji for top 3 ranks
+        /// Get an emoji to display next to a rank
         /// </summary>
         private string GetRankEmoji(int rank)
         {
             return rank switch
             {
-                1 => "🥇 1",
-                2 => "🥈 2",
-                3 => "🥉 3",
-                _ => rank.ToString()
+                1 => "🥇",
+                2 => "🥈",
+                3 => "🥉",
+                _ => "🏅"
             };
         }
 
         /// <summary>
-        /// Create navigation buttons
+        /// Create navigation buttons for the leaderboard
         /// </summary>
         private DiscordButtonComponent[] CreateNavigationButtons(Wabbit.Models.TeamGameType gameType, string? seasonId, int page, int totalPages)
         {
-            // Default to "current" for null season ID
-            string seasonIdParam = seasonId ?? "current";
-
-            // Create navigation buttons
-            var firstPageButton = new DiscordButtonComponent(
+            var buttonPrev = new DiscordButtonComponent(
                 DiscordButtonStyle.Secondary,
-                $"leaderboard_first_{gameType}_{seasonIdParam}",
-                "⏮️",
-                disabled: page <= 1);
+                $"leaderboard_prev_{gameType}_{seasonId}_{page}",
+                "Previous",
+                page <= 1
+            );
 
-            var prevPageButton = new DiscordButtonComponent(
+            var buttonNext = new DiscordButtonComponent(
                 DiscordButtonStyle.Secondary,
-                $"leaderboard_prev_{gameType}_{seasonIdParam}_page{page}",
-                "◀️",
-                disabled: page <= 1);
+                $"leaderboard_next_{gameType}_{seasonId}_{page}",
+                "Next",
+                page >= totalPages
+            );
 
-            var nextPageButton = new DiscordButtonComponent(
+            var buttonFirst = new DiscordButtonComponent(
                 DiscordButtonStyle.Secondary,
-                $"leaderboard_next_{gameType}_{seasonIdParam}_page{page}",
-                "▶️",
-                disabled: page >= totalPages);
+                $"leaderboard_first_{gameType}_{seasonId}_{page}",
+                "First",
+                page <= 1
+            );
 
-            var lastPageButton = new DiscordButtonComponent(
+            var buttonLast = new DiscordButtonComponent(
                 DiscordButtonStyle.Secondary,
-                $"leaderboard_last_{gameType}_{seasonIdParam}",
-                "⏭️",
-                disabled: page >= totalPages);
+                $"leaderboard_last_{gameType}_{seasonId}_{page}",
+                "Last",
+                page >= totalPages
+            );
 
-            return new[] { firstPageButton, prevPageButton, nextPageButton, lastPageButton };
+            var buttonRefresh = new DiscordButtonComponent(
+                DiscordButtonStyle.Primary,
+                $"leaderboard_refresh_{gameType}_{seasonId}_{page}",
+                "Refresh"
+            );
+
+            return new[] { buttonFirst, buttonPrev, buttonRefresh, buttonNext, buttonLast };
         }
 
         /// <summary>
-        /// Create game type buttons
+        /// Create game type selector buttons
         /// </summary>
         private DiscordButtonComponent[] CreateGameTypeButtons(Wabbit.Models.TeamGameType currentGameType)
         {
-            var oneVOneButton = new DiscordButtonComponent(
-                currentGameType == Wabbit.Models.TeamGameType.OneVOne ? DiscordButtonStyle.Primary : DiscordButtonStyle.Secondary,
-                $"leaderboard_gametype_{Wabbit.Models.TeamGameType.OneVOne}",
-                "1v1");
+            var button1v1 = new DiscordButtonComponent(
+                currentGameType == Wabbit.Models.TeamGameType.OneVOne ? DiscordButtonStyle.Success : DiscordButtonStyle.Secondary,
+                $"leaderboard_gametype_OneVOne",
+                "1v1"
+            );
 
-            var twoVTwoButton = new DiscordButtonComponent(
-                currentGameType == Wabbit.Models.TeamGameType.TwoVTwo ? DiscordButtonStyle.Primary : DiscordButtonStyle.Secondary,
-                $"leaderboard_gametype_{Wabbit.Models.TeamGameType.TwoVTwo}",
-                "2v2");
+            var button2v2 = new DiscordButtonComponent(
+                currentGameType == Wabbit.Models.TeamGameType.TwoVTwo ? DiscordButtonStyle.Success : DiscordButtonStyle.Secondary,
+                $"leaderboard_gametype_TwoVTwo",
+                "2v2"
+            );
 
-            var threeVThreeButton = new DiscordButtonComponent(
-                currentGameType == Wabbit.Models.TeamGameType.ThreeVThree ? DiscordButtonStyle.Primary : DiscordButtonStyle.Secondary,
-                $"leaderboard_gametype_{Wabbit.Models.TeamGameType.ThreeVThree}",
-                "3v3");
+            var button3v3 = new DiscordButtonComponent(
+                currentGameType == Wabbit.Models.TeamGameType.ThreeVThree ? DiscordButtonStyle.Success : DiscordButtonStyle.Secondary,
+                $"leaderboard_gametype_ThreeVThree",
+                "3v3"
+            );
 
-            var fourVFourButton = new DiscordButtonComponent(
-                currentGameType == Wabbit.Models.TeamGameType.FourVFour ? DiscordButtonStyle.Primary : DiscordButtonStyle.Secondary,
-                $"leaderboard_gametype_{Wabbit.Models.TeamGameType.FourVFour}",
-                "4v4");
+            var button4v4 = new DiscordButtonComponent(
+                currentGameType == Wabbit.Models.TeamGameType.FourVFour ? DiscordButtonStyle.Success : DiscordButtonStyle.Secondary,
+                $"leaderboard_gametype_FourVFour",
+                "4v4"
+            );
 
-            return new[] { oneVOneButton, twoVTwoButton, threeVThreeButton, fourVFourButton };
+            return new[] { button1v1, button2v2, button3v3, button4v4 };
         }
     }
 }

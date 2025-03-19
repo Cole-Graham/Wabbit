@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Wabbit.Models.Rating
 {
     /// <summary>
-    /// Represents a competitive season for player and team ratings
+    /// Represents a competitive season
     /// </summary>
     public class Season
     {
@@ -14,34 +14,29 @@ namespace Wabbit.Models.Rating
         public string SeasonId { get; set; } = Guid.NewGuid().ToString();
 
         /// <summary>
-        /// Display name for the season
+        /// The name of the season (e.g., "Winter 2023")
         /// </summary>
         public string SeasonName { get; set; } = string.Empty;
 
         /// <summary>
-        /// When the season started
+        /// Optional description for the season
         /// </summary>
-        public DateTimeOffset StartDate { get; set; } = DateTimeOffset.UtcNow;
+        public string Description { get; set; } = string.Empty;
 
         /// <summary>
-        /// When the season ended (null if still active)
+        /// When the season started
+        /// </summary>
+        public DateTimeOffset StartDate { get; set; }
+
+        /// <summary>
+        /// When the season is scheduled to end (if known)
         /// </summary>
         public DateTimeOffset? EndDate { get; set; }
 
         /// <summary>
         /// Whether this is the currently active season
         /// </summary>
-        public bool IsActive { get; set; } = false;
-
-        /// <summary>
-        /// Description of the season (optional)
-        /// </summary>
-        public string Description { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Leaderboard snapshots at the end of the season
-        /// </summary>
-        public Dictionary<TeamGameType, List<SeasonRanking>> FinalRankings { get; set; } = new Dictionary<TeamGameType, List<SeasonRanking>>();
+        public bool IsActive { get; set; } = true;
 
         /// <summary>
         /// Discord user ID of the creator
@@ -49,14 +44,21 @@ namespace Wabbit.Models.Rating
         public ulong CreatorId { get; set; }
 
         /// <summary>
-        /// Username of the creator
+        /// Creator's username (for display)
         /// </summary>
         public string CreatorUsername { get; set; } = string.Empty;
 
         /// <summary>
-        /// Related messaging for the season
+        /// Final rankings for the season across different team types.
+        /// For TeamGameType.OneVOne, these will be individual player rankings.
+        /// For other TeamGameType values, these will be team rankings.
         /// </summary>
-        public List<SeasonMessage> RelatedMessages { get; set; } = [];
+        public Dictionary<TeamGameType, List<SeasonRanking>> FinalRankings { get; set; } = new Dictionary<TeamGameType, List<SeasonRanking>>();
+
+        /// <summary>
+        /// Messages related to this season (announcements, updates, etc.)
+        /// </summary>
+        public List<SeasonMessage> Messages { get; set; } = new List<SeasonMessage>();
 
         /// <summary>
         /// Creates a new season with the given name
@@ -103,80 +105,88 @@ namespace Wabbit.Models.Rating
         }
 
         /// <summary>
-        /// Adds a related message (announcement, leaderboard, etc.)
-        /// </summary>
-        public void AddRelatedMessage(ulong channelId, ulong messageId, string type)
-        {
-            RelatedMessages.Add(new SeasonMessage
-            {
-                ChannelId = channelId,
-                MessageId = messageId,
-                Type = type
-            });
-        }
-
-        /// <summary>
-        /// Gets the duration of the season
-        /// </summary>
-        public TimeSpan GetDuration()
-        {
-            return (EndDate ?? DateTimeOffset.UtcNow) - StartDate;
-        }
-
-        /// <summary>
-        /// Gets a formatted string representing the season's duration
+        /// Gets a formatted string representing the duration of this season
         /// </summary>
         public string GetFormattedDuration()
         {
-            var duration = GetDuration();
+            if (!EndDate.HasValue)
+            {
+                var duration = DateTimeOffset.UtcNow - StartDate;
+                return $"{duration.Days} days (ongoing)";
+            }
 
-            if (duration.TotalDays >= 30)
+            var totalDuration = EndDate.Value - StartDate;
+            return $"{totalDuration.Days} days";
+        }
+
+        /// <summary>
+        /// Adds a new message to the season
+        /// </summary>
+        public void AddMessage(SeasonMessage message)
+        {
+            Messages.Add(message);
+        }
+
+        /// <summary>
+        /// Adds a related message to the season
+        /// </summary>
+        /// <param name="channelId">Channel ID where the message was sent</param>
+        /// <param name="messageId">Message ID</param>
+        /// <param name="messageType">Type of message</param>
+        public void AddRelatedMessage(ulong channelId, ulong messageId, string messageType)
+        {
+            SeasonMessageType type = Enum.TryParse<SeasonMessageType>(messageType, out var parsedType)
+                ? parsedType
+                : SeasonMessageType.Announcement;
+
+            var message = new SeasonMessage
             {
-                int months = (int)(duration.TotalDays / 30);
-                int days = (int)(duration.TotalDays % 30);
-                return $"{months} month{(months != 1 ? "s" : "")} and {days} day{(days != 1 ? "s" : "")}";
-            }
-            else
-            {
-                return $"{(int)duration.TotalDays} day{(duration.TotalDays != 1 ? "s" : "")}";
-            }
+                ChannelId = channelId,
+                MessageId = messageId,
+                Type = type,
+                Timestamp = DateTimeOffset.UtcNow
+            };
+
+            Messages.Add(message);
         }
     }
 
     /// <summary>
-    /// Represents a player or team's ranking at the end of a season
+    /// Represents a ranking position in the season for a player or team
     /// </summary>
     public class SeasonRanking
     {
         /// <summary>
-        /// Final position in the rankings
+        /// Position in the rankings (1 = first place)
         /// </summary>
         public int Rank { get; set; }
 
         /// <summary>
-        /// Whether this is a team (true) or individual player (false)
+        /// Whether this ranking is for a team or an individual player.
+        /// For 1v1 game type, this will typically be false (ranking individual players).
+        /// For team-based game types, this will typically be true (ranking teams).
         /// </summary>
         public bool IsTeam { get; set; }
 
         /// <summary>
-        /// Team ID if this is a team ranking
+        /// The Discord user ID of the player (if IsTeam is false)
+        /// </summary>
+        public ulong PlayerId { get; set; }
+
+        /// <summary>
+        /// The player's username (if IsTeam is false)
+        /// </summary>
+        public string? PlayerUsername { get; set; }
+
+        /// <summary>
+        /// The team ID (if IsTeam is true)
         /// </summary>
         public string? TeamId { get; set; }
 
         /// <summary>
-        /// Team name if this is a team ranking
+        /// The team name (if IsTeam is true)
         /// </summary>
         public string? TeamName { get; set; }
-
-        /// <summary>
-        /// Player ID if this is an individual player ranking
-        /// </summary>
-        public ulong? PlayerId { get; set; }
-
-        /// <summary>
-        /// Player username if this is an individual player ranking
-        /// </summary>
-        public string? PlayerUsername { get; set; }
 
         /// <summary>
         /// Final rating at the end of the season
@@ -184,24 +194,38 @@ namespace Wabbit.Models.Rating
         public int Rating { get; set; }
 
         /// <summary>
-        /// Total wins during the season
+        /// Number of wins during the season
         /// </summary>
         public int Wins { get; set; }
 
         /// <summary>
-        /// Total losses during the season
+        /// Number of losses during the season
         /// </summary>
         public int Losses { get; set; }
 
         /// <summary>
-        /// Calculated win rate
+        /// Win rate percentage
         /// </summary>
         public double WinRate => Wins + Losses > 0 ? (double)Wins / (Wins + Losses) * 100 : 0;
 
         /// <summary>
-        /// Total matches played
+        /// Total matches played during the season
         /// </summary>
         public int MatchesPlayed => Wins + Losses;
+
+        /// <summary>
+        /// The formatted name for display in rankings
+        /// </summary>
+        public string DisplayName
+        {
+            get
+            {
+                if (IsTeam)
+                    return TeamName ?? "Unknown Team";
+                else
+                    return PlayerUsername ?? "Unknown Player";
+            }
+        }
     }
 
     /// <summary>
@@ -210,7 +234,7 @@ namespace Wabbit.Models.Rating
     public class SeasonMessage
     {
         /// <summary>
-        /// Discord channel ID where the message was sent
+        /// Discord channel ID where the message was posted
         /// </summary>
         public ulong ChannelId { get; set; }
 
@@ -220,8 +244,13 @@ namespace Wabbit.Models.Rating
         public ulong MessageId { get; set; }
 
         /// <summary>
-        /// Type of message (e.g. "Announcement", "Leaderboard")
+        /// Type of message (announcement, update, etc.)
         /// </summary>
-        public string Type { get; set; } = "Announcement";
+        public SeasonMessageType Type { get; set; }
+
+        /// <summary>
+        /// When the message was posted
+        /// </summary>
+        public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
     }
 }

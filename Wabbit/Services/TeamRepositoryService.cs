@@ -112,7 +112,7 @@ namespace Wabbit.Services
         {
             lock (_lockObject)
             {
-                return Task.FromResult(_teams.Where(t => t.TeamGameType == type).ToList());
+                return Task.FromResult(_teams.Where(t => t.GameType == type).ToList());
             }
         }
 
@@ -187,7 +187,7 @@ namespace Wabbit.Services
             lock (_lockObject)
             {
                 return Task.FromResult(_teams
-                    .Where(t => t.TeamGameType == type)
+                    .Where(t => t.GameType == type)
                     .OrderByDescending(t => t.Rating)
                     .Take(count)
                     .ToList());
@@ -373,7 +373,7 @@ namespace Wabbit.Services
         private Team CleanTeamForSerialization(Team team)
         {
             // Create a clean copy
-            var cleanTeam = new Team(team.TeamName, team.TeamGameType)
+            var cleanTeam = new Team(team.TeamName, team.GameType)
             {
                 TeamId = team.TeamId,
                 Rating = team.Rating,
@@ -451,7 +451,7 @@ namespace Wabbit.Services
                 var counts = new Dictionary<TeamGameType, int>();
                 foreach (TeamGameType type in Enum.GetValues(typeof(TeamGameType)))
                 {
-                    counts[type] = _teams.Count(t => t.TeamGameType == type);
+                    counts[type] = _teams.Count(t => t.GameType == type);
                 }
 
                 return Task.FromResult(counts);

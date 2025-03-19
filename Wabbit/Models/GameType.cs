@@ -5,7 +5,7 @@ namespace Wabbit.Models
     /// <summary>
     /// Base game type enum that will be used to generate specialized enums
     /// </summary>
-    [GenerateSpecializedEnums("Tournament", "Scrimmage", "Rating", "Team")]
+    [GenerateSpecializedEnums("Scrimmage", "Signup", "Team", "Tournament")]
     public enum GameType
     {
         /// <summary>

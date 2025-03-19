@@ -28,7 +28,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Wabbit.Models
 {
-    [GenerateSpecializedEnums(""Tournament"", ""Scrimmage"", ""Rating"", ""Team"")]
+    [GenerateSpecializedEnums(""Scrimmage"", ""Signup"", ""Team"", ""Tournament"")]
     public enum GameType
     {
         [Display(Name = ""1v1"")]
@@ -73,6 +73,8 @@ namespace Wabbit.Models
             Assert.True(output.ContainsKey($"{PREFIX}Wabbit.Models.ScrimmageGameType.g.cs"));
             Assert.True(output.ContainsKey($"{PREFIX}Wabbit.Models.RatingGameType.g.cs"));
             Assert.True(output.ContainsKey($"{PREFIX}Wabbit.Models.GameTypeHelpers.g.cs"));
+            Assert.True(output.ContainsKey($"{PREFIX}Wabbit.Models.SignupGameType.g.cs"));
+            Assert.True(output.ContainsKey($"{PREFIX}Wabbit.Models.TeamGameType.g.cs"));
 
             // Check TournamentGameType content
             var tournamentCode = output[$"{PREFIX}Wabbit.Models.TournamentGameType.g.cs"];

@@ -233,7 +233,7 @@ This separation is an intentional design decision rather than a code duplication
 
 > Note: The Scrimmage system has been fully implemented. The build is successful after resolving the naming conflict between GameType and ScrimmageType. The scrimmage system can now handle different game types (1v1, 2v2, 3v3, 4v4), match lengths (Bo1, Bo3, Bo5), and supports both rated and unrated matches with appropriate map pool selection.
 
-### 7. Implement new ratings system for rated skirmishes, and team registration.
+### 7. Implement new ratings system for rated scrimmages, and team registration.
 
 #### 7.1 Create data models and storage
 - [x] Create a `Team.cs` model to represent teams with the following properties:
@@ -302,7 +302,7 @@ This separation is an intentional design decision rather than a code duplication
   ```csharp
   namespace Wabbit.Models;
   
-  [GenerateSpecializedEnums("Tournament", "Scrimmage", "Rating", "Team")]
+  [GenerateSpecializedEnums("Scrimmage", "Signup", "Team", "Tournament")]
   public enum GameType
   {
       [Display(Name = "1v1")]

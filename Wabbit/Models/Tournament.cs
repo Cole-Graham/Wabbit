@@ -13,7 +13,7 @@ namespace Wabbit.Models
         public TournamentStage CurrentStage { get; set; }
         public int DefaultMatchLength { get; set; } = 10; // Default match length in minutes
         public TournamentFormat Format { get; set; } = TournamentFormat.GroupStageWithPlayoffs;
-        public TournamentGameType TournamentGameType { get; set; } = TournamentGameType.OneVOne;
+        public TournamentGameType GameType { get; set; } = TournamentGameType.OneVOne;
         public int MatchesPerPlayer { get; set; } = 0; // Default to roundrobin
         public bool IsComplete { get; set; } = false;
         [System.Text.Json.Serialization.JsonIgnore]
@@ -52,7 +52,7 @@ namespace Wabbit.Models
                 Name = Name,
                 Format = Format,
                 CurrentStage = CurrentStage,
-                TournamentGameType = TournamentGameType,
+                GameType = GameType,
                 MatchesPerPlayer = MatchesPerPlayer,
                 IsComplete = IsComplete,
                 AnnouncementChannel = AnnouncementChannel,

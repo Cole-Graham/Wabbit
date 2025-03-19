@@ -97,7 +97,7 @@ namespace Wabbit.BotClient.Commands
                     .WithTitle($"✅ Team Created: {team.TeamName}")
                     .WithDescription($"You are now the owner of this team.")
                     .WithColor(DiscordColor.Green)
-                    .AddField("Type", GetGameTypeDisplayName(team.TeamGameType), true)
+                    .AddField("Type", GetGameTypeDisplayName(team.GameType), true)
                     .AddField("Rating", team.Rating.ToString(), true)
                     .AddField("Team ID", team.TeamId, true)
                     .AddField("Created", DateTime.UtcNow.ToString("MMM d, yyyy"), true)
@@ -136,7 +136,7 @@ namespace Wabbit.BotClient.Commands
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"Team: {team.TeamName}")
                     .WithColor(DiscordColor.Blue)
-                    .AddField("Type", GetGameTypeDisplayName(team.TeamGameType), true)
+                    .AddField("Type", GetGameTypeDisplayName(team.GameType), true)
                     .AddField("Rating", team.Rating.ToString(), true)
                     .AddField("Created", team.CreatedAt.ToString("MMM d, yyyy"), true)
                     .AddField("Record", $"{team.Wins}-{team.Losses} ({GetWinRate(team.Wins, team.Losses)}%)", true);
@@ -147,7 +147,7 @@ namespace Wabbit.BotClient.Commands
                 embed.AddField("Core Players", corePlayers, false);
 
                 // Add secondary players if applicable
-                if (team.TeamGameType != Wabbit.Models.TeamGameType.OneVOne)
+                if (team.GameType != Wabbit.Models.TeamGameType.OneVOne)
                 {
                     string secondaryPlayers = string.Join("\n", team.SecondaryPlayerInfo?.Select(p => $"<@{p.Id}>") ?? Array.Empty<string>());
                     if (string.IsNullOrEmpty(secondaryPlayers)) secondaryPlayers = "None";
@@ -155,7 +155,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Add substitute players if applicable
-                if (team.TeamGameType == Wabbit.Models.TeamGameType.ThreeVThree || team.TeamGameType == Wabbit.Models.TeamGameType.FourVFour)
+                if (team.GameType == Wabbit.Models.TeamGameType.ThreeVThree || team.GameType == Wabbit.Models.TeamGameType.FourVFour)
                 {
                     string substitutePlayers = string.Join("\n", team.SubstitutePlayerInfo?.Select(p => $"<@{p.Id}>") ?? Array.Empty<string>());
                     if (string.IsNullOrEmpty(substitutePlayers)) substitutePlayers = "None";
@@ -182,7 +182,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Get ranking if available
-                var ranking = await _leaderboardService.GetTeamRankingAsync(team.TeamId, team.TeamGameType);
+                var ranking = await _leaderboardService.GetTeamRankingAsync(team.TeamId, team.GameType);
                 if (ranking != null)
                 {
                     embed.AddField("Current Rank", $"#{ranking.Rank}", true);
@@ -235,7 +235,7 @@ namespace Wabbit.BotClient.Commands
                         .WithTitle($"✅ Joined Team: {team.TeamName}")
                         .WithDescription($"You have successfully joined as a {role} player.")
                         .WithColor(DiscordColor.Green)
-                        .AddField("Type", GetGameTypeDisplayName(team.TeamGameType), true)
+                        .AddField("Type", GetGameTypeDisplayName(team.GameType), true)
                         .AddField("Rating", team.Rating.ToString(), true);
 
                     await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
@@ -320,7 +320,7 @@ namespace Wabbit.BotClient.Commands
                     .WithDescription($"You are a member of {teams.Count} team(s).");
 
                 // Group teams by game type
-                var teamsByType = teams.GroupBy(t => t.TeamGameType);
+                var teamsByType = teams.GroupBy(t => t.GameType);
 
                 foreach (var typeGroup in teamsByType)
                 {
@@ -493,7 +493,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Check if team allows secondary players (1v1 doesn't)
-                if (team.TeamGameType == Wabbit.Models.TeamGameType.OneVOne)
+                if (team.GameType == Wabbit.Models.TeamGameType.OneVOne)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                         "❌ 1v1 teams cannot have secondary players."));
@@ -543,7 +543,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Check if team allows substitute players (1v1 and 2v2 don't)
-                if (team.TeamGameType == Wabbit.Models.TeamGameType.OneVOne || team.TeamGameType == Wabbit.Models.TeamGameType.TwoVTwo)
+                if (team.GameType == Wabbit.Models.TeamGameType.OneVOne || team.GameType == Wabbit.Models.TeamGameType.TwoVTwo)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                         "❌ 1v1 and 2v2 teams cannot have substitute players."));

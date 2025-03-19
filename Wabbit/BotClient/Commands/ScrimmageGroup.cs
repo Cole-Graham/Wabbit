@@ -127,7 +127,7 @@ namespace Wabbit.BotClient.Commands
             }
 
             // Check if the user is one of the players
-            if (context.User.Id != scrimmage.Player1.Id && context.User.Id != scrimmage.Player2.Id)
+            if (context.User.Id != scrimmage.TeamA.Captain.Id && context.User.Id != scrimmage.TeamB.Captain.Id)
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                     "Only players participating in this scrimmage can record results."));
@@ -152,7 +152,7 @@ namespace Wabbit.BotClient.Commands
             else
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                    $"Win recorded for {(winningPlayer == 1 ? scrimmage.Player1.Username : scrimmage.Player2.Username)}"));
+                    $"Win recorded for {(winningPlayer == 1 ? scrimmage.TeamA.Captain.Username : scrimmage.TeamB.Captain.Username)}"));
             }
         }
 
@@ -174,7 +174,7 @@ namespace Wabbit.BotClient.Commands
             }
 
             // Check if the user is one of the players
-            if (context.User.Id != scrimmage.Player1.Id && context.User.Id != scrimmage.Player2.Id)
+            if (context.User.Id != scrimmage.TeamA.Captain.Id && context.User.Id != scrimmage.TeamB.Captain.Id)
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                     "Only players participating in this scrimmage can mark it as completed."));
@@ -206,7 +206,7 @@ namespace Wabbit.BotClient.Commands
             }
 
             // Check if the user is one of the players
-            if (context.User.Id != scrimmage.Player1.Id && context.User.Id != scrimmage.Player2.Id)
+            if (context.User.Id != scrimmage.TeamA.Captain.Id && context.User.Id != scrimmage.TeamB.Captain.Id)
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                     "Only players participating in this scrimmage can cancel it."));

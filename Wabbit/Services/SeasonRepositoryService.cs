@@ -139,15 +139,15 @@ namespace Wabbit.Services
 
             // Add 1v1 player rankings
             finalRankings[Wabbit.Models.TeamGameType.OneVOne] = playerRatings
-                .OrderByDescending(p => p.GetRating(Wabbit.Models.TeamGameType.OneVOne))
+                .OrderByDescending(p => p.Rating)
                 .Select((p, i) => new SeasonRanking
                 {
                     Rank = i + 1,
                     PlayerId = p.PlayerId,
                     PlayerUsername = p.Username,
-                    Rating = p.GetRating(Wabbit.Models.TeamGameType.OneVOne),
-                    Wins = p.Wins.GetValueOrDefault(Wabbit.Models.TeamGameType.OneVOne, 0),
-                    Losses = p.Losses.GetValueOrDefault(Wabbit.Models.TeamGameType.OneVOne, 0)
+                    Rating = p.Rating,
+                    Wins = p.Wins,
+                    Losses = p.Losses
                 }).ToList();
 
             // End the season with the calculated rankings

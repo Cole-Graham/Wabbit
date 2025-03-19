@@ -1,10 +1,9 @@
 using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
-using Wabbit.BotClient.Config;
-using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
+using Wabbit.Misc;
 
 namespace Wabbit.Services
 {
@@ -15,21 +14,18 @@ namespace Wabbit.Services
     {
         private readonly ILogger<ScrimmageStatusService> _logger;
         private readonly DiscordClient _client;
-        private readonly IRandomMapExt _randomMapService;
-        private readonly ITournamentMapService _tournamentMapService;
+        private readonly IMapService _mapService;
         private readonly OngoingRounds _ongoingRounds;
 
         public ScrimmageStatusService(
             ILogger<ScrimmageStatusService> logger,
             DiscordClient client,
-            IRandomMapExt randomMapService,
-            ITournamentMapService tournamentMapService,
+            IMapService mapService,
             OngoingRounds ongoingRounds)
         {
             _logger = logger;
             _client = client;
-            _randomMapService = randomMapService;
-            _tournamentMapService = tournamentMapService;
+            _mapService = mapService;
             _ongoingRounds = ongoingRounds;
         }
 
@@ -45,155 +41,163 @@ namespace Wabbit.Services
             bool isRated,
             bool useTournamentMapPool)
         {
-            // For rated matches, always use tournament map pool
-            if (isRated)
-                useTournamentMapPool = true;
-
-            // Determine how many maps we need based on match length
-            int mapCount = matchLength switch
+            // Validate arguments
+            if (player1.Id == player2.Id)
             {
-                MatchLength.Bo3 => 3,
-                MatchLength.Bo5 => 5,
-                _ => 1 // Default to 1 map for Bo1
-            };
+                throw new ArgumentException("A player cannot play against themselves");
+            }
 
-            // Determine if this is a 1v1 match based on game type
-            bool isOneVOne = gameType == ScrimmageGameType.OneVOne;
-
-            // Create a thread for this scrimmage
-            var threadName = $"Scrimmage: {player1.Username} vs {player2.Username}";
-            var thread = await DiscordUtilities.CreateThreadAsync(
+            // Create a thread for the scrimmage
+            var threadChannel = await DiscordUtilities.CreateThreadAsync(
                 channel,
-                threadName,
+                $"{gameType} Scrimmage: {player1.Username} vs {player2.Username}",
                 _logger,
-                DiscordChannelType.PublicThread,
+                DiscordChannelType.PrivateThread,
                 DiscordAutoArchiveDuration.Day);
 
-            if (thread is null)
+            if (threadChannel is null)
             {
                 throw new InvalidOperationException("Failed to create thread for scrimmage");
             }
 
-            // Get the maps for this scrimmage - from tournament or casual pool based on setting
-            List<string> maps;
-            if (useTournamentMapPool)
-            {
-                maps = _tournamentMapService.GetRandomMaps(isOneVOne, mapCount);
-            }
-            else
-            {
-                maps = _randomMapService.GetRandomMaps(isOneVOne, mapCount).ToList();
-            }
-
-            // Create the scrimmage object
+            // Create the scrimmage with the required thread property
             var scrimmage = new Scrimmage
             {
-                Thread = thread,
-                Player1 = player1,
-                Deck1 = deck1,
-                Player2 = player2,
-                Deck2 = deck2,
-                Maps = maps,
-                Status = ScrimmageStatus.Created,
+                Thread = threadChannel,
                 GameType = gameType,
                 MatchLength = matchLength,
                 IsRated = isRated,
                 UseTournamentMapPool = useTournamentMapPool,
-                CreatedAt = DateTimeOffset.UtcNow
+                Status = ScrimmageStatus.Created
             };
 
-            // Add to ongoing rounds
-            _ongoingRounds.ScrimmageRounds.Add(scrimmage);
+            // Initialize teams
+            scrimmage.TeamA = new ScrimmageTeam { Captain = player1 };
+            if (deck1 != null)
+                scrimmage.TeamA.SetDeckCode(player1, deck1);
 
-            // Create initial status message
+            scrimmage.TeamB = new ScrimmageTeam { Captain = player2 };
+            if (deck2 != null)
+                scrimmage.TeamB.SetDeckCode(player2, deck2);
+
+            // Post initial status message
             var statusMessage = await UpdateScrimmageStatusAsync(scrimmage);
             scrimmage.StatusMessage = statusMessage;
 
-            // Try to add players to thread if they're members of the guild
-            try
+            // Add scrimmage to ongoing rounds
+            _ongoingRounds.ScrimmageRounds.Add(scrimmage);
+
+            // Generate first map
+            // Get a random map name
+            Map? map = null;
+            string mapName;
+
+            if (useTournamentMapPool)
             {
-                if (player1 is DiscordMember member1)
-                    await thread.AddThreadMemberAsync(member1);
-
-                if (player2 is DiscordMember member2)
-                    await thread.AddThreadMemberAsync(member2);
+                // For now, just get any map since we don't have the tournament-specific maps
+                map = _mapService.GetMapByName("Default Map");
+                mapName = map?.Name ?? "Random Map";
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogWarning(ex, "Failed to add one or more members to the scrimmage thread: {Message}", ex.Message);
+                // Get any map from the service
+                map = _mapService.GetMapByName("Default Map");
+                mapName = map?.Name ?? "Random Map";
             }
 
-            // Welcome message
-            var welcomeMessage = await thread.SendMessageAsync(
-                $"Welcome {player1.Mention} and {player2.Mention} to your scrimmage! " +
-                $"Use this thread to coordinate your match.");
+            scrimmage.Maps.Add(mapName);
 
-            scrimmage.Messages.Add(welcomeMessage);
-
-            _logger.LogInformation("Created new scrimmage between {Player1} and {Player2}",
-                player1.Username, player2.Username);
-
+            _logger.LogInformation($"Created scrimmage between {player1.Username} and {player2.Username} in {channel.Guild.Name}/{channel.Name}");
             return scrimmage;
         }
 
         /// <inheritdoc/>
         public async Task<DiscordMessage> UpdateScrimmageStatusAsync(Scrimmage scrimmage)
         {
+            // Create the status embed
             var embed = new DiscordEmbedBuilder()
-                .WithTitle($"Scrimmage: {scrimmage.Player1.Username} vs {scrimmage.Player2.Username}")
-                .WithColor(GetStatusColor(scrimmage.Status));
+                .WithTitle($"{GetGameTypeString(scrimmage.GameType)} Scrimmage: {GetMatchLengthString(scrimmage.MatchLength)}")
+                .WithColor(GetStatusColor(scrimmage.Status))
+                .WithFooter($"Created {scrimmage.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
 
-            // Add game type and match type information
-            embed.AddField("Game Type", GetGameTypeString(scrimmage.GameType), true);
-            embed.AddField("Match Type", GetMatchLengthString(scrimmage.MatchLength), true);
-            embed.AddField("Status", scrimmage.Status.ToString(), true);
+            // Add players
+            embed.AddField("Team A", scrimmage.TeamA.Captain.Mention, true);
+            embed.AddField("Team B", scrimmage.TeamB.Captain.Mention, true);
 
-            // Add if this is a rated match
+            // Add scores if games have been played
+            if (scrimmage.TeamAScore > 0 || scrimmage.TeamBScore > 0)
+            {
+                embed.AddField("Score", $"{scrimmage.TeamAScore} - {scrimmage.TeamBScore}", true);
+            }
+
+            // Add deck codes if provided
+            string? teamADeck = scrimmage.TeamA.DeckName;
+            if (!string.IsNullOrEmpty(teamADeck))
+            {
+                embed.AddField("Team A Deck", teamADeck, true);
+            }
+
+            string? teamBDeck = scrimmage.TeamB.DeckName;
+            if (!string.IsNullOrEmpty(teamBDeck))
+            {
+                embed.AddField("Team B Deck", teamBDeck, true);
+            }
+
+            // Add current map if available
+            if (scrimmage.Maps.Count > 0)
+            {
+                string currentMap = scrimmage.Maps[scrimmage.Maps.Count - 1];
+                embed.AddField("Current Map", currentMap, true);
+            }
+
+            // Add status message
+            string statusMessage = scrimmage.Status switch
+            {
+                ScrimmageStatus.Created => "Match created. Waiting for players to ready up.",
+                ScrimmageStatus.InProgress => "Match in progress.",
+                ScrimmageStatus.Completed => $"Match completed. {(scrimmage.TeamAScore > scrimmage.TeamBScore ? scrimmage.TeamA.Captain.Username : scrimmage.TeamB.Captain.Username)} wins!",
+                ScrimmageStatus.Cancelled => "Match cancelled.",
+                _ => "Unknown status."
+            };
+
+            embed.WithDescription(statusMessage);
+
+            // Additional info for rated matches
             if (scrimmage.IsRated)
             {
-                embed.AddField("Rated", "Yes - This match will affect ratings", true);
+                embed.AddField("Rating", "This is a rated match", true);
             }
 
-            // Add map pool type
-            embed.AddField("Map Pool", scrimmage.UseTournamentMapPool ? "Tournament" : "Casual", true);
-
-            // Add player decks if specified
-            if (scrimmage.Deck1 != null)
-                embed.AddField($"{scrimmage.Player1.Username}'s Deck", scrimmage.Deck1, true);
-
-            if (scrimmage.Deck2 != null)
-                embed.AddField($"{scrimmage.Player2.Username}'s Deck", scrimmage.Deck2, true);
-
-            // Add current score if match is in progress
-            if (scrimmage.Status == ScrimmageStatus.InProgress)
+            // Additional info for tournament map pool
+            if (scrimmage.UseTournamentMapPool)
             {
-                embed.AddField("Score", $"{scrimmage.Player1.Username} {scrimmage.Player1Score} - {scrimmage.Player2Score} {scrimmage.Player2.Username}", false);
-                embed.AddField("Current Game", $"Game {scrimmage.CurrentGameNumber} of {GetGamesToWin(scrimmage.MatchLength) * 2 - 1}", false);
+                embed.AddField("Maps", "Using tournament map pool", true);
             }
 
-            // Add the maps
-            var mapList = string.Join("\n", scrimmage.Maps.Select((map, i) =>
-            {
-                string indicator = i + 1 == scrimmage.CurrentGameNumber ? "➡️ " : "";
-                return $"{indicator}{i + 1}. {map}";
-            }));
-            embed.AddField("Maps", mapList);
+            // Create buttons
+            var buttons = new List<DiscordComponent>();
 
-            // Add timestamp information
-            embed.WithFooter($"Created {scrimmage.CreatedAt:g}");
-            if (scrimmage.CompletedAt.HasValue)
+            // Create message
+            var builder = new DiscordMessageBuilder();
+            builder.AddEmbed(embed.Build());
+
+            if (buttons.Any())
             {
-                embed.WithFooter($"Created {scrimmage.CreatedAt:g} | Completed {scrimmage.CompletedAt.Value:g}");
+                builder.AddComponents(buttons);
             }
 
+            // Send or update the message
+            DiscordMessage message;
             if (scrimmage.StatusMessage == null)
             {
-                return await scrimmage.Thread.SendMessageAsync(embed);
+                message = await scrimmage.Thread.SendMessageAsync(builder);
             }
             else
             {
-                return await scrimmage.StatusMessage.ModifyAsync(new DiscordMessageBuilder().AddEmbed(embed));
+                message = await scrimmage.StatusMessage.ModifyAsync(builder);
             }
+
+            return message;
         }
 
         /// <inheritdoc/>
@@ -210,7 +214,7 @@ namespace Wabbit.Services
             scrimmage.Messages.Add(message);
 
             _logger.LogInformation("Scrimmage between {Player1} and {Player2} completed",
-                scrimmage.Player1.Username, scrimmage.Player2.Username);
+                scrimmage.TeamA.Captain.Username, scrimmage.TeamB.Captain.Username);
 
             return true;
         }
@@ -229,7 +233,7 @@ namespace Wabbit.Services
             scrimmage.Messages.Add(message);
 
             _logger.LogInformation("Scrimmage between {Player1} and {Player2} cancelled",
-                scrimmage.Player1.Username, scrimmage.Player2.Username);
+                scrimmage.TeamA.Captain.Username, scrimmage.TeamB.Captain.Username);
 
             return true;
         }
@@ -237,58 +241,44 @@ namespace Wabbit.Services
         /// <inheritdoc/>
         public async Task<bool> RecordGameResultAsync(Scrimmage scrimmage, int winningPlayer)
         {
+            // Validate arguments
             if (winningPlayer != 1 && winningPlayer != 2)
             {
-                _logger.LogWarning("Invalid winning player {WinningPlayer} for scrimmage", winningPlayer);
-                return false;
+                throw new ArgumentException("Winning player must be 1 or 2");
             }
 
-            // Update the scrimmage status to in progress if not already
-            if (scrimmage.Status != ScrimmageStatus.InProgress)
-            {
-                scrimmage.Status = ScrimmageStatus.InProgress;
-            }
-
-            // Update the score
+            // Update scores
             if (winningPlayer == 1)
             {
-                scrimmage.Player1Score++;
+                scrimmage.TeamAScore++;
             }
-            else // winningPlayer == 2
+            else
             {
-                scrimmage.Player2Score++;
+                scrimmage.TeamBScore++;
             }
 
-            // Check if the match is over
+            // Check if the match is completed
             int gamesToWin = GetGamesToWin(scrimmage.MatchLength);
-            if (scrimmage.Player1Score >= gamesToWin || scrimmage.Player2Score >= gamesToWin)
+            if (scrimmage.TeamAScore >= gamesToWin)
             {
-                // Match is complete
-                await CompleteScrimmageAsync(scrimmage);
-
-                string winnerName = scrimmage.Player1Score > scrimmage.Player2Score
-                    ? scrimmage.Player1.Username
-                    : scrimmage.Player2.Username;
-
-                // Send a final message
-                var finalMessage = await scrimmage.Thread.SendMessageAsync(
-                    $"The match is complete! {winnerName} wins {scrimmage.Player1Score}-{scrimmage.Player2Score}!");
-                scrimmage.Messages.Add(finalMessage);
-
-                _logger.LogInformation("Scrimmage between {Player1} and {Player2} completed with score {Score1}-{Score2}",
-                    scrimmage.Player1.Username, scrimmage.Player2.Username,
-                    scrimmage.Player1Score, scrimmage.Player2Score);
-
-                return true;
+                scrimmage.Status = ScrimmageStatus.Completed;
+                _logger.LogInformation($"Match completed: {scrimmage.TeamA.Captain.Username} wins against {scrimmage.TeamB.Captain.Username}");
+            }
+            else if (scrimmage.TeamBScore >= gamesToWin)
+            {
+                scrimmage.Status = ScrimmageStatus.Completed;
+                _logger.LogInformation($"Match completed: {scrimmage.TeamB.Captain.Username} wins against {scrimmage.TeamA.Captain.Username}");
+            }
+            else
+            {
+                // If the match wasn't already in progress, mark it as such
+                if (scrimmage.Status != ScrimmageStatus.InProgress)
+                {
+                    scrimmage.Status = ScrimmageStatus.InProgress;
+                }
             }
 
-            // Send a game completion message
-            string gameWinnerName = winningPlayer == 1 ? scrimmage.Player1.Username : scrimmage.Player2.Username;
-            var gameMessage = await scrimmage.Thread.SendMessageAsync(
-                $"Game {scrimmage.CurrentGameNumber} complete! {gameWinnerName} wins on {scrimmage.Maps[scrimmage.CurrentGameNumber - 1]}.");
-            scrimmage.Messages.Add(gameMessage);
-
-            // Update the status message with new score
+            // Update status message
             await UpdateScrimmageStatusAsync(scrimmage);
 
             return true;
@@ -297,36 +287,34 @@ namespace Wabbit.Services
         /// <inheritdoc/>
         public async Task<bool> AdvanceToNextGameAsync(Scrimmage scrimmage)
         {
-            // Can only advance if not already completed
-            if (scrimmage.Status == ScrimmageStatus.Completed || scrimmage.Status == ScrimmageStatus.Cancelled)
+            // Generate a new map
+            Map? map = null;
+            string mapName;
+
+            if (scrimmage.UseTournamentMapPool)
             {
-                return false;
+                // For now, just get any map since we don't have the tournament-specific maps
+                map = _mapService.GetMapByName("Default Map");
+                mapName = map?.Name ?? "Random Map";
+            }
+            else
+            {
+                // Get any map from the service
+                map = _mapService.GetMapByName("Default Map");
+                mapName = map?.Name ?? "Random Map";
             }
 
-            // Check if we've reached the maximum games for this match
-            int maxGames = scrimmage.MatchLength switch
-            {
-                MatchLength.Bo3 => 3,
-                MatchLength.Bo5 => 5,
-                _ => 1 // Default to 1 for Bo1
-            };
+            // Add the new map to the list
+            scrimmage.Maps.Add(mapName);
 
-            if (scrimmage.CurrentGameNumber >= maxGames)
-            {
-                // Already at the last game
-                return false;
-            }
-
-            // Advance to next game
+            // Increment current game number
             scrimmage.CurrentGameNumber++;
 
-            // Update the status message
+            // Update status message
             await UpdateScrimmageStatusAsync(scrimmage);
 
-            // Send message about the next game
-            var nextGameMessage = await scrimmage.Thread.SendMessageAsync(
-                $"Moving to game {scrimmage.CurrentGameNumber} on map: {scrimmage.Maps[scrimmage.CurrentGameNumber - 1]}");
-            scrimmage.Messages.Add(nextGameMessage);
+            // Log
+            _logger.LogInformation($"Advanced to next game between {scrimmage.TeamA.Captain.Username} and {scrimmage.TeamB.Captain.Username} with map {mapName}");
 
             return true;
         }

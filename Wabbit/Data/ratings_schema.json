@@ -1,12 +1,12 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Ratings Schema",
-    "description": "Schema for player ratings",
+    "description": "Schema for player 1v1 ratings - PlayerRating only tracks 1v1 ratings; team-based formats use Team ratings",
     "type": "object",
     "properties": {
         "players": {
             "type": "array",
-            "description": "List of player ratings",
+            "description": "List of player 1v1 ratings",
             "items": {
                 "type": "object",
                 "properties": {
@@ -18,130 +18,35 @@
                         "type": "string",
                         "description": "Username of the player"
                     },
-                    "ratings": {
-                        "type": "object",
-                        "description": "Ratings for different game types",
-                        "properties": {
-                            "OneVOne": {
-                                "type": "integer",
-                                "description": "Rating for 1v1 games"
-                            },
-                            "TwoVTwo": {
-                                "type": "integer",
-                                "description": "Rating for 2v2 games"
-                            },
-                            "ThreeVThree": {
-                                "type": "integer",
-                                "description": "Rating for 3v3 games"
-                            },
-                            "FourVFour": {
-                                "type": "integer",
-                                "description": "Rating for 4v4 games"
-                            }
-                        }
+                    "rating": {
+                        "type": "integer",
+                        "description": "The player's 1v1 rating (starting at 1200)"
                     },
-                    "tournamentRatings": {
-                        "type": "object",
-                        "description": "Tournament ratings for different game types",
-                        "properties": {
-                            "OneVOne": {
-                                "type": "integer",
-                                "description": "Tournament rating for 1v1 games"
-                            },
-                            "TwoVTwo": {
-                                "type": "integer",
-                                "description": "Tournament rating for 2v2 games"
-                            },
-                            "ThreeVThree": {
-                                "type": "integer",
-                                "description": "Tournament rating for 3v3 games"
-                            },
-                            "FourVFour": {
-                                "type": "integer",
-                                "description": "Tournament rating for 4v4 games"
-                            }
-                        }
+                    "tournamentRating": {
+                        "type": "integer",
+                        "description": "The player's tournament 1v1 rating (starting at 1200)"
                     },
                     "wins": {
-                        "type": "object",
-                        "description": "Win counts for different game types",
-                        "properties": {
-                            "OneVOne": {
-                                "type": "integer",
-                                "description": "Win count for 1v1 games"
-                            },
-                            "TwoVTwo": {
-                                "type": "integer",
-                                "description": "Win count for 2v2 games"
-                            },
-                            "ThreeVThree": {
-                                "type": "integer",
-                                "description": "Win count for 3v3 games"
-                            },
-                            "FourVFour": {
-                                "type": "integer",
-                                "description": "Win count for 4v4 games"
-                            }
-                        }
+                        "type": "integer",
+                        "description": "Number of 1v1 wins"
                     },
                     "losses": {
-                        "type": "object",
-                        "description": "Loss counts for different game types",
-                        "properties": {
-                            "OneVOne": {
-                                "type": "integer",
-                                "description": "Loss count for 1v1 games"
-                            },
-                            "TwoVTwo": {
-                                "type": "integer",
-                                "description": "Loss count for 2v2 games"
-                            },
-                            "ThreeVThree": {
-                                "type": "integer",
-                                "description": "Loss count for 3v3 games"
-                            },
-                            "FourVFour": {
-                                "type": "integer",
-                                "description": "Loss count for 4v4 games"
-                            }
-                        }
+                        "type": "integer",
+                        "description": "Number of 1v1 losses"
                     },
                     "ratingHistory": {
-                        "type": "object",
-                        "description": "Rating change history for different game types",
-                        "properties": {
-                            "OneVOne": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/ratingChange"
-                                }
-                            },
-                            "TwoVTwo": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/ratingChange"
-                                }
-                            },
-                            "ThreeVThree": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/ratingChange"
-                                }
-                            },
-                            "FourVFour": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/ratingChange"
-                                }
-                            }
+                        "type": "array",
+                        "description": "History of rating changes",
+                        "items": {
+                            "$ref": "#/definitions/ratingChange"
                         }
                     }
                 },
                 "required": [
                     "playerId",
                     "username",
-                    "ratings",
-                    "tournamentRatings",
+                    "rating",
+                    "tournamentRating",
                     "wins",
                     "losses"
                 ]

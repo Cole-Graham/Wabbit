@@ -440,10 +440,12 @@ namespace Wabbit.Services
         {
             var rankings = new Dictionary<TeamGameType, List<SeasonRanking>>();
 
-            // Generate rankings for each team type
-            foreach (TeamGameType type in Enum.GetValues(typeof(TeamGameType)))
+            // Generate rankings for each game type
+            foreach (TeamGameType gameType in Enum.GetValues(typeof(TeamGameType)))
             {
-                rankings[type] = GenerateRankingsForType(type, playerRatings);
+                // For team types, we'll add those from the team service
+                var rankingsForType = GenerateRankingsForType(gameType, playerRatings);
+                rankings[gameType] = rankingsForType;
             }
 
             return rankings;
@@ -452,29 +454,33 @@ namespace Wabbit.Services
         /// <summary>
         /// Helper method to generate rankings for a specific game type
         /// </summary>
-        private List<SeasonRanking> GenerateRankingsForType(TeamGameType TeamGameType, List<PlayerRating> playerRatings)
+        private List<SeasonRanking> GenerateRankingsForType(TeamGameType gameType, List<PlayerRating> playerRatings)
         {
             var rankings = new List<SeasonRanking>();
 
-            // Add individual player rankings
-            int rank = 1;
-            foreach (var player in playerRatings
-                .OrderByDescending(p => p.GetRating(TeamGameType)))
+            // For 1v1, include individual players (from PlayerRating)
+            if (gameType == TeamGameType.OneVOne)
             {
-                rankings.Add(new SeasonRanking
-                {
-                    Rank = rank++,
-                    IsTeam = false,
-                    PlayerId = player.PlayerId,
-                    PlayerUsername = player.Username,
-                    Rating = player.GetRating(TeamGameType),
-                    Wins = player.Wins.TryGetValue(TeamGameType, out int wins) ? wins : 0,
-                    Losses = player.Losses.TryGetValue(TeamGameType, out int losses) ? losses : 0
-                });
-            }
+                var playersForGameType = playerRatings
+                    .Where(p => p.Rating > 0)
+                    .OrderByDescending(p => p.Rating)
+                    .ToList();
 
-            // In a real implementation, we would also add team rankings here
-            // This would require getting teams from the team repository and integrating them
+                int rank = 1;
+                foreach (var player in playersForGameType)
+                {
+                    rankings.Add(new SeasonRanking
+                    {
+                        Rank = rank++,
+                        IsTeam = false,
+                        PlayerId = player.PlayerId,
+                        PlayerUsername = player.Username,
+                        Rating = player.Rating,
+                        Wins = player.Wins,
+                        Losses = player.Losses
+                    });
+                }
+            }
 
             return rankings;
         }

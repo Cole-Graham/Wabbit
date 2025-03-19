@@ -5,7 +5,10 @@ using System.Collections.Generic;
 namespace Wabbit.Models.Rating
 {
     /// <summary>
-    /// Represents a player team for scrimmages and tournaments
+    /// Represents a player team for competitions in all game formats.
+    /// For 1v1 games, each player has their own team with a single core player.
+    /// For team games (2v2, 3v3, 4v4), teams have multiple players with different roles.
+    /// Teams are the primary entities that have ratings in the system.
     /// </summary>
     public class Team
     {
@@ -22,28 +25,17 @@ namespace Wabbit.Models.Rating
         /// <summary>
         /// The type of team (1v1, 2v2, etc.)
         /// </summary>
-        public Wabbit.Models.TeamGameType TeamGameType { get; set; } = Wabbit.Models.TeamGameType.OneVOne;
+        public TeamGameType GameType { get; set; } = TeamGameType.OneVOne;
 
         /// <summary>
         /// Constructor with name and game type using TeamGameType
         /// </summary>
         /// <param name="name">Team name</param>
-        /// <param name="type">Team game type</param>
-        public Team(string name, Wabbit.Models.TeamGameType type)
+        /// <param name="gameType">Team game type</param>
+        public Team(string name, TeamGameType gameType)
         {
             TeamName = name;
-            TeamGameType = type;
-        }
-
-        /// <summary>
-        /// Constructor with name and game type using RatingGameType (for backward compatibility)
-        /// </summary>
-        /// <param name="name">Team name</param>
-        /// <param name="type">Team game type as RatingGameType</param>
-        public Team(string name, RatingGameType type)
-        {
-            TeamName = name;
-            TeamGameType = (Wabbit.Models.TeamGameType)(int)type;
+            GameType = gameType;
         }
 
         /// <summary>
@@ -54,9 +46,14 @@ namespace Wabbit.Models.Rating
         }
 
         /// <summary>
-        /// The team's current ELO rating (starting at 1200)
+        /// The team's current ELO rating for regular matches (starting at 1200)
         /// </summary>
         public int Rating { get; set; } = 1200;
+
+        /// <summary>
+        /// The team's current ELO rating for tournament matches (starting at 1200)
+        /// </summary>
+        public int TournamentRating { get; set; } = 1200;
 
         /// <summary>
         /// The date and time when the team was created
@@ -217,18 +214,18 @@ namespace Wabbit.Models.Rating
         /// </summary>
         public (int requiredCorePlayers, int maxSecondaryPlayers, int maxSubstitutePlayers) GetPlayerCounts()
         {
-            return TeamGameType switch
+            return GameType switch
             {
-                Wabbit.Models.TeamGameType.OneVOne => (1, 0, 0),
-                Wabbit.Models.TeamGameType.TwoVTwo => (2, 1, 0),
-                Wabbit.Models.TeamGameType.ThreeVThree => (2, 1, 1),
-                Wabbit.Models.TeamGameType.FourVFour => (3, 1, 1),
+                TeamGameType.OneVOne => (1, 0, 0),
+                TeamGameType.TwoVTwo => (2, 1, 0),
+                TeamGameType.ThreeVThree => (2, 1, 1),
+                TeamGameType.FourVFour => (3, 1, 1),
                 _ => (0, 0, 0)
             };
         }
 
         /// <summary>
-        /// Updates the team's rating based on a match result
+        /// Updates the team's rating based on a regular match result
         /// </summary>
         public void UpdateRating(int newRating, bool isWin, string opponentName)
         {
@@ -253,6 +250,30 @@ namespace Wabbit.Models.Rating
 
             // Update the current rating
             Rating = newRating;
+        }
+
+        /// <summary>
+        /// Updates the team's tournament rating based on a tournament match result
+        /// </summary>
+        public void UpdateTournamentRating(int newRating, bool isWin, string opponentName, string tournamentName)
+        {
+            int ratingChange = newRating - TournamentRating;
+
+            // Add to rating history
+            RatingHistory.Add(new RatingChange
+            {
+                OldRating = TournamentRating,
+                NewRating = newRating,
+                Change = ratingChange,
+                Opponent = opponentName,
+                IsTournamentMatch = true,
+                TournamentName = tournamentName,
+                IsWin = isWin,
+                Date = DateTimeOffset.UtcNow
+            });
+
+            // Update the current tournament rating
+            TournamentRating = newRating;
         }
 
         /// <summary>
@@ -318,6 +339,16 @@ namespace Wabbit.Models.Rating
         /// Whether this was a win
         /// </summary>
         public bool IsWin { get; set; }
+
+        /// <summary>
+        /// Whether this was a tournament match
+        /// </summary>
+        public bool IsTournamentMatch { get; set; }
+
+        /// <summary>
+        /// Name of the tournament (if applicable)
+        /// </summary>
+        public string TournamentName { get; set; } = string.Empty;
 
         /// <summary>
         /// When the rating change occurred

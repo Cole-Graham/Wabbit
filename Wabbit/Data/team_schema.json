@@ -1,7 +1,7 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Teams Schema",
-    "description": "Schema for stored team configurations",
+    "description": "Schema for stored team configurations. Teams are the primary entities that have ratings in the system, including both 1v1 teams (with single players) and multi-player teams.",
     "type": "object",
     "properties": {
         "teams": {
@@ -32,6 +32,11 @@
                         "type": "integer",
                         "minimum": 0,
                         "description": "The team's current ELO rating (starting at 1200)"
+                    },
+                    "tournamentRating": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "The team's tournament rating (starting at 1200)"
                     },
                     "createdAt": {
                         "type": "string",
@@ -169,6 +174,14 @@
                                     "type": "boolean",
                                     "description": "Whether this was a win"
                                 },
+                                "isTournamentMatch": {
+                                    "type": "boolean",
+                                    "description": "Whether this was a tournament match"
+                                },
+                                "tournamentName": {
+                                    "type": "string",
+                                    "description": "Name of the tournament (if applicable)"
+                                },
                                 "date": {
                                     "type": "string",
                                     "format": "date-time",
@@ -191,6 +204,7 @@
                     "teamName",
                     "type",
                     "rating",
+                    "tournamentRating",
                     "createdAt",
                     "wins",
                     "losses",

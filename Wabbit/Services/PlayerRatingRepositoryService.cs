@@ -143,15 +143,20 @@ namespace Wabbit.Services
         {
             lock (_lockObject)
             {
-                // Convert GameType to TeamGameType using simple cast
-                var teamGameType = (Wabbit.Models.TeamGameType)(int)gameType;
+                // For team game types, PlayerRating doesn't have ratings anymore
+                if (gameType != GameType.OneVOne)
+                {
+                    return Task.FromResult(new List<PlayerRating>());
+                }
+
+                // For 1v1, get top players by rating
                 var result = _playerRatings
                     .Where(p => tournamentRatings
-                        ? p.TournamentRatings.ContainsKey(teamGameType) && p.TournamentRatings[teamGameType] > 0
-                        : p.Ratings.ContainsKey(teamGameType) && p.Ratings[teamGameType] > 0)
+                        ? p.TournamentRating > 0
+                        : p.Rating > 0)
                     .OrderByDescending(p => tournamentRatings
-                        ? p.TournamentRatings.GetValueOrDefault(teamGameType, 0)
-                        : p.Ratings.GetValueOrDefault(teamGameType, 0))
+                        ? p.TournamentRating
+                        : p.Rating)
                     .Take(count)
                     .ToList();
 
@@ -232,10 +237,14 @@ namespace Wabbit.Services
         /// <inheritdoc/>
         public async Task<int> ResetRatingsAsync(GameType gameType, bool tournamentRatings = false)
         {
-            int affectedCount = 0;
-            List<PlayerRating> playersToUpdate = new List<PlayerRating>();
-            var teamGameType = (Wabbit.Models.TeamGameType)(int)gameType;
-            int defaultRating = 1200; // Default rating value
+            if (gameType != GameType.OneVOne)
+            {
+                _logger.LogWarning($"Attempted to reset ratings for {gameType}, but PlayerRating only supports OneVOne");
+                return 0;
+            }
+
+            const int defaultRating = 1200;
+            int updatedCount = 0;
 
             lock (_lockObject)
             {
@@ -245,49 +254,43 @@ namespace Wabbit.Services
 
                     if (tournamentRatings)
                     {
-                        if (player.TournamentRatings.ContainsKey(teamGameType))
+                        if (player.TournamentRating != defaultRating)
                         {
-                            player.TournamentRatings[teamGameType] = defaultRating;
+                            player.TournamentRating = defaultRating;
                             updated = true;
                         }
                     }
                     else
                     {
-                        if (player.Ratings.ContainsKey(teamGameType))
+                        if (player.Rating != defaultRating)
                         {
-                            player.Ratings[teamGameType] = defaultRating;
+                            player.Rating = defaultRating;
                             updated = true;
                         }
                     }
 
-                    // Also reset the wins/losses for this game type
-                    if (player.Wins.ContainsKey(teamGameType))
+                    // Also reset the wins/losses
+                    if (player.Wins != 0 || player.Losses != 0)
                     {
-                        player.Wins[teamGameType] = 0;
-                        updated = true;
-                    }
-
-                    if (player.Losses.ContainsKey(teamGameType))
-                    {
-                        player.Losses[teamGameType] = 0;
+                        player.Wins = 0;
+                        player.Losses = 0;
                         updated = true;
                     }
 
                     if (updated)
                     {
-                        affectedCount++;
-                        playersToUpdate.Add(player);
+                        updatedCount++;
                     }
                 }
             }
 
-            // Save changes
-            if (affectedCount > 0)
+            if (updatedCount > 0)
             {
                 await SavePlayerRatingsAsync();
             }
 
-            return affectedCount;
+            _logger.LogInformation($"Reset {updatedCount} player ratings for {gameType} (Tournament: {tournamentRatings})");
+            return updatedCount;
         }
 
         /// <inheritdoc/>
@@ -318,62 +321,59 @@ namespace Wabbit.Services
         {
             var stats = new LeaderboardStats
             {
-                TotalPlayers = _playerRatings.Count
+                TotalPlayers = 0,
+                PlayerCountByGameType = new Dictionary<GameType, int>(),
+                HighestRatingByGameType = new Dictionary<GameType, int>(),
+                AverageRatingByGameType = new Dictionary<GameType, double>(),
+                TotalMatchesByGameType = new Dictionary<GameType, int>()
             };
+
+            // Initialize dictionaries
+            foreach (GameType gameType in Enum.GetValues(typeof(GameType)))
+            {
+                stats.PlayerCountByGameType[gameType] = 0;
+                stats.HighestRatingByGameType[gameType] = 0;
+                stats.AverageRatingByGameType[gameType] = 0;
+                stats.TotalMatchesByGameType[gameType] = 0;
+            }
 
             lock (_lockObject)
             {
-                // Initialize dictionaries
-                foreach (var gameType in Enum.GetValues(typeof(GameType)).Cast<GameType>())
-                {
-                    stats.PlayerCountByGameType[gameType] = 0;
-                    stats.HighestRatingByGameType[gameType] = 0;
-                    stats.AverageRatingByGameType[gameType] = 0;
-                    stats.TotalMatchesByGameType[gameType] = 0;
-                }
+                stats.TotalPlayers = _playerRatings.Count;
 
-                // Process all players
+                // We only have 1v1 ratings now
+                var gameType = GameType.OneVOne;
+                int totalRating = 0;
+                int ratedPlayerCount = 0;
+
                 foreach (var player in _playerRatings)
                 {
-                    // Check ratings for each game type
-                    foreach (var gameType in Enum.GetValues(typeof(GameType)).Cast<GameType>())
+                    // Check if player has a rating
+                    if (player.Rating > 0)
                     {
-                        var teamGameType = (Wabbit.Models.TeamGameType)(int)gameType;
+                        stats.PlayerCountByGameType[gameType]++;
+                        totalRating += player.Rating;
+                        ratedPlayerCount++;
 
-                        // Check if player has this rating
-                        if (player.Ratings.ContainsKey(teamGameType))
+                        // Check if this is the highest rating
+                        if (player.Rating > stats.HighestRatingByGameType[gameType])
                         {
-                            var rating = player.Ratings[teamGameType];
-                            if (rating > 0)
-                            {
-                                stats.PlayerCountByGameType[gameType]++;
-                                stats.HighestRatingByGameType[gameType] = Math.Max(stats.HighestRatingByGameType[gameType], rating);
-                                stats.AverageRatingByGameType[gameType] += rating;
-                            }
+                            stats.HighestRatingByGameType[gameType] = player.Rating;
                         }
                     }
 
                     // Count total matches
-                    foreach (var gameType in Enum.GetValues(typeof(GameType)).Cast<GameType>())
-                    {
-                        var teamGameType = (Wabbit.Models.TeamGameType)(int)gameType;
-                        int wins = player.Wins.GetValueOrDefault(teamGameType, 0);
-                        int losses = player.Losses.GetValueOrDefault(teamGameType, 0);
-                        stats.TotalMatchesByGameType[gameType] += wins + losses;
-                    }
+                    stats.TotalMatchesByGameType[gameType] += player.Wins + player.Losses;
                 }
 
-                // Calculate averages
-                foreach (var gameType in Enum.GetValues(typeof(GameType)).Cast<GameType>())
+                // Calculate average rating
+                if (ratedPlayerCount > 0)
                 {
-                    if (stats.PlayerCountByGameType[gameType] > 0)
-                    {
-                        stats.AverageRatingByGameType[gameType] /= stats.PlayerCountByGameType[gameType];
-                    }
+                    stats.AverageRatingByGameType[gameType] = (double)totalRating / ratedPlayerCount;
                 }
-
-                return Task.FromResult(stats);
             }
+
+            return Task.FromResult(stats);
         }
 
         /// <summary>

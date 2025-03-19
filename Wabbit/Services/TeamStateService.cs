@@ -137,7 +137,7 @@ namespace Wabbit.Services
                 int teamsOfTypeCount = 0;
                 foreach (var teamId in teamIds)
                 {
-                    if (_activeTeams.TryGetValue(teamId, out var team) && team.TeamGameType == type)
+                    if (_activeTeams.TryGetValue(teamId, out var team) && team.GameType == type)
                     {
                         teamsOfTypeCount++;
                     }
@@ -248,10 +248,10 @@ namespace Wabbit.Services
         /// <summary>
         /// Get teams a player is a member of by type
         /// </summary>
-        public async Task<List<Team>> GetPlayerTeamsByTypeAsync(ulong userId, Wabbit.Models.TeamGameType type)
+        public async Task<List<Team>> GetPlayerTeamsByTypeAsync(ulong userId, TeamGameType type)
         {
             var allTeams = await GetPlayerTeamsAsync(userId);
-            return allTeams.Where(t => t.TeamGameType == type).ToList();
+            return allTeams.Where(t => t.GameType == type).ToList();
         }
 
         /// <summary>
