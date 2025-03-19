@@ -209,7 +209,8 @@ namespace {namespaceName}
                     if (attribute.ConstructorArguments.Length > 0 &&
                         attribute.ConstructorArguments[0].Value != null)
                     {
-                        return attribute.ConstructorArguments[0].Value.ToString();
+                        object value = attribute.ConstructorArguments[0].Value;
+                        return value.ToString();
                     }
                 }
             }

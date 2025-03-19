@@ -85,7 +85,7 @@ namespace Wabbit.BotClient.Commands
                     tournamentFormat,
                     context.User,
                     signupChannelId.Value,
-                    parsedGameType,
+                    (TournamentGameType)(int)parsedGameType,
                     scheduledStartTime
                 );
 
