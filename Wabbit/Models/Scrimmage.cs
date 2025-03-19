@@ -53,11 +53,6 @@ namespace Wabbit.Models
         public DiscordMessage? StatusMessage { get; set; }
 
         /// <summary>
-        /// The type of game being played (1v1, 2v2, etc.)
-        /// </summary>
-        public ScrimmageGameType GameType { get; set; } = ScrimmageGameType.OneVOne;
-
-        /// <summary>
         /// The length of the match (best of 1, 3 or 5)
         /// </summary>
         public MatchLength MatchLength { get; set; } = MatchLength.Bo1;

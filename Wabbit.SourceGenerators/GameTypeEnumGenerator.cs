@@ -206,17 +206,21 @@ namespace {namespaceName}
                     }
 
                     // If no named arguments found, try the constructor arguments
-                    if (attribute.ConstructorArguments.Length > 0 &&
-                        attribute.ConstructorArguments[0].Value != null)
+                    if (attribute.ConstructorArguments.Length > 0)
                     {
-                        object value = attribute.ConstructorArguments[0].Value;
-                        return value.ToString();
+                        // Fix for line 212 (CS8600: Converting null literal or possible null value to non-nullable type)
+                        var argValue = attribute.ConstructorArguments[0].Value;
+
+                        // Fix for line 213 (CS8602: Dereference of a possibly null reference)
+                        if (argValue != null)
+                        {
+                            return argValue.ToString();
+                        }
                     }
                 }
             }
 
-            // If no Display attribute was found or the Name property couldn't be extracted,
-            // just return the member name as fallback
+            // If we get here, fall back to the member name
             return member.Name;
         }
 
