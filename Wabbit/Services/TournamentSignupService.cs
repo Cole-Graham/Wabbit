@@ -435,7 +435,7 @@ namespace Wabbit.Services
             TournamentFormat format,
             DiscordUser creator,
             ulong signupChannelId,
-            TournamentGameType gameType = TournamentGameType.OneVOne,
+            SignupGameType gameType = SignupGameType.OneVOne,
             DateTime? scheduledStartTime = null)
         {
             // Check if signup already exists
@@ -448,7 +448,7 @@ namespace Wabbit.Services
             {
                 Name = name,
                 Format = format,
-                GameType = gameType.ToSignupGameType(),
+                GameType = gameType,
                 CreatedBy = creator,
                 CreatorId = creator.Id,
                 CreatorUsername = creator.Username,
@@ -730,9 +730,8 @@ namespace Wabbit.Services
             // Add Format field
             builder.AddField("Format", signup.Format.ToString(), true);
 
-            // Add Game Type field - show 1v1 or 2v2
-            string gameType = signup.GameType.ToTournamentGameType() == TournamentGameType.OneVOne ? "1v1" : "2v2";
-            builder.AddField("Game Type", gameType, true);
+            // Add Game Type field
+            builder.AddField("Game Type", signup.GameType.ToDisplayString(), true);
 
             // Add Scheduled Start Time field if available
             if (signup.ScheduledStartTime.HasValue)

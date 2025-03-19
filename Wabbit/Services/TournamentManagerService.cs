@@ -71,7 +71,7 @@ namespace Wabbit.Services
             {
                 Name = name,
                 Format = format,
-                TournamentGameType = gameType,
+                GameType = gameType,
                 AnnouncementChannel = announcementChannel
             };
 
@@ -193,12 +193,11 @@ namespace Wabbit.Services
             TournamentFormat format,
             DiscordUser creator,
             ulong signupChannelId,
-            GameType gameType = GameType.OneVOne,
+            SignupGameType gameType = SignupGameType.OneVOne,
             DateTime? scheduledStartTime = null)
         {
             // Convert GameType to TournamentGameType
-            var tournamentGameType = (TournamentGameType)(int)gameType;
-            return _signupService.CreateSignup(name, format, creator, signupChannelId, tournamentGameType, scheduledStartTime);
+            return _signupService.CreateSignup(name, format, creator, signupChannelId, gameType, scheduledStartTime);
         }
 
         /// <summary>
@@ -364,7 +363,7 @@ namespace Wabbit.Services
                 int bestOf = match.Group != null ? 1 : 3; // Bo1 for group stage, Bo3 for playoffs
 
                 // Check what game type we're dealing with
-                if (tournament.TournamentGameType == TournamentGameType.OneVOne && match.TeamA.Count == 1 && match.TeamB.Count == 1)
+                if (tournament.GameType == TournamentGameType.OneVOne && match.TeamA.Count == 1 && match.TeamB.Count == 1)
                 {
                     // Find if there's an existing match object for this pair in the group
                     Tournament.Match? existingMatch = null;
@@ -424,10 +423,10 @@ namespace Wabbit.Services
                 return pendingMatches;
             }
 
-            _logger.LogInformation($"Generating matches for tournament {tournament.Name} with game type {tournament.TournamentGameType}");
+            _logger.LogInformation($"Generating matches for tournament {tournament.Name} with game type {tournament.GameType}");
 
             // Handle different game types
-            switch (tournament.TournamentGameType)
+            switch (tournament.GameType)
             {
                 case TournamentGameType.OneVOne:
                     _logger.LogInformation("Using 1v1 match generation");
@@ -438,7 +437,7 @@ namespace Wabbit.Services
                     return Generate2v2Matches(tournament);
 
                 default:
-                    _logger.LogWarning($"Unrecognized game type: {tournament.TournamentGameType}, falling back to 1v1 matches");
+                    _logger.LogWarning($"Unrecognized game type: {tournament.GameType}, falling back to 1v1 matches");
                     return Generate1v1Matches(tournament);
             }
         }
@@ -731,7 +730,7 @@ namespace Wabbit.Services
             {
                 Name = name,
                 Format = format,
-                TournamentGameType = gameType,
+                GameType = gameType,
                 AnnouncementChannel = announcementChannel
             };
 

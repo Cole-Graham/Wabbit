@@ -275,8 +275,10 @@ namespace Wabbit.BotClient.Commands
     {
         private static readonly IEnumerable<DiscordApplicationCommandOptionChoice> gameTypes = new DiscordApplicationCommandOptionChoice[]
         {
-            new("1v1", "OneVsOne"),
-            new("2v2", "TwoVsTwo"),
+            new("1v1", "OneVOne"),
+            new("2v2", "TwoVTwo"),
+            new("3v3", "ThreeVThree"),
+            new("4v4", "FourVFour"),
         };
 
         public ValueTask<IEnumerable<DiscordApplicationCommandOptionChoice>> ProvideAsync(CommandParameter parameter)

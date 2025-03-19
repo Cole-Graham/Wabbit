@@ -20,7 +20,7 @@ namespace Wabbit.Services.Interfaces
             TournamentFormat format,
             DiscordUser creator,
             ulong signupChannelId,
-            TournamentGameType gameType = TournamentGameType.OneVOne,
+            SignupGameType gameType = SignupGameType.OneVOne,
             DateTime? scheduledStartTime = null);
 
         /// <summary>

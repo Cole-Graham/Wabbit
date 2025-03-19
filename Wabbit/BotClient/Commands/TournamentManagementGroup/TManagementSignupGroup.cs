@@ -54,7 +54,7 @@ namespace Wabbit.BotClient.Commands
                 _logger.LogInformation($"Parsed tournament format: {tournamentFormat}");
 
                 // Parse game type
-                if (!Enum.TryParse<GameType>(gameType, out var parsedGameType))
+                if (!Enum.TryParse<SignupGameType>(gameType, out var parsedGameType))
                 {
                     _logger.LogError($"Invalid game type: {gameType}");
                     throw new InvalidOperationException($"Invalid game type: {gameType}");
@@ -79,13 +79,13 @@ namespace Wabbit.BotClient.Commands
 
                 _logger.LogInformation($"Creating signup with parameters: Name='{name}', Format={tournamentFormat}, GameType={parsedGameType}, ScheduledStartTime={scheduledStartTime}");
 
-                // Create the signup
+                // Create the signup - pass SignupGameType directly
                 var signup = _signupService.CreateSignup(
                     name,
                     tournamentFormat,
                     context.User,
                     signupChannelId.Value,
-                    (TournamentGameType)(int)parsedGameType,
+                    parsedGameType,  // No conversion needed
                     scheduledStartTime
                 );
 
