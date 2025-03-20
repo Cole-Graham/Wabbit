@@ -1,0 +1,97 @@
+@startuml Tournament System
+
+title Tournament System Architecture
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+
+' Organize models in a vertical layout
+package "Models" {
+    class Tournament {
+        +Name
+        +Groups
+        +PlayoffMatches
+        +CurrentStage
+        +Format
+        +GameType
+    }
+    
+    class Group {
+        +Name
+        +Participants
+        +Matches
+        +IsComplete
+    }
+    
+    class Match {
+        +Id
+        +Type
+        +Participants
+        +Result
+        +IsComplete
+    }
+    
+    class Round {
+        +Name
+        +Teams
+        +Maps
+        +CurrentStage
+        +IsCompleted
+    }
+    
+    ' Arrange models vertically with relationships
+    Tournament -[hidden]-> Group
+    Group -[hidden]-> Match
+    Match -[hidden]-> Round
+    
+    Tournament *-- "0..*" Group
+    Tournament *-- "0..*" Match
+    Group *-- "0..*" Match
+    Match --o "0..1" Round
+}
+
+' Create vertical separation
+Models -[hidden]-> Services
+
+package "Services" {
+    interface ITournamentService
+    interface ITournamentManagerService
+    interface ITournamentGroupService
+    interface ITournamentPlayoffService
+    interface ITournamentMatchService
+    interface ITournamentStateService
+    
+    ' Arrange services vertically
+    ITournamentService -[hidden]-> ITournamentManagerService
+    ITournamentManagerService -[hidden]-> ITournamentGroupService
+    ITournamentGroupService -[hidden]-> ITournamentPlayoffService
+    ITournamentPlayoffService -[hidden]-> ITournamentMatchService
+    ITournamentMatchService -[hidden]-> ITournamentStateService
+    
+    ITournamentService -- Tournament
+    ITournamentGroupService -- Group
+    ITournamentPlayoffService -- Match
+    ITournamentMatchService -- Round
+}
+
+' Create vertical separation
+Services -[hidden]-> Commands
+
+package "Commands" {
+    class TournamentManagementGroup {
+        +CreateTournamentFromSignup()
+        +ShowStandings()
+        +ListTournaments()
+        +StartGroupStageMatches()
+    }
+}
+
+' Show relationships vertically where possible
+TournamentManagementGroup --> ITournamentService
+TournamentManagementGroup --> ITournamentManagerService
+TournamentManagementGroup --> ITournamentGroupService
+TournamentManagementGroup --> ITournamentPlayoffService
+
+@enduml 

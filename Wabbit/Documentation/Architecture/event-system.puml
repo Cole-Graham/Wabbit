@@ -1,0 +1,128 @@
+@startuml Event Handling System
+
+title Event Handling System
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+
+package "Event Handlers" {
+    class ComponentInteractionHandler {
+        +HandleEventAsync()
+    }
+    class ModalInteractionHandler {
+        +HandleEventAsync()
+    }
+    
+    ' Vertical layout
+    ComponentInteractionHandler -[hidden]-> ModalInteractionHandler
+}
+
+' Vertical separation
+EventHandlers -[hidden]-> Factories
+
+package "Factories" {
+    class ComponentHandlerFactory {
+        +CreateHandler()
+    }
+    class ModalHandlerFactory {
+        +CreateHandler()
+    }
+    
+    ' Vertical layout
+    ComponentHandlerFactory -[hidden]-> ModalHandlerFactory
+}
+
+' Vertical separation
+Factories -[hidden]-> ComponentHandlers
+
+package "Component Handlers" {
+    abstract ComponentHandlerBase {
+        +CanHandle()
+        +HandleAsync()
+    }
+    
+    class TournamentSignupHandler
+    class MapBanHandler
+    class GameResultHandler
+    class DeckSubmissionHandler
+    class SeasonHandler
+    class ScrimmageComponentHandler
+    class LeaderboardHandler
+    class RefreshStatusHandler
+    
+    ' Vertical layout for components
+    ComponentHandlerBase -[hidden]-> TournamentSignupHandler
+    TournamentSignupHandler -[hidden]-> MapBanHandler
+    MapBanHandler -[hidden]-> GameResultHandler
+    GameResultHandler -[hidden]-> DeckSubmissionHandler
+    DeckSubmissionHandler -[hidden]-> SeasonHandler
+    SeasonHandler -[hidden]-> ScrimmageComponentHandler
+    ScrimmageComponentHandler -[hidden]-> LeaderboardHandler
+    LeaderboardHandler -[hidden]-> RefreshStatusHandler
+    
+    TournamentSignupHandler --|> ComponentHandlerBase
+    MapBanHandler --|> ComponentHandlerBase
+    GameResultHandler --|> ComponentHandlerBase
+    DeckSubmissionHandler --|> ComponentHandlerBase
+    SeasonHandler --|> ComponentHandlerBase
+    ScrimmageComponentHandler --|> ComponentHandlerBase
+    LeaderboardHandler --|> ComponentHandlerBase
+    RefreshStatusHandler --|> ComponentHandlerBase
+}
+
+' Vertical separation
+ComponentHandlers -[hidden]-> ModalHandlers
+
+package "Modal Handlers" {
+    abstract ModalHandlerBase {
+        +CanHandle()
+        +HandleAsync()
+    }
+    
+    class MapBanModalHandler
+    class DeckSubmissionModalHandler
+    class TournamentCreationModalHandler
+    class ScrimmageCreationModalHandler
+    class TeamCreationModalHandler
+    
+    ' Vertical layout for modals
+    ModalHandlerBase -[hidden]-> MapBanModalHandler
+    MapBanModalHandler -[hidden]-> DeckSubmissionModalHandler
+    DeckSubmissionModalHandler -[hidden]-> TournamentCreationModalHandler
+    TournamentCreationModalHandler -[hidden]-> ScrimmageCreationModalHandler
+    ScrimmageCreationModalHandler -[hidden]-> TeamCreationModalHandler
+    
+    MapBanModalHandler --|> ModalHandlerBase
+    DeckSubmissionModalHandler --|> ModalHandlerBase
+    TournamentCreationModalHandler --|> ModalHandlerBase
+    ScrimmageCreationModalHandler --|> ModalHandlerBase
+    TeamCreationModalHandler --|> ModalHandlerBase
+}
+
+' Arrange main relationships vertically
+ComponentInteractionHandler --> ComponentHandlerFactory
+ModalInteractionHandler --> ModalHandlerFactory
+
+ComponentHandlerFactory ..> ComponentHandlerBase : creates
+ModalHandlerFactory ..> ModalHandlerBase : creates
+
+' Vertical separation
+ModalHandlers -[hidden]-> ServiceDependencies
+
+package "Service Dependencies" {
+    ' Stack service dependencies vertically
+    TournamentSignupHandler --> "ITournamentSignupService"
+    TournamentSignupHandler --> "ITournamentService"
+    MapBanHandler --> "IMatchStatusService"
+    MapBanHandler --> "ITournamentMapService"
+    GameResultHandler --> "ITournamentGameService"
+    DeckSubmissionHandler --> "IMatchStatusService"
+    SeasonHandler --> "ISeasonService"
+    ScrimmageComponentHandler --> "IScrimmageService"
+    LeaderboardHandler --> "ILeaderboardService"
+    RefreshStatusHandler --> "IMatchStatusService"
+}
+
+@enduml 

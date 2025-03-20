@@ -1,0 +1,71 @@
+@startuml Wabbit Bot Overview
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+
+title Wabbit Bot System Overview
+
+caption High-level system overview showing major components and their relationships
+
+' Define system layers as packages
+package "Command/UI Layer" as UILayer {
+    [Tournament Commands] as TournamentCommands
+    [Team Commands] as TeamCommands
+    [Scrimmage Commands] as ScrimmageCommands
+    [Season Commands] as SeasonCommands
+    [Admin Commands] as AdminCommands
+}
+
+package "Event Handling" as EventLayer {
+    [Component Handlers] as ComponentHandlers
+    [Modal Handlers] as ModalHandlers
+}
+
+package "Service Layer" as ServiceLayer {
+    [Tournament Services] as TournamentServices
+    [Team Services] as TeamServices
+    [Rating Services] as RatingServices
+    [Scrimmage Services] as ScrimmageServices
+    [Season Services] as SeasonServices
+    [Map Services] as MapServices
+    [Permission Services] as PermissionServices
+}
+
+package "Data Layer" as DataLayer {
+    [JSON Files] as JsonFiles
+    [Discord State] as DiscordState
+}
+
+' Create a vertical flow
+UILayer -[hidden]-> EventLayer
+EventLayer -[hidden]-> ServiceLayer
+ServiceLayer -[hidden]-> DataLayer
+
+' Main relationships (use vertical arrows where possible)
+UILayer --> EventLayer
+UILayer --> ServiceLayer
+EventLayer --> ServiceLayer
+ServiceLayer --> DataLayer
+
+' Detailed relationships - organize to minimize width
+TournamentCommands --> TournamentServices
+TeamCommands --> TeamServices
+ScrimmageCommands --> ScrimmageServices
+SeasonCommands --> SeasonServices
+
+ComponentHandlers --> TournamentServices
+ComponentHandlers --> TeamServices
+ComponentHandlers --> ScrimmageServices
+ModalHandlers --> TournamentServices
+ModalHandlers --> TeamServices
+
+TournamentServices --> JsonFiles
+TournamentServices --> DiscordState
+TeamServices --> JsonFiles
+ScrimmageServices --> JsonFiles
+SeasonServices --> JsonFiles
+RatingServices --> JsonFiles
+
+@enduml 

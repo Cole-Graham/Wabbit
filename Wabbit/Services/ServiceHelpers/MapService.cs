@@ -217,6 +217,38 @@ namespace Wabbit.Services.ServiceHelpers
 
             return true;
         }
+
+        /// <summary>
+        /// Gets a list of map names that match the specified pool type and size
+        /// </summary>
+        /// <param name="isInTournamentPool">True to get tournament maps, false for casual maps</param>
+        /// <param name="mapSize">The map size to filter by (e.g., "1v1" or "2v2")</param>
+        /// <returns>A list of map names that match the criteria</returns>
+        public List<string> GetMapsByPoolTypeAndSize(bool isInTournamentPool, string mapSize)
+        {
+            try
+            {
+                if (Maps.MapCollection == null)
+                {
+                    _logger.LogError("Map collection is null when getting maps by pool type and size");
+                    return new List<string>();
+                }
+
+                return Maps.MapCollection
+                    .Where(m =>
+                        m != null &&
+                        !string.IsNullOrEmpty(m.Name) &&
+                        m.Size == mapSize &&
+                        (isInTournamentPool ? m.IsInTournamentPool : m.IsInRandomPool))
+                    .Select(m => m.Name)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error filtering maps by pool type and size");
+                return new List<string>();
+            }
+        }
     }
 
     /// <summary>

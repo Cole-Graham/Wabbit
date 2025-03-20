@@ -1,6 +1,7 @@
 using DSharpPlus.Entities;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Wabbit.Models.Rating
 {

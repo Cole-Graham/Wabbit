@@ -89,6 +89,31 @@ namespace Wabbit.Models
         public DateTimeOffset? CompletedAt { get; set; }
 
         /// <summary>
+        /// The results of individual games: 1 for Team A winning, 2 for Team B winning
+        /// </summary>
+        public List<int> Results { get; set; } = [];
+
+        /// <summary>
+        /// Maps banned by Team A
+        /// </summary>
+        public List<string> TeamAMapBans { get; set; } = [];
+
+        /// <summary>
+        /// Maps banned by Team B
+        /// </summary>
+        public List<string> TeamBMapBans { get; set; } = [];
+
+        /// <summary>
+        /// Unconfirmed map bans for Team A
+        /// </summary>
+        public List<string> TeamAUnconfirmedMapBans { get; set; } = [];
+
+        /// <summary>
+        /// Unconfirmed map bans for Team B
+        /// </summary>
+        public List<string> TeamBUnconfirmedMapBans { get; set; } = [];
+
+        /// <summary>
         /// Creates a new scrimmage between two players (1v1)
         /// </summary>
         /// <param name="thread">Discord thread for the scrimmage</param>

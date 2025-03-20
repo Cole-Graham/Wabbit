@@ -63,5 +63,13 @@ namespace Wabbit.Services.Interfaces
         /// <param name="errorMessage">Error message if validation fails</param>
         /// <returns>True if valid, false otherwise</returns>
         bool ValidateMap(string mapName, out string? errorMessage);
+
+        /// <summary>
+        /// Gets a list of map names that match the specified pool type and size
+        /// </summary>
+        /// <param name="isInTournamentPool">True to get tournament maps, false for casual maps</param>
+        /// <param name="mapSize">The map size to filter by (e.g., "1v1" or "2v2")</param>
+        /// <returns>A list of map names that match the criteria</returns>
+        List<string> GetMapsByPoolTypeAndSize(bool isInTournamentPool, string mapSize);
     }
 }

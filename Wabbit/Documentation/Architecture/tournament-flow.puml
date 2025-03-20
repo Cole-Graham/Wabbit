@@ -1,0 +1,71 @@
+@startuml Tournament Flow
+
+title Tournament Execution Flow
+
+skinparam backgroundColor white
+skinparam sequenceArrowThickness 2
+skinparam sequenceParticipant underline
+skinparam maxMessageSize 100
+skinparam responseMessageBelowArrow true
+
+actor Admin
+participant TManagement as "Tournament\nManagement"
+participant TManager as "Tournament\nManager"
+participant TState as "Tournament\nState"
+participant TPlayoff as "Tournament\nPlayoff"
+participant TMatch as "Tournament\nMatch"
+participant Discord as "Discord\nUtilities"
+
+== Tournament Creation ==
+
+Admin -> TManagement: Create Tournament
+TManagement -> TManager: CreateTournamentAsync()
+TManager -> TState: SaveTournamentStateAsync()
+
+== Group Stage ==
+
+Admin -> TManagement: Start Group Stage
+TManagement -> TManager: StartGroupStage()
+TManager -> TManager: GeneratePendingMatches()
+TManager -> TMatch: CreateAndStart1v1Match()
+TMatch -> Discord: CreateThreadAsync()
+
+== Match Execution ==
+
+participant MapBan as "Map Ban\nHandler"
+participant DeckSub as "Deck Submission\nHandler"
+participant GameResult as "Game Result\nHandler"
+
+Admin -> TManagement: View Status
+TManagement -> TState: GetMatchStatusAsync()
+
+MapBan -> TMatch: RecordMapBanAsync()
+DeckSub -> TMatch: HandleDeckSubmissionAsync()
+GameResult -> TMatch: HandleGameResultAsync()
+
+== Playoff Stage ==
+
+Admin -> TManagement: Start Playoffs
+TManagement -> TPlayoff: SetupPlayoffsAsync()
+TPlayoff -> TManager: Generate1v1Matches()
+TManager -> TMatch: CreateAndStartMatch()
+
+== Match Completion ==
+
+TMatch -> TManager: HandleMatchCompletionEvent()
+TManager -> TPlayoff: UpdateBracketAdvancementAsync()
+TPlayoff -> TState: SaveTournamentStateAsync()
+
+== Tournament Recovery ==
+note over TManagement, TState
+  Tournament recovery flow (if needed)
+end note
+
+Admin -> TManagement: Recover Threads
+TManagement -> TState: ValidateAndRecoverThreadsAsync()
+TState -> Discord: CreateThreadAsync()
+TState -> TState: RebuildMatchThreadAssociationsAsync()
+TState -> TState: RecoverMatchStatusEmbedsAsync()
+TState -> TManagement: Return Results
+
+@enduml 

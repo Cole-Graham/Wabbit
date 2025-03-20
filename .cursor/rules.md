@@ -19,6 +19,35 @@ The following rule files contain specific guidelines:
 - Language: C# 12
 - Discord API: DSharpPlus 5.0.0-nightly-02454
 
+## Development Stage Focus
+
+- This is a Discord bot in active development stage
+- We do NOT need to worry about backward compatibility
+- Breaking changes are acceptable
+- Focus on creating a clean, maintainable codebase
+
+## Delete Redundancy Immediately
+
+- When replacing components (services, interfaces, etc.), DELETE the old ones IMMEDIATELY
+- Do not wait until the end of the refactoring to clean up
+- If you find redundant code, propose deleting it right away
+- Every time you create something new, delete what it's replacing
+
+## Avoid Duplication Before Creating
+
+Before creating any new class, method, interface, or attribute:
+- ALWAYS check if something similar already exists in the codebase
+- Search for similar names, patterns, or functionality
+- Check if existing code can be adapted/refactored rather than duplicated
+- If similar functionality exists but isn't accessible the right way, refactor the existing code
+
+## Consolidation Over Addition
+
+- Focus on REDUCING the total lines of code in the codebase
+- One flexible, well-designed method is better than multiple specialized ones
+- Prefer polymorphism and optional parameters over overloads
+- Extract common logic to shared methods
+
 ## Important Principles
 
 1. **Type Safety** - Prefer strongly-typed approaches over dynamic or stringly-typed approaches
@@ -39,12 +68,18 @@ The following rule files contain specific guidelines:
 
 ## Permission Handling
 
-1. Always use Discord's built-in permission system for checking admin privileges:
+1. Always use Discord's built-in permission system for checking privileges:
    - Check for `DiscordPermission.Administrator` or server owner status
    - Consider appropriate moderator permissions like `DiscordPermission.ManageGuild`
    - Do NOT use custom admin lists or hardcoded user IDs
-2. Create proper permission checking methods in services
-3. Apply consistent permission checks in command handlers
-4. Use appropriate error messages for permission failures
+   - Avoid using "admin" unless specifically referring to Discord Administrator role
+   - Use "management privileges" instead of "admin privileges"
+   - Use "managementOverride" instead of "adminOverride" for parameters
+2. Discord whitelist role should be the primary access gate for all commands related to competitive ladder and tournament
+3. Attributes should be used for fine-grained access control
+4. Permission checks should happen at the earliest possible point
+5. Create proper permission checking methods in services
+6. Apply consistent permission checks in command handlers
+7. Use appropriate error messages for permission failures
 
 Always refer to the specific rules files for detailed guidance on particular topics. 

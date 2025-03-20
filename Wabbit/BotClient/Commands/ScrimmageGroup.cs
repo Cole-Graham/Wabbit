@@ -222,6 +222,71 @@ namespace Wabbit.BotClient.Commands
                 "This scrimmage has been cancelled."));
         }
 
+        [Command("submit_deck")]
+        [Description("Submit a deck code for your current scrimmage match")]
+        public async Task SubmitDeck(
+            CommandContext context,
+            [Description("Your deck code")] string deckCode)
+        {
+            await context.DeferResponseAsync();
+
+            try
+            {
+                // Check if used in a private thread (scrimmage matches use private threads)
+                if (context.Channel.Type != DiscordChannelType.PrivateThread)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "This command can only be used in scrimmage match threads."));
+                    return;
+                }
+
+                // Find the scrimmage for this thread
+                var threadId = context.Channel.Id;
+                var scrimmage = await _scrimmageService.GetScrimmageByThreadIdAsync(threadId);
+
+                if (scrimmage == null)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "No active scrimmage found for this thread."));
+                    return;
+                }
+
+                // Check if the user is a participant in this scrimmage
+                bool isParticipant = scrimmage.TeamA.Captain.Id == context.User.Id ||
+                                    scrimmage.TeamB.Captain.Id == context.User.Id ||
+                                    scrimmage.TeamA.Members.Any(m => m.Id == context.User.Id) ||
+                                    scrimmage.TeamB.Members.Any(m => m.Id == context.User.Id);
+
+                if (!isParticipant)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "You are not a participant in this scrimmage match."));
+                    return;
+                }
+
+                // Submit the deck code directly
+                await _scrimmageService.SubmitDeckCodeAsync(scrimmage, context.User, deckCode);
+
+                // Create confirmation message
+                var confirmEmbed = new DiscordEmbedBuilder()
+                    .WithTitle("Deck Code Submitted")
+                    .WithDescription("Your deck code has been submitted successfully.")
+                    .AddField("Deck Code", deckCode)
+                    .WithColor(DiscordColor.Green);
+
+                // Send the confirmation message
+                await context.EditResponseAsync(
+                    new DiscordWebhookBuilder()
+                        .WithContent($"{context.User.Mention} Your deck has been submitted!")
+                        .AddEmbed(confirmEmbed));
+            }
+            catch (Exception ex)
+            {
+                await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                    $"Error submitting deck: {ex.Message}"));
+            }
+        }
+
         [Command("set_scrimmage_channel")]
         [Description("Set the designated scrimmage channel")]
         public async Task SetScrimmageChannel(

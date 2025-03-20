@@ -1,0 +1,103 @@
+@startuml Map System
+
+title Map System Architecture
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+
+package "Models" {
+    class Map {
+        +Name
+        +Id
+        +Thumbnail
+        +IsInTournamentPool
+    }
+}
+
+' Vertical separation
+Models -[hidden]-> Services
+
+package "Services" {
+    interface IMapService {
+        +GetMapByName()
+        +CreateMapEmbed()
+        +GetMapThumbnailAsync()
+        +SendMapEmbedAsync()
+        +IsMapInPool()
+        +ValidateMap()
+        +GetMapsByPoolTypeAndSize()
+    }
+    
+    interface ITournamentMapService {
+        +GetTournamentMapPool()
+        +GetRandomMap()
+        +GetRandomMaps()
+        +GenerateMapList()
+        +ValidateMapBans()
+        +GenerateMapListBo1()
+        +GenerateMapListBo3()
+        +GenerateMapListBo5()
+        +GetRandomMapWithVisualization()
+        +GetRandomMapForNextGame()
+    }
+    
+    class MapService
+    class TournamentMapService
+    
+    ' Vertical layout
+    IMapService -[hidden]-> ITournamentMapService
+    ITournamentMapService -[hidden]-> MapService
+    MapService -[hidden]-> TournamentMapService
+    
+    MapService ..|> IMapService
+    TournamentMapService ..|> ITournamentMapService
+    TournamentMapService --> IMapService
+}
+
+' Vertical separation
+Services -[hidden]-> Helpers
+
+package "Helpers" {
+    class MapBanHelpers <<static>> {
+        +ProcessMapBanSelection()
+        +ValidateMapBans()
+        +DetermineMapPool()
+        +HandleMapBanConfirmation()
+    }
+    
+    class StatusEmbedHelpers <<static>> {
+        +AddMapBanSection()
+    }
+    
+    class ComponentHelpers <<static>> {
+        +CreateMapBanDropdown()
+    }
+    
+    ' Vertical layout
+    MapBanHelpers -[hidden]-> StatusEmbedHelpers
+    StatusEmbedHelpers -[hidden]-> ComponentHelpers
+}
+
+' Vertical separation
+Helpers -[hidden]-> Handlers
+
+package "Handlers" {
+    class MapBanHandler
+    class MapBanModalHandler
+    
+    ' Vertical layout
+    MapBanHandler -[hidden]-> MapBanModalHandler
+}
+
+' Organize relationships for vertical flow
+MapBanHandler --> ITournamentMapService
+MapBanModalHandler --> ITournamentMapService
+MapBanHelpers --> IMapService
+MapBanHelpers --> ITournamentMapService
+
+StatusEmbedHelpers ..> "Map information" : uses
+ComponentHelpers ..> ITournamentMapService : gets map options
+
+@enduml 

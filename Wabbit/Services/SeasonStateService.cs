@@ -24,7 +24,7 @@ namespace Wabbit.Services
         private readonly ILogger<SeasonStateService> _logger;
         private readonly ISeasonRepositoryService _seasonRepository;
         private readonly IPlayerRatingRepositoryService _playerRatingRepository;
-        private readonly ITeamRepositoryService _teamRepository;
+        private readonly ITeamService _teamService;
         private readonly Dictionary<string, Season> _seasons;
         private string? _currentSeasonId;
         private readonly List<ulong> _admins;
@@ -39,13 +39,13 @@ namespace Wabbit.Services
             ILogger<SeasonStateService> logger,
             ISeasonRepositoryService seasonRepository,
             IPlayerRatingRepositoryService playerRatingRepository,
-            ITeamRepositoryService teamRepository,
+            ITeamService teamService,
             DiscordClient discordClient)
         {
             _logger = logger;
             _seasonRepository = seasonRepository;
             _playerRatingRepository = playerRatingRepository;
-            _teamRepository = teamRepository;
+            _teamService = teamService;
             _seasons = new Dictionary<string, Season>();
             _admins = new List<ulong>(); // Will be populated during initialization
             _isInitialized = false;

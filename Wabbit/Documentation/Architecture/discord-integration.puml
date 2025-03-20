@@ -1,0 +1,148 @@
+@startuml Discord Integration
+
+title Discord Integration Architecture
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+skinparam nodesep 50
+skinparam ranksep 80
+
+package "Discord API" as DiscordAPI {
+    [Guild Channels] as Channels
+    [Guild Members] as Members
+    [Threads] as Threads
+    [Messages] as Messages
+    [Components] as Components
+    [Commands] as DiscordCommands
+    [Events] as DiscordEvents
+    
+    ' Vertical layout for API components
+    Channels -[hidden]-> Members
+    Members -[hidden]-> Threads
+    Threads -[hidden]-> Messages
+    Messages -[hidden]-> Components
+    Components -[hidden]-> DiscordCommands
+    DiscordCommands -[hidden]-> DiscordEvents
+}
+
+' Vertical separation
+DiscordAPI -[hidden]-> BotClient
+
+package "Bot Client" as BotClient {
+    [Command Handlers] as CommandHandlers
+    [Event Handlers] as EventHandlers
+    [Discord Client] as Client
+    [Service Registration] as ServiceRegistration
+    
+    ' Vertical layout for bot client
+    CommandHandlers -[hidden]-> EventHandlers
+    EventHandlers -[hidden]-> Client
+    Client -[hidden]-> ServiceRegistration
+}
+
+' Vertical separation
+BotClient -[hidden]-> TournamentServices
+
+package "Tournament Services" {
+    [TournamentService] as TService
+    [TournamentMatchService] as TMatchService
+    [TournamentStateService] as TStateService
+    
+    ' Vertical layout for tournament services
+    TService -[hidden]-> TMatchService
+    TMatchService -[hidden]-> TStateService
+}
+
+' Vertical separation 
+TournamentServices -[hidden]-> TeamServices
+
+package "Team Services" {
+    [TeamService] as TeamSvc
+    [LeaderboardService] as LeaderboardSvc
+    
+    ' Vertical layout for team services
+    TeamSvc -[hidden]-> LeaderboardSvc
+}
+
+' Vertical separation
+TeamServices -[hidden]-> DiscordUtilities
+
+package "Discord Utilities" {
+    [Thread Creation] as ThreadCreation
+    [Status Messages] as StatusMessages
+    [Embeds] as Embeds
+    [Component Creation] as ComponentCreation
+    
+    ' Vertical layout for utilities
+    ThreadCreation -[hidden]-> StatusMessages
+    StatusMessages -[hidden]-> Embeds
+    Embeds -[hidden]-> ComponentCreation
+}
+
+' Vertical separation
+DiscordUtilities -[hidden]-> Persistence
+
+package "Persistence" {
+    [Tournament Data] as TData
+    [Team Data] as TeamData
+    [Player Data] as PlayerData
+    [Season Data] as SeasonData
+    
+    ' Vertical layout for persistence
+    TData -[hidden]-> TeamData
+    TeamData -[hidden]-> PlayerData
+    PlayerData -[hidden]-> SeasonData
+}
+
+' Main relationships
+Client -- DiscordAPI : Interacts with
+CommandHandlers --> Client : Register commands
+EventHandlers --> Client : Register events
+ServiceRegistration --> CommandHandlers : Configures
+ServiceRegistration --> EventHandlers : Configures
+
+' Application flow - reduce horizontal spread
+Client --> Channels : Read/Create
+Client --> Members : Read
+Client --> Threads : Create
+Client --> Messages : Send
+Client --> Components : Interactive
+Client --> DiscordCommands : Register
+Client --> DiscordEvents : Handle
+
+' Service interactions
+TService --> ThreadCreation : Creates threads
+TMatchService --> ThreadCreation : Creates matches
+TStateService --> StatusMessages : Updates status
+TeamSvc --> Embeds : Creates embeds
+
+' Discord utility usage
+ThreadCreation --> Threads : Creates
+StatusMessages --> Messages : Updates
+Embeds --> Messages : Enhances
+ComponentCreation --> Components : Creates
+
+' Persistence
+TService --> TData : Saves/Loads
+TeamSvc --> TeamData : Saves/Loads
+LeaderboardSvc --> PlayerData : Reads ratings
+LeaderboardSvc --> SeasonData : Reads seasons
+
+note right of DiscordAPI
+  DSharpPlus is used
+  as wrapper
+end note
+
+note bottom of ThreadCreation
+  All interactions in
+  dedicated threads
+end note
+
+note right of TStateService
+  Handles thread
+  recreation
+end note
+
+@enduml 

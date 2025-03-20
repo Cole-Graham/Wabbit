@@ -1,4 +1,5 @@
 using DSharpPlus;
+using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System;
@@ -58,19 +59,10 @@ namespace Wabbit.Tests.TestInfrastructure
             MockRandomProvider = new Mock<IRandomProvider>();
             MockRandomProvider.Setup(rp => rp.Instance).Returns(MockRandom.Object);
 
-            MockDiscordClient = new Mock<DiscordClient>();
-            MockDiscordChannel = new Mock<DiscordChannel>();
-            MockDiscordMessage = new Mock<DiscordMessage>();
-
-            // Set up default Discord message behavior
-            MockDiscordMessage.Setup(m => m.ModifyAsync(It.IsAny<Action<DSharpPlus.Entities.DiscordMessageBuilder>>()))
-                .Returns(Task.FromResult(MockDiscordMessage.Object));
-
-            MockDiscordChannel.Setup(c => c.SendMessageAsync(It.IsAny<DSharpPlus.Entities.DiscordMessageBuilder>()))
-                .Returns(Task.FromResult(MockDiscordMessage.Object));
-
-            MockDiscordChannel.Setup(c => c.GetMessageAsync(It.IsAny<ulong>()))
-                .Returns(Task.FromResult(MockDiscordMessage.Object));
+            // Use MockFactory to avoid expression tree issues
+            MockDiscordMessage = MockFactory.CreateDiscordMessageMock();
+            MockDiscordChannel = MockFactory.CreateDiscordChannelMock(MockDiscordMessage);
+            MockDiscordClient = MockFactory.CreateDiscordClientMock();
 
             // Set up mock Random behavior
             MockRandom.Setup(r => r.Next(It.IsAny<int>()))
@@ -138,8 +130,64 @@ namespace Wabbit.Tests.TestInfrastructure
             var defaultMaps = new List<string> { "Map1", "Map2", "Map3", "Map4", "Map5", "Map6", "Map7", "Map8" };
 
             // Set up the map service to return these maps
-            MockMapService.Setup(m => m.GetAllMaps())
-                .Returns(defaultMaps.ConvertAll(name => new Map { Name = name, IsInTournamentPool = true }));
+            MockMapService.Setup(m => m.GetMapByName(It.IsAny<string>()))
+                .Returns((string name) => new Map { Name = name, IsInTournamentPool = true });
+
+            // TODO: Replace with the correct method for getting tournament map pool
+            // MockMapService.Setup(m => m.GetTournamentMapPool(It.IsAny<bool>()))
+            //    .Returns(defaultMaps);
+        }
+
+        /// <summary>
+        /// Creates a TestTournamentService instance with the mocked dependencies
+        /// </summary>
+        protected TestTournamentService CreateTestTournamentService()
+        {
+            var groupService = CreateTestTournamentGroupService();
+
+            return new TestTournamentService(
+                MockTournamentServiceLogger.Object,
+                MockTournamentManagerService.Object,
+                groupService,
+                MockTournamentStateService.Object,
+                MockTournamentPlayoffService.Object,
+                MockTournamentStateValidator.Object);
+        }
+
+        /// <summary>
+        /// Creates a TestTournamentGroupService instance with the mocked dependencies
+        /// </summary>
+        protected TestTournamentGroupService CreateTestTournamentGroupService()
+        {
+            return new TestTournamentGroupService(
+                MockRandomProvider.Object,
+                MockTournamentGroupServiceLogger.Object,
+                MockTournamentMatchOperationsService.Object,
+                MockTournamentScoreManager.Object,
+                MockTournamentStateValidator.Object);
+        }
+
+        /// <summary>
+        /// Creates a TestTournamentMapService instance with the mocked dependencies
+        /// </summary>
+        protected TestTournamentMapService CreateTestTournamentMapService()
+        {
+            return new TestTournamentMapService(
+                MockTournamentMapServiceLogger.Object,
+                MockRandomProvider.Object,
+                MockMapService.Object);
+        }
+
+        /// <summary>
+        /// Creates a TestMatchStatusService instance with the mocked dependencies
+        /// </summary>
+        protected TestMatchStatusService CreateTestMatchStatusService()
+        {
+            var mapService = CreateTestTournamentMapService();
+
+            return new TestMatchStatusService(
+                MockMatchStatusServiceLogger.Object,
+                mapService);
         }
     }
 }

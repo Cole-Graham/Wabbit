@@ -1,0 +1,63 @@
+@startuml Match State Diagram
+
+title Match State Transitions
+
+skinparam backgroundColor white
+skinparam state {
+  BackgroundColor white
+  BorderColor black
+  ArrowColor black
+}
+skinparam nodesep 50
+skinparam ranksep 70
+
+' Use vertical direction
+top to bottom direction
+
+[*] --> Created: Match Created
+
+state Created {
+  [*] --> MapBan: Start Match
+}
+
+state MapBan {
+  [*] --> DeckSubmission: All Maps Banned
+  MapBan --> MapBan: Revise Bans
+}
+
+state DeckSubmission {
+  [*] --> GameResults: All Decks Submitted
+  DeckSubmission --> DeckSubmission: Revise Deck
+}
+
+state GameResults {
+  [*] --> Completed: Winner Determined
+  GameResults --> GameResults: More Games
+}
+
+GameResults --> DeckSubmission: Next Game in Match
+
+Completed --> [*]
+
+' Place notes in a vertical arrangement
+note right of MapBan
+  Players select maps to ban
+  Admin can override bans
+end note
+
+note right of DeckSubmission
+  Players submit deck codes
+  Verification happens here
+end note
+
+note right of GameResults
+  Game results are recorded
+  Match outcome determined
+end note
+
+note right of Completed
+  Tournament state updated
+  Bracket advancement happens
+end note
+
+@enduml 

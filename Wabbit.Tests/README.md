@@ -2,7 +2,7 @@
 
 This project contains unit tests for the tournament logic in the Wabbit Discord bot. The tests focus on verifying the correctness of the tournament-related algorithms and business logic without requiring Discord interaction.
 
-## Test Categories
+## Test Infrastructure Architecture
 
 1. **TournamentGroupTests**: Tests for group creation logic based on participant count.
 2. **SeedDistributionTests**: Tests for distributing participants according to seeding.
@@ -13,88 +13,139 @@ This project contains unit tests for the tournament logic in the Wabbit Discord 
 7. **GroupStageCompletionTests**: Tests for determining group stage completion and advancing participants.
 8. **BracketGenerationTests**: Tests for bracket generation with proper seeding.
 
-## Implementation Status
+1. **Adapter Classes**: Test-specific service implementations that bridge between test expectations and actual service interfaces
+2. **Model Converters**: Utilities for converting between test models and production models
+3. **Mock Factories**: Utilities for creating pre-configured mock objects that avoid expression tree issues
+4. **Test Data Factories**: Utilities for generating test data in the expected format
+5. **TestBase**: Base class for tests that provides common mock setup and service creation
 
-The test project is currently in a **planning state** with structural implementation of test classes. There are a number of interface mismatches between the tests and the actual implementation that need to be resolved:
+### Key Components
 
-1. The actual interfaces in the Wabbit project have different method signatures than those assumed in the tests.
-2. Some properties, like `Tournament.GroupParticipant.Points`, appear to be read-only in the implementation but are modified in the tests.
-3. The actual service constructor parameters differ from what's used in the tests.
-4. Some expected methods, like `TournamentService.CreateGroups()`, either don't exist or have different signatures in the actual implementation.
+#### Adapter Classes
+
+- **TestTournamentService**: Adapter for `TournamentService` that implements test-specific methods
+- **TestTournamentGroupService**: Adapter for `TournamentGroupService` with methods needed for testing
+- **TestTournamentMapService**: Adapter for `TournamentMapService` with methods like `GetMapBanCount`
+- **TestMatchStatusService**: Adapter for `MatchStatusService` with simplified match result updates
+
+#### Model Classes
+
+- **TestParticipantInfo**: Test-specific model for tournament participants
+- **TestTournament**: Test-specific model for tournaments with additional properties
+- **TestTournament.GroupParticipant**: Class for participants in tournament groups
+- **TestTournament.Bracket**: Class for tournament brackets
+- **TestTournament.Match**: Class for tournament matches
+- **TestTournament.MatchParticipant**: Class for participants in bracket matches
+
+#### Utility Classes
+
+- **ModelConverters**: Static class with methods for converting between test and production models
+- **MockFactory**: Factory for creating pre-configured Discord mock objects
+- **TestDataFactory**: Factory for creating test data objects (participants, groups, etc.)
+
+## Using the Test Infrastructure
+
+### Writing Tests
+
+Tests should inherit from `TestBase` to get access to the mock objects and service creation methods:
+
+```csharp
+public class MyTournamentTests : TestBase
+{
+    [Fact]
+    public void MyTest()
+    {
+        // Create test-specific service instances
+        var tournamentService = CreateTestTournamentService();
+        
+        // Generate test data
+        var participants = TestDataFactory.CreateTestParticipants(8, withSeeding: true);
+        
+        // Use the test-specific service methods
+        var groups = tournamentService.CreateGroups(participants);
+        
+        // Make assertions
+        Assert.Equal(2, groups.Count);
+    }
+}
+```
+
+### Creating Test Data
+
+Use the `TestDataFactory` to create test data:
+
+```csharp
+// Create participants
+var participants = TestDataFactory.CreateTestParticipants(8, withSeeding: true);
+
+// Create a tournament round
+var round = TestDataFactory.CreateTestRound("Test Match", 3); // Bo3 match
+
+// Create a tournament with groups
+var tournament = TestDataFactory.CreateTestTournament("Test Tournament", 2, 4); // 2 groups, 4 players each
+```
+
+### Converting Between Models
+
+Use the `ModelConverters` class to convert between test and production models:
+
+```csharp
+// Convert test participant to production participant
+var productionParticipant = testParticipant.ToProductionModel();
+
+// Convert list of test participants to production participants
+var productionParticipants = testParticipants.ToProductionModels();
+
+// Create mock DiscordMember from participant info
+var member = ModelConverters.CreateMockDiscordMember(participant);
+```
+
+## Implemented Tests
+
+### MapBanCountTests
+
+Tests to verify the map ban count logic for different match lengths:
+
+- `GetMapBanCount_ReturnsCorrectNumberOfBans`: Tests the map ban count logic for Bo1, Bo3, and Bo5 matches
+- `RecordMapBan_ForBo3_AcceptsCorrectBans`: Tests recording map bans for Bo3 matches
+- `RecordMapBan_ForBo5_AcceptsCorrectBans`: Tests recording map bans for Bo5 matches
+- `GetMapBanCount_UsesDifferentCountsByMatchLength`: Tests the consistency of map ban counts
+
+## Current Implementation Status
+
+The testing infrastructure has been partially implemented:
+
+1. ✅ **Core adapter classes** have been implemented (TestTournamentService, TestTournamentGroupService, etc.)
+2. ✅ **Model converters** for bridging test and production models
+3. ✅ **Mock factories** for DSharpPlus objects to avoid expression tree issues
+4. ✅ **Test data factory** for generating test data
+5. ✅ **Updated MapBanCountTests** to use the new infrastructure
+6. ❌ **Remaining test classes** need to be updated to use the infrastructure
+7. ❌ **Some linter errors** need to be fixed in TestTournamentMapService and MockFactory
+
+## Known Issues
+
+1. **Expression Tree Issues**: There are still some expression tree issues in MockFactory.cs for methods with optional parameters
+2. **Method Signature Mismatches**: There are mismatches between TestTournamentMapService.GetRandomMaps signature and actual implementation
+3. **Type Conversion Issues**: Need to solve the issue in TestTournamentService where TestGroupService.CreateGroups expects TestParticipantInfo but ModelConverters.ToProductionModels returns ModelsParticipantInfo
 
 ## Next Steps
 
-To make the tests usable, the following steps are needed:
+To complete the testing infrastructure, follow these steps:
 
-1. Adjust test implementations to match the actual interfaces and methods in the Wabbit project.
-2. Consider implementing adapters or wrapper classes for testing if the actual interfaces are complex.
-3. Use proper constructor arguments for services or consider using more extensive mocking.
-4. Verify the actual property access patterns and adjust tests accordingly.
-
-## Implementation Plan
-
-The following is a comprehensive plan to address the issues and make the tests fully functional:
-
-### Phase 1: Analyze & Document Actual Interfaces
-1. **Document Actual Service Interfaces**
-   - Examine the actual `TournamentService`, `MatchStatusService`, and other service implementations
-   - Document constructor parameters, method signatures, and properties
-   - Create a table mapping expected interfaces to actual implementations
-
-2. **Add Missing Dependencies**
-   - Add Microsoft.Extensions.Logging reference
-   - Add specific namespace imports
-   - Create a TestBase class with common mock setups
-
-### Phase 2: Create Test Infrastructure
-1. **Create Adapter/Facade Classes**
-   - Implement test-specific service wrappers
-   - Provide simplified APIs for testing purposes
-   - Bridge between test expectations and actual implementations
-
-2. **Create Model Extensions**
-   - Add extension methods to bridge property differences
-   - Create test-specific model classes where needed
-   - Implement converters between test models and actual models
-
-### Phase 3: Fix Specific Issues
-1. **Missing Methods**
-   - Replace direct calls to missing methods with adapter method calls
-   - Implement missing functionality in the test project if needed
-   - Update tests to use the actual method names/signatures
-
-2. **Property Access Issues**
-   - Update TestHelpers.cs to use the correct property access patterns
-   - Create builders/factories that set properties using constructor parameters
-   - Use reflection for testing-only scenarios where properties are read-only
-
-3. **Type Incompatibilities**
-   - Add type converters between Round and Tournament.Match
-   - Fix nullability issues in mock setups
-   - Update test assertions to work with the actual types
-
-### Phase 4: Incremental Implementation
-1. **Start with the TestHelpers Class**
-   - Fix the base infrastructure first
-   - Update model creation helpers to match actual implementation
-
-2. **Implement One Test Class at a Time**
-   - Start with simple classes like MapBanCountTests
-   - Progress to more complex tests like BracketGenerationTests
-
-3. **Create Test-Specific Version of Services**
-   - Implement test-specific versions of critical services
-   - Focus on the specific functionality needed for testing
-
-### Phase 5: Mock Optimizations
-1. **Optimize Mock Setups**
-   - Fix expression tree issues by using proper lambda expressions
-   - Centralize common mock setups in a TestBase class
-   - Create reusable mock configurations
-
-2. **Refactor Tests for Better Isolation**
-   - Reduce dependencies on concrete implementations
-   - Use more interfaces and fewer concrete classes in tests
+1. **Fix Mock Factory Implementation**: Update the MockFactory class to properly handle optional arguments in expression trees
+2. **Resolve Method Signature Mismatches**: Update the TestTournamentMapService class to match the actual method signatures
+3. **Fix Type Conversion Issues**: Update the CreateGroups method in TestTournamentService to handle type conversions properly
+4. **Update Remaining Test Classes**: Systematically update each remaining test class to use the testing infrastructure:
+   - TournamentGroupTests
+   - SeedDistributionTests
+   - MatchCreationTests
+   - ConditionalMapBanTests
+   - MatchWinnerTests
+   - GroupStageCompletionTests
+   - BracketGenerationTests
+5. **Add More Model Converters**: Add additional model converters as needed for tournament matches, rounds, etc.
+6. **Add Test-Specific Methods**: Add more test-specific methods to the adapter classes as needed by tests
 
 ## Running Tests
 
@@ -112,4 +163,4 @@ dotnet test Wabbit.Tests --filter "FullyQualifiedName~Wabbit.Tests.MapBanCountTe
 
 These tests are designed to verify the tournament logic in isolation from Discord interactions. This allows for testing the core tournament algorithms independently of the Discord API, making tests faster, more reliable, and easier to maintain.
 
-The tests use mocks for Discord-related dependencies, allowing the tests to focus on the tournament logic without requiring an actual Discord connection. 
+The tests use mocks for Discord-related dependencies, allowing the tests to focus on the tournament logic without requiring an actual Discord connection. The test infrastructure bridges the gaps between test expectations and actual implementations. 

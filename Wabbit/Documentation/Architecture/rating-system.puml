@@ -1,0 +1,119 @@
+@startuml Rating System
+
+title Rating and Leaderboard System
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+
+package "Models" {
+    class Team {
+        +Rating
+        +TournamentRating
+        +Wins
+        +Losses
+        +RatingHistory
+    }
+    
+    class RatingChange {
+        +OldRating
+        +NewRating
+        +Change
+        +Opponent
+        +IsWin
+        +Date
+    }
+    
+    class Season {
+        +SeasonId
+        +SeasonName
+        +StartDate
+        +EndDate
+        +IsActive
+        +FinalRankings
+    }
+    
+    class SeasonRanking {
+        +Rank
+        +PlayerId/TeamId
+        +Rating
+        +Wins
+        +Losses
+        +WinRate
+    }
+    
+    ' Vertical layout
+    Team -[hidden]-> RatingChange
+    RatingChange -[hidden]-> Season
+    Season -[hidden]-> SeasonRanking
+    
+    Team *-- "0..*" RatingChange
+    Season *-- "0..*" SeasonRanking
+}
+
+' Vertical separation
+Models -[hidden]-> Services
+
+package "Services" {
+    interface IRatingStateService {
+        +GetPlayerRatingAsync()
+        +CalculateRatingChangesAsync()
+        +RecordMatchResultAsync()
+        +GetTopPlayersByRatingAsync()
+    }
+    
+    interface ILeaderboardService {
+        +GetLeaderboardAsync()
+        +CreateLeaderboardEmbedAsync()
+        +GetPlayerRankingAsync()
+        +GetTeamRankingAsync()
+    }
+    
+    interface ISeasonService {
+        +CreateSeasonAsync()
+        +GetActiveSeasonAsync()
+        +EndSeasonAsync()
+    }
+    
+    interface IPlayerRatingRepositoryService {
+        +SavePlayerRatingsAsync()
+        +LoadPlayerRatingsAsync()
+        +SavePlayerRatingHistoryAsync()
+        +LoadPlayerRatingHistoryAsync()
+        +ArchivePlayerRatingsAsync()
+    }
+    
+    class RatingStateService
+    class LeaderboardService
+    
+    ' Vertical layout
+    IRatingStateService -[hidden]-> ILeaderboardService
+    ILeaderboardService -[hidden]-> ISeasonService
+    ISeasonService -[hidden]-> IPlayerRatingRepositoryService
+    IPlayerRatingRepositoryService -[hidden]-> RatingStateService
+    RatingStateService -[hidden]-> LeaderboardService
+    
+    RatingStateService ..|> IRatingStateService
+    LeaderboardService ..|> ILeaderboardService
+}
+
+' Vertical separation
+Services -[hidden]-> Commands
+
+package "Commands & Handlers" {
+    class LeaderboardHandler
+    class SeasonGroup
+    
+    ' Vertical layout
+    LeaderboardHandler -[hidden]-> SeasonGroup
+}
+
+' Organize connections for vertical flow
+LeaderboardHandler --> ILeaderboardService
+SeasonGroup --> ISeasonService
+ILeaderboardService --> IRatingStateService
+ILeaderboardService --> ISeasonService
+IRatingStateService --> IPlayerRatingRepositoryService
+
+@enduml 

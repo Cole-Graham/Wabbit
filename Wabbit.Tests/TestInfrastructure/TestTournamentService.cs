@@ -6,10 +6,12 @@ using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
 using Moq;
-using Wabbit.Models;
 using Wabbit.Services;
 using Wabbit.Services.Interfaces;
-using Wabbit.Tests.TestInfrastructure.Models;
+using ModelsTournament = Wabbit.Models.Tournament;
+using ModelsParticipantInfo = Wabbit.Models.ParticipantInfo;
+using TestTournament = Wabbit.Tests.TestInfrastructure.Models.Tournament;
+using TestParticipantInfo = Wabbit.Tests.TestInfrastructure.Models.ParticipantInfo;
 
 namespace Wabbit.Tests.TestInfrastructure
 {
@@ -44,12 +46,12 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Creates a new tournament
         /// </summary>
-        public async Task<Tournament> CreateTournamentAsync(
+        public async Task<ModelsTournament> CreateTournamentAsync(
             string name,
             List<DiscordMember> players,
-            TournamentFormat format,
+            Wabbit.Models.TournamentFormat format,
             DiscordChannel announcementChannel,
-            TournamentGameType gameType = TournamentGameType.OneVOne,
+            Wabbit.Models.TournamentGameType gameType = Wabbit.Models.TournamentGameType.OneVOne,
             Dictionary<DiscordMember, int>? playerSeeds = null)
         {
             return await _tournamentService.CreateTournamentAsync(
@@ -64,7 +66,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Gets a tournament by name
         /// </summary>
-        public Tournament? GetTournament(string name)
+        public ModelsTournament? GetTournament(string name)
         {
             return _tournamentService.GetTournament(name);
         }
@@ -72,7 +74,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Gets all tournaments
         /// </summary>
-        public List<Tournament> GetAllTournaments()
+        public List<ModelsTournament> GetAllTournaments()
         {
             return _tournamentService.GetAllTournaments();
         }
@@ -80,7 +82,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Starts a tournament
         /// </summary>
-        public Task StartTournamentAsync(Tournament tournament, DiscordClient client)
+        public Task StartTournamentAsync(ModelsTournament tournament, DiscordClient client)
         {
             return _tournamentService.StartTournamentAsync(tournament, client);
         }
@@ -89,15 +91,18 @@ namespace Wabbit.Tests.TestInfrastructure
         /// Create groups based on the provided list of participants
         /// This is an adapter for the test-expected method
         /// </summary>
-        public List<Tournament.Group> CreateGroups(List<ParticipantInfo> participants)
+        public List<ModelsTournament.Group> CreateGroups(List<TestParticipantInfo> participants)
         {
-            return _groupService.CreateGroups(participants);
+            // Convert test participants to model participants
+            var modelParticipants = ModelConverters.ToProductionModels(participants);
+
+            return _groupService.CreateGroups(modelParticipants);
         }
 
         /// <summary>
         /// Creates match threads for a list of matches
         /// </summary>
-        public async Task CreateMatchThreads(List<Round> matches, DiscordChannel channel, DiscordClient client)
+        public async Task CreateMatchThreads(List<Wabbit.Models.Round> matches, DiscordChannel channel, DiscordClient client)
         {
             foreach (var match in matches)
             {
@@ -117,34 +122,34 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Creates group matches
         /// </summary>
-        public List<Round> CreateGroupMatches(Tournament.Group group)
+        public List<Wabbit.Models.Round> CreateGroupMatches(ModelsTournament.Group group)
         {
-            var matches = new List<Round>();
+            var matches = new List<Wabbit.Models.Round>();
 
             // Create a match for each pair of participants
             for (int i = 0; i < group.Participants.Count; i++)
             {
                 for (int j = i + 1; j < group.Participants.Count; j++)
                 {
-                    var match = new Round
+                    var match = new Wabbit.Models.Round
                     {
                         Name = $"{group.Name} - Match {matches.Count + 1}",
-                        Teams = new List<Round.Team>
+                        Teams = new List<Wabbit.Models.Round.Team>
                         {
-                            new Round.Team
+                            new Wabbit.Models.Round.Team
                             {
                                 Name = group.Participants[i].Player.ToString(),
-                                Participants = new List<Round.Participant>
+                                Participants = new List<Wabbit.Models.Round.Participant>
                                 {
-                                    new Round.Participant { Player = group.Participants[i].Player as DiscordMember }
+                                    new Wabbit.Models.Round.Participant { Player = group.Participants[i].Player as DiscordMember }
                                 }
                             },
-                            new Round.Team
+                            new Wabbit.Models.Round.Team
                             {
                                 Name = group.Participants[j].Player.ToString(),
-                                Participants = new List<Round.Participant>
+                                Participants = new List<Wabbit.Models.Round.Participant>
                                 {
-                                    new Round.Participant { Player = group.Participants[j].Player as DiscordMember }
+                                    new Wabbit.Models.Round.Participant { Player = group.Participants[j].Player as DiscordMember }
                                 }
                             }
                         },
@@ -162,7 +167,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Determines if a match is complete
         /// </summary>
-        public bool IsMatchComplete(Round round)
+        public bool IsMatchComplete(Wabbit.Models.Round round)
         {
             if (round.Teams.Count != 2)
                 return false;
@@ -178,7 +183,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Gets participants from a group who should advance to playoffs
         /// </summary>
-        public List<Tournament.GroupParticipant> GetAdvancingParticipants(Tournament.Group group, int count)
+        public List<ModelsTournament.GroupParticipant> GetAdvancingParticipants(ModelsTournament.Group group, int count)
         {
             return _groupService.GetAdvancingParticipants(group, count);
         }
@@ -186,7 +191,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Checks if a group stage is complete
         /// </summary>
-        public bool IsGroupStageComplete(Tournament.Group group)
+        public bool IsGroupStageComplete(ModelsTournament.Group group)
         {
             return _groupService.IsGroupStageComplete(group);
         }
@@ -194,13 +199,13 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Generates a single elimination bracket
         /// </summary>
-        public List<Tournament.Bracket> GenerateSingleEliminationBracket(List<Tournament.GroupParticipant> participants)
+        public List<TestTournament.Bracket> GenerateSingleEliminationBracket(List<ModelsTournament.GroupParticipant> participants)
         {
             // Note: This is a simplified implementation for testing
-            var brackets = new List<Tournament.Bracket>();
+            var brackets = new List<TestTournament.Bracket>();
 
             // Sort participants by seed
-            var seededParticipants = new List<Tournament.GroupParticipant>(participants);
+            var seededParticipants = new List<ModelsTournament.GroupParticipant>(participants);
             seededParticipants.Sort((a, b) => a.Seed.CompareTo(b.Seed));
 
             // Create a simple single-elimination bracket
@@ -226,20 +231,20 @@ namespace Wabbit.Tests.TestInfrastructure
                     _ => $"Round {i + 1}"
                 };
 
-                var bracket = new Tournament.Bracket
+                var bracket = new TestTournament.Bracket
                 {
                     Name = roundName,
-                    Matches = new List<Tournament.Match>()
+                    Matches = new List<TestTournament.Match>()
                 };
 
                 int matchesInRound = i == 0 ? matchCount / 2 : brackets[i - 1].Matches.Count / 2;
 
                 for (int j = 0; j < matchesInRound; j++)
                 {
-                    var match = new Tournament.Match
+                    var match = new TestTournament.Match
                     {
                         Name = $"{roundName} Match {j + 1}",
-                        Participants = new List<Tournament.MatchParticipant>()
+                        Participants = new List<TestTournament.MatchParticipant>()
                     };
 
                     // For the first round, add participants
@@ -260,7 +265,7 @@ namespace Wabbit.Tests.TestInfrastructure
                             // Only add participants if the indices are valid
                             if (seed1 < seededParticipants.Count)
                             {
-                                match.Participants.Add(new Tournament.MatchParticipant
+                                match.Participants.Add(new TestTournament.MatchParticipant
                                 {
                                     Player = seededParticipants[seed1].Player,
                                     Score = 0
@@ -269,7 +274,7 @@ namespace Wabbit.Tests.TestInfrastructure
 
                             if (seed2 < seededParticipants.Count)
                             {
-                                match.Participants.Add(new Tournament.MatchParticipant
+                                match.Participants.Add(new TestTournament.MatchParticipant
                                 {
                                     Player = seededParticipants[seed2].Player,
                                     Score = 0
@@ -290,31 +295,31 @@ namespace Wabbit.Tests.TestInfrastructure
         /// <summary>
         /// Generates a double elimination bracket
         /// </summary>
-        public List<Tournament.Bracket> GenerateDoubleEliminationBracket(List<Tournament.GroupParticipant> participants)
+        public List<TestTournament.Bracket> GenerateDoubleEliminationBracket(List<ModelsTournament.GroupParticipant> participants)
         {
-            var brackets = new List<Tournament.Bracket>();
+            var brackets = new List<TestTournament.Bracket>();
 
             // Winners bracket
-            var winnersBracket = new Tournament.Bracket
+            var winnersBracket = new TestTournament.Bracket
             {
                 Name = "Winners Bracket",
-                Matches = new List<Tournament.Match>()
+                Matches = new List<TestTournament.Match>()
             };
 
             // Create matches with participants for the first round
-            var seededParticipants = new List<Tournament.GroupParticipant>(participants);
+            var seededParticipants = new List<ModelsTournament.GroupParticipant>(participants);
             seededParticipants.Sort((a, b) => a.Seed.CompareTo(b.Seed));
 
             // Create first round matches (1 vs 4, 2 vs 3)
-            var match1 = new Tournament.Match
+            var match1 = new TestTournament.Match
             {
                 Name = "Winners Round 1 Match 1",
-                Participants = new List<Tournament.MatchParticipant>()
+                Participants = new List<TestTournament.MatchParticipant>()
             };
 
             if (seededParticipants.Count > 0)
             {
-                match1.Participants.Add(new Tournament.MatchParticipant
+                match1.Participants.Add(new TestTournament.MatchParticipant
                 {
                     Player = seededParticipants[0].Player,
                     Score = 0
@@ -323,22 +328,22 @@ namespace Wabbit.Tests.TestInfrastructure
 
             if (seededParticipants.Count > 3)
             {
-                match1.Participants.Add(new Tournament.MatchParticipant
+                match1.Participants.Add(new TestTournament.MatchParticipant
                 {
                     Player = seededParticipants[3].Player,
                     Score = 0
                 });
             }
 
-            var match2 = new Tournament.Match
+            var match2 = new TestTournament.Match
             {
                 Name = "Winners Round 1 Match 2",
-                Participants = new List<Tournament.MatchParticipant>()
+                Participants = new List<TestTournament.MatchParticipant>()
             };
 
             if (seededParticipants.Count > 1)
             {
-                match2.Participants.Add(new Tournament.MatchParticipant
+                match2.Participants.Add(new TestTournament.MatchParticipant
                 {
                     Player = seededParticipants[1].Player,
                     Score = 0
@@ -347,7 +352,7 @@ namespace Wabbit.Tests.TestInfrastructure
 
             if (seededParticipants.Count > 2)
             {
-                match2.Participants.Add(new Tournament.MatchParticipant
+                match2.Participants.Add(new TestTournament.MatchParticipant
                 {
                     Player = seededParticipants[2].Player,
                     Score = 0
@@ -355,10 +360,10 @@ namespace Wabbit.Tests.TestInfrastructure
             }
 
             // Add winners final
-            var winnersFinal = new Tournament.Match
+            var winnersFinal = new TestTournament.Match
             {
                 Name = "Winners Final",
-                Participants = new List<Tournament.MatchParticipant>()
+                Participants = new List<TestTournament.MatchParticipant>()
             };
 
             winnersBracket.Matches.Add(match1);
@@ -366,24 +371,24 @@ namespace Wabbit.Tests.TestInfrastructure
             winnersBracket.Matches.Add(winnersFinal);
 
             // Losers bracket
-            var losersBracket = new Tournament.Bracket
+            var losersBracket = new TestTournament.Bracket
             {
                 Name = "Losers Bracket",
-                Matches = new List<Tournament.Match>
+                Matches = new List<TestTournament.Match>
                 {
-                    new Tournament.Match { Name = "Losers Round 1 Match 1", Participants = new List<Tournament.MatchParticipant>() },
-                    new Tournament.Match { Name = "Losers Round 1 Match 2", Participants = new List<Tournament.MatchParticipant>() },
-                    new Tournament.Match { Name = "Losers Final", Participants = new List<Tournament.MatchParticipant>() }
+                    new TestTournament.Match { Name = "Losers Round 1 Match 1", Participants = new List<TestTournament.MatchParticipant>() },
+                    new TestTournament.Match { Name = "Losers Round 1 Match 2", Participants = new List<TestTournament.MatchParticipant>() },
+                    new TestTournament.Match { Name = "Losers Final", Participants = new List<TestTournament.MatchParticipant>() }
                 }
             };
 
             // Grand finals
-            var grandFinals = new Tournament.Bracket
+            var grandFinals = new TestTournament.Bracket
             {
                 Name = "Grand Finals",
-                Matches = new List<Tournament.Match>
+                Matches = new List<TestTournament.Match>
                 {
-                    new Tournament.Match { Name = "Grand Finals", Participants = new List<Tournament.MatchParticipant>() }
+                    new TestTournament.Match { Name = "Grand Finals", Participants = new List<TestTournament.MatchParticipant>() }
                 }
             };
 

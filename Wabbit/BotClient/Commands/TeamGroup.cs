@@ -19,44 +19,106 @@ namespace Wabbit.BotClient.Commands
     public class TeamGroup
     {
         private readonly ILogger<TeamGroup> _logger;
-        private readonly ITeamStateService _teamStateService;
-        private readonly ITeamRepositoryService _teamRepositoryService;
+        private readonly ITeamService _teamService;
         private readonly ISeasonStateService _seasonStateService;
         private readonly ILeaderboardService _leaderboardService;
 
         public TeamGroup(
             ILogger<TeamGroup> logger,
-            ITeamStateService teamStateService,
-            ITeamRepositoryService teamRepositoryService,
+            ITeamService teamService,
             ISeasonStateService seasonStateService,
             ILeaderboardService leaderboardService)
         {
             _logger = logger;
-            _teamStateService = teamStateService;
-            _teamRepositoryService = teamRepositoryService;
+            _teamService = teamService;
             _seasonStateService = seasonStateService;
             _leaderboardService = leaderboardService;
         }
 
-        [Command("create")]
-        [Description("Create a new team")]
-        public async Task CreateTeamAsync(
+        [Command("register")]
+        [Description("Register for 1v1 matches")]
+        public async Task RegisterForSoloAsync(
             CommandContext context,
-            [Description("Team name (must be unique)")] string name,
-            [Description("Type of team (0=1v1, 1=2v2, 2=3v3, 3=4v4)")] int typeInt = 0)
+            [Description("Your display name for 1v1 matches")] string name)
         {
             await context.DeferResponseAsync();
 
             try
             {
-                // Convert type parameter to enum
-                var teamGameType = typeInt switch
+                // Check if there's an active season
+                var currentSeason = await _seasonStateService.GetCurrentSeasonAsync();
+                if (currentSeason == null)
                 {
-                    1 => Wabbit.Models.TeamGameType.TwoVTwo,
-                    2 => Wabbit.Models.TeamGameType.ThreeVThree,
-                    3 => Wabbit.Models.TeamGameType.FourVFour,
-                    _ => Wabbit.Models.TeamGameType.OneVOne
-                };
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "❌ There is no active season. Registration can only be done during an active season."));
+                    return;
+                }
+
+                // Validate name
+                if (string.IsNullOrWhiteSpace(name) || name.Length < 3 || name.Length > 32)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "❌ Your display name must be between 3 and 32 characters long."));
+                    return;
+                }
+
+                // Check if name is available
+                if (!await _teamService.IsTeamNameAvailableAsync(name))
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        $"❌ The name '{name}' is already taken. Please choose a different name."));
+                    return;
+                }
+
+                // Check if user can register (is not already registered for 1v1)
+                if (!await _teamService.CanCreateTeamAsync(context.User.Id, TeamGameType.OneVOne))
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        $"❌ You are already registered for 1v1 matches. Use /team mystats to see your current profile."));
+                    return;
+                }
+
+                // Create the team (which is the player's 1v1 profile)
+                var team = await _teamService.CreateTeamAsync(name, TeamGameType.OneVOne, context.User);
+
+                // Create embed response
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"✅ Registered for 1v1 Ladder")
+                    .WithDescription($"You're now registered for 1v1 matches as '{team.TeamName}'.")
+                    .WithColor(DiscordColor.Green)
+                    .AddField("Rating", team.Rating.ToString(), true)
+                    .AddField("ID", team.TeamId, true)
+                    .AddField("Created", DateTime.UtcNow.ToString("MMM d, yyyy"), true)
+                    .WithFooter($"Use /team mystats to view your stats");
+
+                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error registering for 1v1");
+                await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                    $"❌ An error occurred: {ex.Message}"));
+            }
+        }
+
+        [Command("create")]
+        [Description("Create a team for 2v2, 3v3, or 4v4 matches")]
+        public async Task CreateTeamAsync(
+            CommandContext context,
+            [Description("Team name (must be unique)")] string name,
+            [Description("Team format")] TeamGameType gameType = TeamGameType.TwoVTwo)
+        {
+            await context.DeferResponseAsync();
+
+            try
+            {
+                // Don't allow 1v1 teams through this command - they should use /team register
+                if (gameType == TeamGameType.OneVOne)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "❌ To register for 1v1 matches, please use the `/team register` command instead."));
+                    return;
+                }
 
                 // Check if there's an active season
                 var currentSeason = await _seasonStateService.GetCurrentSeasonAsync();
@@ -76,7 +138,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Check if name is available
-                if (!await _teamStateService.IsTeamNameAvailableAsync(name))
+                if (!await _teamService.IsTeamNameAvailableAsync(name))
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                         $"❌ The team name '{name}' is already taken. Please choose a different name."));
@@ -84,26 +146,26 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Check if user can create a team of this type
-                if (!await _teamStateService.CanCreateTeamAsync(context.User.Id, teamGameType))
+                if (!await _teamService.CanCreateTeamAsync(context.User.Id, gameType))
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ You cannot create a {teamGameType} team. You may already be on the maximum number of teams for this type."));
+                        $"❌ You cannot create a {gameType.ToDisplayString()} team. You may already be on the maximum number of teams for this type."));
                     return;
                 }
 
                 // Create the team
-                var team = await _teamStateService.CreateTeamAsync(name, teamGameType, context.User);
+                var team = await _teamService.CreateTeamAsync(name, gameType, context.User);
 
                 // Create embed response
                 var embed = new DiscordEmbedBuilder()
                     .WithTitle($"✅ Team Created: {team.TeamName}")
-                    .WithDescription($"You are now the owner of this team.")
+                    .WithDescription($"You are now the captain of this team.")
                     .WithColor(DiscordColor.Green)
-                    .AddField("Type", GetGameTypeDisplayName(team.GameType), true)
+                    .AddField("Format", GetGameTypeDisplayName(team.GameType), true)
                     .AddField("Rating", team.Rating.ToString(), true)
-                    .AddField("Team ID", team.TeamId, true)
+                    .AddField("ID", team.TeamId, true)
                     .AddField("Created", DateTime.UtcNow.ToString("MMM d, yyyy"), true)
-                    .WithFooter($"Team created by {context.User.Username}");
+                    .WithFooter($"Created by {context.User.Username}");
 
                 await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
             }
@@ -111,7 +173,7 @@ namespace Wabbit.BotClient.Commands
             {
                 _logger.LogError(ex, "Error creating team");
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                    $"❌ An error occurred while creating the team: {ex.Message}"));
+                    $"❌ An error occurred: {ex.Message}"));
             }
         }
 
@@ -126,7 +188,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Find the team
-                var team = await _teamStateService.GetTeamByNameAsync(teamName);
+                var team = await _teamService.GetTeamByNameAsync(teamName);
                 if (team == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -220,7 +282,7 @@ namespace Wabbit.BotClient.Commands
                 };
 
                 // Find the team
-                var team = await _teamStateService.GetTeamByNameAsync(teamName);
+                var team = await _teamService.GetTeamByNameAsync(teamName);
                 if (team == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -229,7 +291,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Try to join the team with the specified role
-                bool joined = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, context.User, role, context.User);
+                bool joined = await _teamService.AddPlayerToTeamAsync(team.TeamId, context.User, role, context.User);
 
                 if (joined)
                 {
@@ -268,7 +330,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Find the team
-                var team = await _teamStateService.GetTeamByNameAsync(teamName);
+                var team = await _teamService.GetTeamByNameAsync(teamName);
                 if (team == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -277,7 +339,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Try to leave the team
-                bool left = await _teamStateService.RemovePlayerFromTeamAsync(team.TeamId, context.User.Id, context.User);
+                bool left = await _teamService.RemovePlayerFromTeamAsync(team.TeamId, context.User.Id, context.User);
 
                 if (left)
                 {
@@ -298,60 +360,65 @@ namespace Wabbit.BotClient.Commands
             }
         }
 
-        [Command("myteams")]
-        [Description("List all teams you are a member of")]
-        public async Task MyTeamsAsync(CommandContext context)
+        [Command("mystats")]
+        [Description("View your 1v1 statistics")]
+        public async Task ViewMyStatsAsync(CommandContext context)
         {
             await context.DeferResponseAsync();
 
             try
             {
-                // Get all teams the user is in
-                var teams = await _teamStateService.GetPlayerTeamsAsync(context.User.Id);
+                // Get all teams the player is a member of
+                var teams = await _teamService.GetPlayerTeamsAsync(context.User.Id);
 
-                if (teams.Count == 0)
+                // Find 1v1 team if exists
+                var soloTeam = teams.FirstOrDefault(t => t.GameType == TeamGameType.OneVOne);
+
+                if (soloTeam == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        "You are not a member of any teams."));
+                        "You are not registered for 1v1 matches. Use `/team register` to register."));
                     return;
                 }
 
                 // Create embed
                 var embed = new DiscordEmbedBuilder()
-                    .WithTitle($"{context.User.Username}'s Teams")
+                    .WithTitle($"{context.User.Username}'s 1v1 Profile")
                     .WithColor(DiscordColor.Blue)
-                    .WithDescription($"You are a member of {teams.Count} team(s).");
+                    .WithDescription($"Your 1v1 ladder statistics")
+                    .AddField("Display Name", soloTeam.TeamName, true)
+                    .AddField("Rating", soloTeam.Rating.ToString(), true)
+                    .AddField("Record", $"{soloTeam.Wins}-{soloTeam.Losses} ({GetWinRate(soloTeam.Wins, soloTeam.Losses)}%)", true)
+                    .AddField("Registered", soloTeam.CreatedAt.ToString("MMM d, yyyy"), true);
 
-                // Group teams by game type
-                var teamsByType = teams.GroupBy(t => t.GameType);
-
-                foreach (var typeGroup in teamsByType)
+                // Get ranking if available
+                var ranking = await _leaderboardService.GetTeamRankingAsync(soloTeam.TeamId, TeamGameType.OneVOne);
+                if (ranking != null)
                 {
-                    string teamsList = "";
-                    foreach (var team in typeGroup)
-                    {
-                        // Determine role in this team
-                        string role = "Unknown";
-                        if (team.CorePlayerInfo?.Any(p => p.Id == context.User.Id) == true)
-                            role = "Core";
-                        else if (team.SecondaryPlayerInfo?.Any(p => p.Id == context.User.Id) == true)
-                            role = "Secondary";
-                        else if (team.SubstitutePlayerInfo?.Any(p => p.Id == context.User.Id) == true)
-                            role = "Substitute";
+                    embed.AddField("Current Rank", $"#{ranking.Rank}", true);
+                }
 
-                        teamsList += $"**{team.TeamName}** - Rating: {team.Rating} - Role: {role}\n";
-                    }
+                // Add recent matches if there's a rating history
+                if (soloTeam.RatingHistory.Count > 0)
+                {
+                    var recentMatches = soloTeam.RatingHistory
+                        .OrderByDescending(r => r.Date)
+                        .Take(5)
+                        .ToList();
 
-                    embed.AddField($"{GetGameTypeDisplayName(typeGroup.Key)} Teams", teamsList, false);
+                    var matchesText = string.Join("\n", recentMatches.Select(m =>
+                        $"{(m.IsWin ? "Win" : "Loss")} vs {m.Opponent}: {m.OldRating} → {m.NewRating} ({(m.Change >= 0 ? "+" : "")}{m.Change})"));
+
+                    embed.AddField("Recent Matches", matchesText, false);
                 }
 
                 await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error listing player teams");
+                _logger.LogError(ex, "Error retrieving player stats");
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                    $"❌ An error occurred while retrieving your teams: {ex.Message}"));
+                    $"❌ An error occurred: {ex.Message}"));
             }
         }
 
@@ -376,7 +443,7 @@ namespace Wabbit.BotClient.Commands
                 };
 
                 // Get top teams by rating for the specified type
-                var teams = await _teamStateService.GetTopTeamsByRatingAsync(teamGameType, count);
+                var teams = await _teamService.GetTopTeamsByRatingAsync(teamGameType, count);
 
                 if (teams.Count == 0)
                 {
@@ -430,7 +497,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Find the team
-                var team = await _teamStateService.GetTeamByNameAsync(currentName);
+                var team = await _teamService.GetTeamByNameAsync(currentName);
                 if (team == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -438,16 +505,7 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Check if the user is a team owner/admin or has admin privileges
-                bool canModify = await _teamStateService.CanModifyTeamAsync(team.TeamId, context.User.Id);
-                bool isAdmin = await _teamStateService.HasTeamAdminPrivilegesAsync(context.User.Id);
-
-                if (!canModify && !isAdmin)
-                {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ You don't have permission to rename team '{currentName}'. Only team owners, core players, or administrators can do this."));
-                    return;
-                }
+                // The RequireTeamCorePlayer attribute already checked permission
 
                 // Check if the name is valid
                 if (string.IsNullOrWhiteSpace(newName) || newName.Length < 3 || newName.Length > 32)
@@ -458,7 +516,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Check if the new name is available
-                if (!await _teamStateService.IsTeamNameAvailableAsync(newName))
+                if (!await _teamService.IsTeamNameAvailableAsync(newName))
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                         $"❌ The team name '{newName}' is already taken. Please choose a different name."));
@@ -466,30 +524,30 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Try to rename the team
-                bool renamed = await _teamStateService.UpdateTeamNameAsync(team.TeamId, newName, context.User);
+                bool renamed = await _teamService.UpdateTeamNameAsync(team.TeamId, newName, context.User);
 
                 if (renamed)
                 {
                     var embed = new DiscordEmbedBuilder()
                         .WithTitle($"✅ Team Renamed")
-                        .WithDescription($"Team '{currentName}' has been renamed to '{newName}'.")
+                        .WithDescription($"Your team has been renamed from '{currentName}' to '{newName}'.")
                         .WithColor(DiscordColor.Green);
 
                     await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
                 }
                 else
                 {
-                    // Get cooldown information
-                    int nameCooldown = await _teamStateService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.NameChange);
-                    if (nameCooldown > 0 && !isAdmin)
+                    // Check if it might be a cooldown issue
+                    int cooldown = await _teamService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.NameChange);
+                    if (cooldown > 0)
                     {
                         await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                            $"❌ This team name was changed recently. You can change it again in {nameCooldown} minutes."));
+                            $"❌ This team's name was changed recently. You can change it again in {cooldown} minutes."));
                     }
                     else
                     {
                         await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                            $"❌ Unable to rename team '{currentName}'. This could be due to a cooldown period or permission issue."));
+                            $"❌ Failed to rename team. Please try again later."));
                     }
                 }
             }
@@ -514,7 +572,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Find the team
-                var team = await _teamStateService.GetTeamByNameAsync(teamName);
+                var team = await _teamService.GetTeamByNameAsync(teamName);
                 if (team == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -522,16 +580,7 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Check if the user is a team owner/admin or has admin privileges
-                bool canModify = await _teamStateService.CanModifyTeamAsync(team.TeamId, context.User.Id);
-                bool isAdmin = await _teamStateService.HasTeamAdminPrivilegesAsync(context.User.Id);
-
-                if (!canModify && !isAdmin)
-                {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ You don't have permission to modify team '{teamName}'. Only team owners, core players, or administrators can do this."));
-                    return;
-                }
+                // The RequireTeamCorePlayer attribute already checked permission
 
                 // Check if the team is the right type
                 if (team.GameType == Wabbit.Models.TeamGameType.OneVOne)
@@ -542,7 +591,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Try to add the player
-                bool added = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Secondary, context.User);
+                bool added = await _teamService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Secondary, context.User);
 
                 if (added)
                 {
@@ -555,12 +604,12 @@ namespace Wabbit.BotClient.Commands
                 }
                 else
                 {
-                    // Get cooldown information
-                    int secondaryCooldown = await _teamStateService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.SecondaryPlayerChange);
-                    if (secondaryCooldown > 0 && !isAdmin)
+                    // Check if it might be a cooldown issue
+                    int cooldown = await _teamService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.SecondaryPlayerChange);
+                    if (cooldown > 0)
                     {
                         await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                            $"❌ This team's secondary players were changed recently. You can change them again in {secondaryCooldown} minutes."));
+                            $"❌ This team's secondary players were changed recently. You can change them again in {cooldown} minutes."));
                     }
                     else
                     {
@@ -590,7 +639,7 @@ namespace Wabbit.BotClient.Commands
             try
             {
                 // Find the team
-                var team = await _teamStateService.GetTeamByNameAsync(teamName);
+                var team = await _teamService.GetTeamByNameAsync(teamName);
                 if (team == null)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -598,16 +647,7 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Check if the user is a team owner/admin or has admin privileges
-                bool canModify = await _teamStateService.CanModifyTeamAsync(team.TeamId, context.User.Id);
-                bool isAdmin = await _teamStateService.HasTeamAdminPrivilegesAsync(context.User.Id);
-
-                if (!canModify && !isAdmin)
-                {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ You don't have permission to modify team '{teamName}'. Only team owners, core players, or administrators can do this."));
-                    return;
-                }
+                // The RequireTeamCorePlayer attribute already checked permission
 
                 // Check if the team is the right type
                 if (team.GameType == Wabbit.Models.TeamGameType.OneVOne || team.GameType == Wabbit.Models.TeamGameType.TwoVTwo)
@@ -618,7 +658,7 @@ namespace Wabbit.BotClient.Commands
                 }
 
                 // Try to add the player
-                bool added = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Substitute, context.User);
+                bool added = await _teamService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Substitute, context.User);
 
                 if (added)
                 {
@@ -631,12 +671,12 @@ namespace Wabbit.BotClient.Commands
                 }
                 else
                 {
-                    // Get cooldown information
-                    int substituteCooldown = await _teamStateService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.SubstitutePlayerChange);
-                    if (substituteCooldown > 0 && !isAdmin)
+                    // Check if it might be a cooldown issue
+                    int cooldown = await _teamService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.SubstitutePlayerChange);
+                    if (cooldown > 0)
                     {
                         await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                            $"❌ This team's substitute players were changed recently. You can change them again in {substituteCooldown} minutes."));
+                            $"❌ This team's substitute players were changed recently. You can change them again in {cooldown} minutes."));
                     }
                     else
                     {
@@ -650,6 +690,70 @@ namespace Wabbit.BotClient.Commands
                 _logger.LogError(ex, "Error changing substitute player");
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                     $"❌ An error occurred while changing the substitute player: {ex.Message}"));
+            }
+        }
+
+        [Command("myteams")]
+        [Description("List all teams you are a member of")]
+        public async Task MyTeamsAsync(CommandContext context)
+        {
+            await context.DeferResponseAsync();
+
+            try
+            {
+                // Get all teams the user is in
+                var teams = await _teamService.GetPlayerTeamsAsync(context.User.Id);
+
+                if (teams.Count == 0)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "You are not a member of any teams."));
+                    return;
+                }
+
+                // Create embed
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"{context.User.Username}'s Teams")
+                    .WithColor(DiscordColor.Blue)
+                    .WithDescription($"You are a member of {teams.Count} team(s).");
+
+                // Group teams by game type
+                var teamsByType = teams.GroupBy(t => t.GameType);
+
+                foreach (var typeGroup in teamsByType)
+                {
+                    string teamsList = "";
+                    foreach (var team in typeGroup)
+                    {
+                        // Determine role in this team
+                        string role = "Unknown";
+                        if (team.CorePlayerInfo?.Any(p => p.Id == context.User.Id) == true)
+                            role = "Core";
+                        else if (team.SecondaryPlayerInfo?.Any(p => p.Id == context.User.Id) == true)
+                            role = "Secondary";
+                        else if (team.SubstitutePlayerInfo?.Any(p => p.Id == context.User.Id) == true)
+                            role = "Substitute";
+
+                        if (typeGroup.Key == TeamGameType.OneVOne)
+                        {
+                            teamsList += $"**{team.TeamName}** - Rating: {team.Rating} - Use `/team mystats` for details\n";
+                        }
+                        else
+                        {
+                            teamsList += $"**{team.TeamName}** - Rating: {team.Rating} - Role: {role}\n";
+                        }
+                    }
+
+                    embed.AddField($"{GetGameTypeDisplayName(typeGroup.Key)} Teams", teamsList, false);
+                }
+
+                await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error listing player teams");
+                await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                    $"❌ An error occurred: {ex.Message}"));
             }
         }
 

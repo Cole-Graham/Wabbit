@@ -366,7 +366,6 @@ This separation is an intentional design decision rather than a code duplication
 - [ ] Update serialization handling:
   - [ ] Ensure all enums serialize to the same integer values
   - [ ] Add custom JsonConverter if needed to handle deserialization of old values
-  - [ ] Add backwards compatibility for reading old files
 
 - [ ] Create unit tests for the enum conversions and helpers
   - [ ] Test all conversion methods between enum types

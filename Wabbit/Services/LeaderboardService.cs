@@ -18,9 +18,8 @@ namespace Wabbit.Services
     {
         private readonly ILogger<LeaderboardService> _logger;
         private readonly IPlayerRatingRepositoryService _playerRatingRepository;
-        private readonly ITeamRepositoryService _teamRepository;
+        private readonly ITeamService _teamService;
         private readonly ISeasonStateService _seasonStateService;
-        private readonly ITeamStateService _teamStateService;
         private readonly Dictionary<string, Dictionary<Wabbit.Models.TeamGameType, List<LeaderboardEntry>>> _cachedLeaderboards;
         private readonly Dictionary<string, DateTimeOffset> _cacheExpiration;
         private readonly TimeSpan _cacheDuration = TimeSpan.FromMinutes(15); // Cache leaderboards for 15 minutes
@@ -30,21 +29,18 @@ namespace Wabbit.Services
         /// </summary>
         /// <param name="logger">Logger</param>
         /// <param name="playerRatingRepository">Player rating repository</param>
-        /// <param name="teamRepository">Team repository</param>
+        /// <param name="teamService">Team service</param>
         /// <param name="seasonStateService">Season state service</param>
-        /// <param name="teamStateService">Team state service</param>
         public LeaderboardService(
             ILogger<LeaderboardService> logger,
             IPlayerRatingRepositoryService playerRatingRepository,
-            ITeamRepositoryService teamRepository,
-            ISeasonStateService seasonStateService,
-            ITeamStateService teamStateService)
+            ITeamService teamService,
+            ISeasonStateService seasonStateService)
         {
             _logger = logger;
             _playerRatingRepository = playerRatingRepository;
-            _teamRepository = teamRepository;
+            _teamService = teamService;
             _seasonStateService = seasonStateService;
-            _teamStateService = teamStateService;
             _cachedLeaderboards = new Dictionary<string, Dictionary<Wabbit.Models.TeamGameType, List<LeaderboardEntry>>>();
             _cacheExpiration = new Dictionary<string, DateTimeOffset>();
         }
@@ -233,7 +229,7 @@ namespace Wabbit.Services
             {
                 // Current leaderboard - get from player and team repositories
                 var allPlayerRatings = await _playerRatingRepository.GetAllPlayerRatingsAsync();
-                var teams = await _teamRepository.GetTeamsByTypeAsync(gameType);
+                var teams = await _teamService.GetTeamsByTypeAsync(gameType);
 
                 // For 1v1, add both player and team entries
                 if (gameType == Wabbit.Models.TeamGameType.OneVOne)

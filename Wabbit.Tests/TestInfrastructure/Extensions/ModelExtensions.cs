@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using Wabbit.Models;
-using Wabbit.Tests.TestInfrastructure.Models;
+using TestTournament = Wabbit.Tests.TestInfrastructure.Models.Tournament;
+using TestParticipantInfo = Wabbit.Tests.TestInfrastructure.Models.ParticipantInfo;
+using ModelsTournament = Wabbit.Models.Tournament;
 
 namespace Wabbit.Tests.TestInfrastructure.Extensions
 {
@@ -12,7 +14,7 @@ namespace Wabbit.Tests.TestInfrastructure.Extensions
         /// <summary>
         /// Sets points for a tournament participant via its Wins and Draws values
         /// </summary>
-        public static void SetPoints(this Tournament.GroupParticipant participant, int points)
+        public static void SetPoints(this TestTournament.GroupParticipant participant, int points)
         {
             // Points = (Wins * 3) + Draws
             // Set Wins and Draws to achieve the desired number of points
@@ -23,7 +25,7 @@ namespace Wabbit.Tests.TestInfrastructure.Extensions
         /// <summary>
         /// Converts test ParticipantInfo to Tournament.GroupParticipant
         /// </summary>
-        public static Tournament.GroupParticipant ToTournamentParticipant(this ParticipantInfo info)
+        public static TestTournament.GroupParticipant ToTournamentParticipant(this TestParticipantInfo info)
         {
             // Create a mock DiscordMember for the player
             var mockMember = new Moq.Mock<DSharpPlus.Entities.DiscordMember>();
@@ -31,7 +33,7 @@ namespace Wabbit.Tests.TestInfrastructure.Extensions
             mockMember.Setup(m => m.Username).Returns(info.Username);
             mockMember.Setup(m => m.ToString()).Returns(info.Username);
 
-            return new Tournament.GroupParticipant
+            return new TestTournament.GroupParticipant
             {
                 Player = mockMember.Object,
                 Seed = info.Seed.GetValueOrDefault()
@@ -41,9 +43,9 @@ namespace Wabbit.Tests.TestInfrastructure.Extensions
         /// <summary>
         /// Converts a list of test ParticipantInfo to Tournament.GroupParticipant list
         /// </summary>
-        public static List<Tournament.GroupParticipant> ToTournamentParticipants(this IEnumerable<ParticipantInfo> infos)
+        public static List<TestTournament.GroupParticipant> ToTournamentParticipants(this IEnumerable<TestParticipantInfo> infos)
         {
-            var result = new List<Tournament.GroupParticipant>();
+            var result = new List<TestTournament.GroupParticipant>();
 
             foreach (var info in infos)
             {

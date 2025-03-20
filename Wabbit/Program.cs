@@ -17,6 +17,7 @@ using Wabbit.BotClient.Events;
 using Wabbit.BotClient.Events.Components.Base;
 using Wabbit.BotClient.Events.Components.Factory;
 using Wabbit.BotClient.Events.Components.Tournament;
+using Wabbit.BotClient.Events.Components.Scrimmage;
 using Wabbit.BotClient.Events.MainHandlers;
 using Wabbit.BotClient.Events.Modals.Base;
 using Wabbit.BotClient.Events.Modals.Factory;
@@ -143,12 +144,11 @@ namespace Wabbit
                     // Register rating and season services
 
                     // Register team and rating repository services
-                    services.AddSingleton<ITeamRepositoryService, TeamRepositoryService>();
+                    services.AddSingleton<ITeamService, TeamService>();
                     services.AddSingleton<IPlayerRatingRepositoryService, PlayerRatingRepositoryService>();
                     services.AddSingleton<ISeasonRepositoryService, SeasonRepositoryService>();
 
-                    // Register team and season state services
-                    services.AddSingleton<ITeamStateService, TeamStateService>();
+                    // Register season state service
                     services.AddSingleton<ISeasonStateService, SeasonStateService>();
 
                     // Register permission service
@@ -170,6 +170,7 @@ namespace Wabbit
                     services.AddSingleton<ComponentHandlerBase, RefreshStatusHandler>();
                     services.AddSingleton<ComponentHandlerBase, SeasonHandler>();
                     services.AddSingleton<ComponentHandlerBase, LeaderboardHandler>();
+                    services.AddSingleton<ComponentHandlerBase, ScrimmageComponentHandler>();
 
                     // Register the new ComponentInteractionHandler (will replace Event_Button in Phase 2)
                     services.AddSingleton<ComponentInteractionHandler>();
@@ -209,6 +210,7 @@ namespace Wabbit
                         typeof(BasicGroup),
                         typeof(ConfigGroup),
                         typeof(TeamGroup),
+                        typeof(TeamManagementGroup),
                         typeof(TournamentGroup),
                         typeof(MapManagementGroup),
                         typeof(TournamentManagementGroup),
@@ -226,6 +228,10 @@ namespace Wabbit
                 DiscordClient client = builder.Build();
 
                 await client.ConnectAsync();
+
+                // Initialize team service
+                var teamService = client.ServiceProvider.GetRequiredService<ITeamService>();
+                await teamService.InitializeAsync();
 
                 // Load tournament state using the state service
                 var stateService = client.ServiceProvider.GetRequiredService<ITournamentStateService>();

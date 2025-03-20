@@ -19,5 +19,10 @@ namespace Wabbit.Tests.TestInfrastructure.Models
         /// The participant's seed value (0 = unseeded, 1 = first seed, etc.)
         /// </summary>
         public int? Seed { get; set; }
+
+        /// <summary>
+        /// The player object (usually a DiscordMember)
+        /// </summary>
+        public object? Player { get; set; }
     }
 }

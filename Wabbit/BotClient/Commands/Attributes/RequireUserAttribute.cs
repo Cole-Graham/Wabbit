@@ -26,14 +26,24 @@ namespace Wabbit.BotClient.Commands.Attributes
         /// <summary>
         /// Checks if the user executing the command is in the allowed list
         /// </summary>
-        public ValueTask<bool> CheckAsync(CommandContext ctx)
+        public ValueTask<string?> ExecuteCheckAsync(CommandContext context)
         {
-            // If no IDs are specified, no users can use the command
-            if (_allowedUserIds == null || _allowedUserIds.Length == 0)
-                return ValueTask.FromResult(false);
+            try
+            {
+                // If no IDs are specified, no users can use the command
+                if (_allowedUserIds == null || _allowedUserIds.Length == 0)
+                    return ValueTask.FromResult<string?>("This command is not available to any users.");
 
-            // Check if the user's ID is in the allowed list
-            return ValueTask.FromResult(_allowedUserIds.Contains(ctx.User.Id));
+                // Check if the user's ID is in the allowed list
+                if (_allowedUserIds.Contains(context.User.Id))
+                    return ValueTask.FromResult<string?>(null); // Success
+
+                return ValueTask.FromResult<string?>("You are not authorized to use this command.");
+            }
+            catch (Exception ex)
+            {
+                return ValueTask.FromResult<string?>($"Error checking user permissions: {ex.Message}");
+            }
         }
     }
 }

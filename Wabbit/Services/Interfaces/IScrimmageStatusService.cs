@@ -89,5 +89,14 @@ namespace Wabbit.Services.Interfaces
         /// <param name="userId">The Discord user ID to check</param>
         /// <returns>True if the user can manage the scrimmage</returns>
         Task<bool> CanManageScrimmageAsync(Scrimmage scrimmage, ulong userId);
+
+        /// <summary>
+        /// Submits a deck code for a player in the scrimmage
+        /// </summary>
+        /// <param name="scrimmage">The scrimmage</param>
+        /// <param name="player">The player</param>
+        /// <param name="deckCode">The deck code to submit</param>
+        /// <returns>True if the deck was submitted successfully</returns>
+        Task<bool> SubmitDeckCodeAsync(Scrimmage scrimmage, DiscordUser player, string deckCode);
     }
 }

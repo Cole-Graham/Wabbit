@@ -5,9 +5,13 @@
 
 # Config files
 ConfigFile.json
+ratings.json
 signups.json
+teams.json
 tournament_state.json
 tournaments.json
+scrimmages.json
+seasons.json
 .env
 
 # Development data
@@ -22,6 +26,7 @@ nohup.out
 *.user
 *.userosscache
 *.sln.docstates
+.cursor/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

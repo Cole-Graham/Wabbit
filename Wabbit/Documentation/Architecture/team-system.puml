@@ -1,0 +1,116 @@
+@startuml Team System
+
+title Team System Architecture
+
+skinparam linetype ortho
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+top to bottom direction
+
+' Organize vertically
+package "Models" {
+    class Team {
+        +TeamId
+        +TeamName
+        +GameType
+        +Rating
+        +CorePlayers
+        +SecondaryPlayers
+        +SubstitutePlayers
+        +Creator
+    }
+    
+    class PlayerInfo {
+        +Id
+        +Username
+    }
+    
+    enum PlayerRole {
+        Core
+        Secondary
+        Substitute
+    }
+    
+    ' Vertical layout
+    Team -[hidden]-> PlayerInfo
+    PlayerInfo -[hidden]-> PlayerRole
+    
+    Team *-- "0..*" PlayerInfo
+}
+
+' Add vertical separation
+Models -[hidden]-> Services
+
+package "Services" {
+    interface ITeamService {
+        +CreateTeamAsync()
+        +UpdateTeamAsync()
+        +DeleteTeamAsync()
+        +GetTeamByNameAsync()
+        +AddPlayerToTeamAsync()
+        +RemovePlayerFromTeamAsync()
+    }
+    
+    interface IPermissionService {
+        +HasAdminPrivilegesAsync()
+        +HasModeratorPrivilegesAsync()
+        +HasWhitelistedRoleAsync()
+    }
+    
+    class TeamService
+    
+    ' Vertical layout
+    ITeamService -[hidden]-> IPermissionService
+    IPermissionService -[hidden]-> TeamService
+    
+    TeamService ..|> ITeamService
+}
+
+' Add vertical separation
+Services -[hidden]-> Commands
+
+package "Commands" {
+    class TeamGroup {
+        +CreateTeamAsync()
+        +JoinTeamAsync()
+        +LeaveTeamAsync()
+        +ShowTeamAsync()
+    }
+    
+    class TeamManagementGroup {
+        +ForceCreateTeamAsync()
+        +DeleteTeamAsync()
+        +AddPlayerToTeamAsync()
+    }
+    
+    ' Vertical layout
+    TeamGroup -[hidden]-> TeamManagementGroup
+}
+
+' Add vertical separation
+Commands -[hidden]-> Attributes
+
+package "Attributes" {
+    abstract TeamPermissionBaseAttribute {
+        +ExecuteCheckAsync()
+    }
+    
+    class RequireTeamCaptainAttribute
+    class RequireTeamMemberAttribute
+    
+    ' Vertical layout
+    TeamPermissionBaseAttribute -[hidden]-> RequireTeamCaptainAttribute
+    RequireTeamCaptainAttribute -[hidden]-> RequireTeamMemberAttribute
+    
+    RequireTeamCaptainAttribute --|> TeamPermissionBaseAttribute
+    RequireTeamMemberAttribute --|> TeamPermissionBaseAttribute
+}
+
+' Keep relationships but organize for vertical flow
+TeamGroup --> ITeamService
+TeamManagementGroup --> ITeamService
+TeamService --> IPermissionService
+TeamPermissionBaseAttribute --> ITeamService
+TeamPermissionBaseAttribute --> IPermissionService
+
+@enduml 

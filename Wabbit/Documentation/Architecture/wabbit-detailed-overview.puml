@@ -1,0 +1,1678 @@
+@startuml Tournament Service Architecture
+
+' Set vertical direction and layout optimization
+top to bottom direction
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 60
+' Reduce width
+skinparam classAttributeIconSize 0
+skinparam maxMessageSize 100
+skinparam wrapWidth 200
+
+skinparam class {
+    BackgroundColor White
+    ArrowColor #333
+    BorderColor #333
+    ' Add padding to reduce horizontal width
+    Padding 5
+    ' Style to make the diagram more compact
+    Style strictuml
+}
+
+' Custom styling for service layers
+skinparam package {
+    BackgroundColor transparent
+    BorderColor gray
+    FontColor gray
+    FontSize 11
+}
+
+' Add Model Package
+package "Models" as ModelLayer {
+    ' Main tournament model
+    class Tournament {
+        +Name: string
+        +Groups: List<Group>
+        +PlayoffMatches: List<Match>
+        +CurrentStage: TournamentStage
+        +Format: TournamentFormat
+        +GameType: GameType
+        +IsComplete: bool
+        +Winner: object
+        +Settings: TournamentSettings
+        +CustomProperties: Dictionary<string, object>
+        +RelatedMessages: List<RelatedMessage>
+        +AnnouncementChannel: DiscordChannel
+    }
+    
+    ' Tournament group model
+    class Group {
+        +Name: string
+        +Participants: List<GroupParticipant>
+        +Matches: List<Match>
+        +IsComplete: bool
+        +Tournament: Tournament
+    }
+    
+    ' Group participant model
+    class GroupParticipant {
+        +Player: object
+        +Wins: int
+        +Draws: int
+        +Losses: int
+        +Points: int
+        +AdvancedToPlayoffs: bool
+        +Seed: int
+        +GamesWon: int
+        +GamesLost: int
+        +SourceGroup: Group
+        +QualificationInfo: string
+    }
+    
+    ' Match model
+    class Match {
+        +Id: string
+        +Name: string
+        +Type: TournamentMatchType
+        +Participants: List<MatchParticipant>
+        +Result: MatchResult
+        +LinkedRound: Round
+        +NextMatch: Match
+        +ThirdPlaceMatch: Match
+        +BestOf: int
+        +IsComplete: bool
+        +IsTiebreakerMatch: bool
+    }
+    
+    ' Match participant model
+    class MatchParticipant {
+        +Player: object
+        +SourceGroup: Group
+        +SourceMatch: Match
+        +SourceGroupPosition: int
+        +Score: int
+    }
+    
+    ' Match result model
+    class MatchResult {
+        +Winner: object
+        +WinnerScore: int
+        +LoserScore: int
+        +MapResults: List<string>
+        +CompletedAt: DateTime
+        +Status: MatchStatus
+        +ResultType: MatchResultType
+        +Forfeiter: object
+        +DeckCodes: Dictionary
+    }
+    
+    ' Tournament signup model
+    class TournamentSignup {
+        +Name: string
+        +IsOpen: bool
+        +CreatedAt: DateTime
+        +Participants: List<DiscordMember>
+        +Seeds: List<ParticipantSeed>
+        +Format: TournamentFormat
+        +Type: GameType
+        +ScheduledStartTime: DateTime?
+        +SignupChannelId: ulong
+        +MessageId: ulong
+        +RelatedMessages: List<RelatedMessage>
+    }
+    
+    ' Participant seed model
+    class ParticipantSeed {
+        +Player: DiscordMember
+        +Seed: int
+    }
+    
+    ' Related message model
+    class RelatedMessage {
+        +ChannelId: ulong
+        +MessageId: ulong
+        +Type: string
+    }
+    
+    ' Round model (for match execution)
+    class Round {
+        +Name: string
+        +Teams: List<Team>
+        +Maps: List<string>
+        +TournamentId: string
+        +CurrentStage: MatchStage
+        +IsCompleted: bool
+        +StatusMessageId: ulong?
+        +CustomProperties: Dictionary<string, object>
+    }
+    
+    ' Team model (for a round)
+    class Team {
+        +Name: string
+        +Thread: DiscordThreadChannel
+        +Participants: List<Participant>
+        +Wins: int
+        +MapBans: List<string>
+        +HasSubmittedDeck: bool
+    }
+    
+    ' Participant model (for a team)
+    class Participant {
+        +Player: DiscordMember
+        +Deck: string
+        +TempDeckCode: string
+        +DeckHistory: Dictionary<string, string>
+    }
+    
+    ' Map model
+    class Map {
+        +Name: string
+        +Id: string
+        +Thumbnail: string
+        +IsInTournamentPool: bool
+    }
+    
+    ' Tournament settings model
+    class TournamentSettings {
+        +MinPlayers: int
+        +MaxPlayers: int
+        +IncludeThirdPlaceMatch: bool
+        +BestOfFinals: int
+        +BestOfSemifinals: int
+        +BestOfQuarterfinals: int
+        +BestOfGroupStage: int
+    }
+    
+    ' New Rating Models
+    class Season {
+        +SeasonId: string
+        +SeasonName: string
+        +Description: string
+        +StartDate: DateTimeOffset
+        +EndDate: DateTimeOffset?
+        +IsActive: bool
+        +CreatorId: ulong
+        +CreatorUsername: string
+        +FinalRankings: Dictionary<TeamGameType, List<SeasonRanking>>
+        +Messages: List<SeasonMessage>
+        +AddMessage()
+        +AddRelatedMessage()
+        +EndSeason()
+        +GetFormattedDuration()
+    }
+    
+    class SeasonRanking {
+        +Rank: int
+        +IsTeam: bool
+        +PlayerId: ulong
+        +PlayerUsername: string?
+        +TeamId: string?
+        +TeamName: string?
+        +Rating: int
+        +Wins: int
+        +Losses: int
+        +WinRate: double
+        +MatchesPlayed: int
+        +DisplayName: string
+    }
+    
+    class SeasonMessage {
+        +ChannelId: ulong
+        +MessageId: ulong
+        +Type: SeasonMessageType
+        +Timestamp: DateTimeOffset
+    }
+    
+    ' Enum for Season Message Types
+    enum SeasonMessageType {
+        Announcement
+        Update
+        Ranking
+        Event
+    }
+    
+    ' Team model for player teams
+    class RatingTeam {
+        +TeamId: string
+        +TeamName: string
+        +GameType: TeamGameType
+        +Rating: int
+        +TournamentRating: int
+        +CreatedAt: DateTimeOffset
+        +CorePlayers: List<DiscordUser>
+        +SecondaryPlayers: List<DiscordUser>
+        +SubstitutePlayers: List<DiscordUser>
+        +Wins: int
+        +Losses: int
+        +WinRate: double
+        +RatingHistory: List<RatingChange>
+        +Creator: DiscordUser
+        +AddCorePlayer()
+        +AddSecondaryPlayer()
+        +AddSubstitutePlayer()
+        +ChangeName()
+        +UpdateRating()
+        +UpdateTournamentRating()
+        +HasRequiredPlayers()
+        +HasPlayer()
+        +HasPlayerInRole()
+        +GetPlayerCounts()
+    }
+    
+    class RatingChange {
+        +OldRating: int
+        +NewRating: int
+        +Change: int
+        +Opponent: string
+        +IsWin: bool
+        +IsTournamentMatch: bool
+        +TournamentName: string
+        +Date: DateTimeOffset
+    }
+    
+    class PlayerInfo {
+        +Id: ulong
+        +Username: string
+    }
+    
+    enum PlayerRole {
+        Core
+        Secondary
+        Substitute
+    }
+    
+    ' Scrimmage model
+    class Scrimmage {
+        +Thread: DiscordThreadChannel
+        +GameType: ScrimmageGameType
+        +TeamA: ScrimmageTeam
+        +TeamB: ScrimmageTeam
+        +Maps: List<string>
+        +Status: ScrimmageStatus
+        +Messages: List<DiscordMessage>
+        +StatusMessage: DiscordMessage?
+        +MatchLength: MatchLength
+        +IsRated: bool
+        +UseTournamentMapPool: bool
+        +CurrentGameNumber: int
+        +TeamAScore: int
+        +TeamBScore: int
+        +CreatedAt: DateTimeOffset
+        +CompletedAt: DateTimeOffset?
+        +Results: List<int>
+        +TeamAMapBans: List<string>
+        +TeamBMapBans: List<string>
+    }
+    
+    class ScrimmageTeam {
+        +TeamId: string?
+        +TeamName: string?
+        +Captain: DiscordUser
+        +Members: List<DiscordUser>
+        +DeckCodes: Dictionary<ulong, string>
+        +DeckName: string?
+        +DisplayName: string
+        +SetDeckCode()
+        +GetDeckCode()
+        +AllPlayersHaveSubmittedDeckCodes()
+    }
+    
+    enum ScrimmageStatus {
+        Created
+        InProgress
+        Completed
+        Cancelled
+    }
+    
+    enum MatchLength {
+        Bo1
+        Bo3
+        Bo5
+    }
+    
+    ' Base and Generated Game Type enums
+    class GameType <<enum>> {
+        OneVOne
+        TwoVTwo
+        ThreeVThree
+        FourVFour
+    }
+    
+    class TeamGameType <<generated>> {
+        OneVOne
+        TwoVTwo
+        ThreeVThree
+        FourVFour
+    }
+    
+    class ScrimmageGameType <<generated>> {
+        OneVOne
+        TwoVTwo
+        ThreeVThree
+        FourVFour
+    }
+    
+    class TournamentGameType <<generated>> {
+        OneVOne
+        TwoVTwo
+        ThreeVThree
+        FourVFour
+    }
+    
+    class SignupGameType <<generated>> {
+        OneVOne
+        TwoVTwo
+        ThreeVThree
+        FourVFour
+    }
+    
+    ' Enums
+    enum TournamentStage {
+        SignupOpen
+        Groups
+        Playoffs
+        Complete
+    }
+    
+    enum TournamentFormat {
+        GroupStageWithPlayoffs
+        SingleElimination
+        DoubleElimination
+        RoundRobin
+    }
+    
+    enum TournamentMatchType {
+        GroupStage
+        GroupStageTiebreaker
+        RoundOf16
+        Quarterfinal
+        Semifinal
+        Final
+        PlayoffThirdPlace
+    }
+    
+    enum MatchStatus {
+        Pending
+        InProgress
+        Completed
+        Cancelled
+    }
+    
+    enum MatchResultType {
+        Normal
+        Forfeit
+        Disqualification
+        Tiebreaker
+        Default
+    }
+    
+    enum MatchStage {
+        Created
+        MapBan
+        DeckSubmission
+        DeckRevision
+        GameResults
+        Completed
+    }
+    
+    ' Model relationships
+    Tournament *-- "0..*" Group
+    Tournament *-- "0..*" Match
+    Tournament *-- "1" TournamentSettings
+    
+    Group *-- "0..*" GroupParticipant
+    Group *-- "0..*" Match
+    Group --o "1" Tournament
+    
+    Match *-- "0..*" MatchParticipant
+    Match *-- "0..1" MatchResult
+    Match --o "0..1" Match : NextMatch
+    Match --o "0..1" Match : ThirdPlaceMatch
+    Match --o "0..1" Round
+    
+    MatchParticipant --o "0..1" Group
+    MatchParticipant --o "0..1" Match
+    
+    Round *-- "0..*" Team
+    Team *-- "0..*" Participant
+    
+    TournamentSignup *-- "0..*" ParticipantSeed
+    TournamentSignup *-- "0..*" RelatedMessage
+    
+    ' Rating system relationships
+    Season *-- "0..*" SeasonRanking
+    Season *-- "0..*" SeasonMessage
+    
+    RatingTeam *-- "0..*" RatingChange
+    RatingTeam *-- "0..*" PlayerInfo
+    
+    ' Scrimmage relationships
+    Scrimmage *-- "1" ScrimmageTeam : TeamA
+    Scrimmage *-- "1" ScrimmageTeam : TeamB
+    ScrimmageTeam --o "0..1" RatingTeam : LinkedTeam
+    
+    ' Utility class for GameType extensions
+    class GameTypeExtensions <<static>> {
+        +ToDisplayString<T>(gameType: T): string
+    }
+}
+
+' Define new package for Event Handling System
+package "Event Handling System" as EventLayer {
+    ' Main event handlers
+    class ComponentInteractionHandler <<event handler>> {
+        -_factory: ComponentHandlerFactory
+        -_logger: ILogger
+        +HandleEventAsync(sender: DiscordClient, e: ComponentInteractionCreatedEventArgs)
+    }
+
+    class ModalInteractionHandler <<event handler>> {
+        -_factory: ModalHandlerFactory
+        -_logger: ILogger
+        +HandleEventAsync(sender: DiscordClient, e: ModalSubmitEventArgs)
+    }
+
+    ' Component handlers
+    class TournamentSignupHandler <<component handler>> {
+        -_signupService: ITournamentSignupService
+        -_tournamentService: ITournamentService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+        -HandleSignupButton()
+        -HandleWithdrawButton()
+        -HandleCancelSignupButton()
+    }
+
+    class MapBanHandler <<component handler>> {
+        -_matchStatusService: IMatchStatusService
+        -_mapService: ITournamentMapService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    class GameResultHandler <<component handler>> {
+        -_gameService: ITournamentGameService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    class DeckSubmissionHandler <<component handler>> {
+        -_matchStatusService: IMatchStatusService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+    
+    class SeasonHandler <<component handler>> {
+        -_seasonService: ISeasonService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+    
+    class ScrimmageComponentHandler <<component handler>> {
+        -_scrimmageService: IScrimmageService
+        -_scrimmageStatusService: IScrimmageStatusService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    class LeaderboardHandler <<component handler>> {
+        -_leaderboardService: ILeaderboardService
+        -_seasonStateService: ISeasonStateService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+        -HandleGameTypeChange()
+        -HandlePageNavigation()
+        -HandleSeasonChange()
+    }
+
+    class RefreshStatusHandler <<component handler>> {
+        -_roundsHolder: OngoingRounds
+        -_matchStatusService: IMatchStatusService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    ' Modal handlers
+    class MapBanModalHandler <<modal handler>> {
+        -_matchStatusService: IMatchStatusService
+        -_mapService: ITournamentMapService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ModalSubmitEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    class DeckSubmissionModalHandler <<modal handler>> {
+        -_matchStatusService: IMatchStatusService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ModalSubmitEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    class TournamentCreationModalHandler <<modal handler>> {
+        -_tournamentService: ITournamentService
+        -_managerService: ITournamentManagerService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ModalSubmitEventArgs, hasBeenDeferred: bool): Task
+    }
+    
+    class ScrimmageCreationModalHandler <<modal handler>> {
+        -_scrimmageService: IScrimmageService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ModalSubmitEventArgs, hasBeenDeferred: bool): Task
+    }
+    
+    class TeamCreationModalHandler <<modal handler>> {
+        -_teamService: ITeamService
+        +CanHandle(customId: string): bool
+        +HandleAsync(client: DiscordClient, e: ModalSubmitEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    ' Factories
+    class ComponentHandlerFactory <<factory>> {
+        -_serviceProvider: IServiceProvider
+        -_logger: ILogger
+        +CreateHandler(customId: string): ComponentHandlerBase
+    }
+
+    class ModalHandlerFactory <<factory>> {
+        -_serviceProvider: IServiceProvider
+        -_logger: ILogger
+        +CreateHandler(customId: string): ModalHandlerBase
+    }
+
+    ' Base abstract classes
+    abstract class ComponentHandlerBase {
+        #_logger: ILogger
+        #_stateService: ITournamentStateService
+        +{abstract} CanHandle(customId: string): bool
+        +{abstract} HandleAsync(client: DiscordClient, e: ComponentInteractionCreatedEventArgs, hasBeenDeferred: bool): Task
+    }
+
+    abstract class ModalHandlerBase {
+        #_logger: ILogger
+        #_stateService: ITournamentStateService
+        +{abstract} CanHandle(customId: string): bool
+        +{abstract} HandleAsync(client: DiscordClient, e: ModalSubmitEventArgs, hasBeenDeferred: bool): Task
+    }
+}
+
+' Define service layers as packages
+package "Command/UI Layer" as UILayer {
+    class TournamentManagementGroup <<command handler>> {
+        +TManagementBasicGroup 
+        +TManagementSignupGroup
+        +TManagementRecoveryGroup
+    }
+
+    class TManagementBasicGroup <<partial>> {
+        +CreateTournamentFromSignup()
+        +ShowStandings()
+        +ListTournaments()
+        +DeleteTournament()
+        +ResumeTournament()
+        +RepairData()
+        +SaveTournamentData()
+        +SetStandingsChannel()
+        +HandleMatchCompletion()
+        +HandleGameResultAsync()
+        +StartGroupStageMatches()
+    }
+
+    class TManagementSignupGroup <<partial>> {
+        +CreateSignup() <<"/tournament signup_create">>
+        +CloseSignup() <<"/tournament signup_close">>
+        +ReopenSignup() <<"/tournament signup_reopen">>
+        +AddToSignup() <<"/tournament signup_add">>
+        +RemoveFromSignup() <<"/tournament signup_remove">>
+        +SetSeed() <<"/tournament signup_set_seed">>
+        +SetTournamentSeed() <<"/tournament set_tournament_seed">>
+        -UpdateSignupMessage()
+    }
+
+    class TManagementRecoveryGroup <<partial>> {
+        +RecoverThreads() <<"/tournament recover_threads">>
+        +RecoverPlayerThread() <<"/tournament recover_player_thread">>
+        +RecoverMatch() <<"/tournament recover_match">>
+        +RebuildTournament() <<"/tournament rebuild_tournament">>
+        +ValidateTournament() <<"/tournament validate_tournament">>
+    }
+    
+    class AdminThirdPlaceMatchHandler <<component handler>> {
+        +HandleAdminThirdPlaceMatchAsync()
+    }
+    
+    class "Map/Game Handlers" as GameHandlers <<component handler>> {
+        +MapBanHandler
+        +GameResultHandler
+    }
+    
+    class TeamGroup <<command handler>> {
+        -_teamService: ITeamService
+        -_seasonStateService: ISeasonStateService
+        -_leaderboardService: ILeaderboardService
+        +RegisterForSoloAsync()
+        +CreateTeamAsync()
+        +JoinTeamAsync()
+        +LeaveTeamAsync()
+        +ShowTeamAsync()
+        +ListTeamsAsync()
+        +RenameTeamAsync()
+        +AddPlayerAsync()
+        +RemovePlayerAsync()
+        +MyStatsAsync()
+    }
+    
+    class TeamManagementGroup <<command handler>> {
+        -_logger: ILogger<TeamManagementGroup>
+        -_teamService: ITeamService
+        -_seasonStateService: ISeasonStateService
+        -_leaderboardService: ILeaderboardService
+        +ForceCreateTeamAsync() <<"/team-admin force_create">>
+        +DeleteTeamAsync() <<"/team-admin delete">>
+        +AddPlayerToTeamAsync() <<"/team-admin add_player">>
+        +RemovePlayerFromTeamAsync() <<"/team-admin remove_player">>
+        +ResetTeamRatingAsync() <<"/team-admin reset_rating">>
+        +ListTeamsAsync() <<"/team-admin list">>
+    }
+    
+    class SeasonGroup <<command handler>> {
+        +CreateSeason() <<"/season create">>
+        +EndSeason() <<"/season end">>
+        +ShowSeason() <<"/season show">>
+        +ListSeasons() <<"/season list">>
+        +SetCurrentSeason() <<"/season set_current">>
+    }
+    
+    class ScrimmageGroup <<command handler>> {
+        +CreateScrimmage() <<"/scrimmage create">>
+        +StartScrimmage() <<"/scrimmage start">>
+        +CancelScrimmage() <<"/scrimmage cancel">>
+        +ReportWin() <<"/scrimmage win">>
+        +SetDeck() <<"/scrimmage set_deck">>
+    }
+    
+    note right of TManagementSignupGroup::CreateSignup
+      /tournament signup_create <n> <format> <gameType> <startTimeUnix>
+      Creates tournament signup with specified parameters
+    end note
+    
+    note right of TManagementRecoveryGroup::RecoverThreads
+      /tournament recover_threads <tournamentName>
+      Recovers threads and match status embeds for a tournament
+    end note
+    
+    note right of TeamGroup::CreateTeam
+      /team create <name> <gameType>
+      Creates a new team with the specified name and game type
+    end note
+    
+    note right of ScrimmageGroup::CreateScrimmage
+      /scrimmage create <opponent> <bestOf> <isRated>
+      Creates a new scrimmage against the specified opponent
+    end note
+}
+
+package "Service Coordinator Layer" as CoordinatorLayer {
+    class TournamentService {
+        +GetTournamentAsync()
+        +SaveTournamentAsync()
+        +CreateTournamentAsync()
+    }
+    
+    class TournamentManagerService {
+        +CreateTournamentAsync()
+        +StartTournamentAsync()
+        +FinalizeTournamentAsync()
+        +StartMatchRoundAsync()
+        +StartGroupStage()
+        +GeneratePendingMatches()
+        +Generate1v1Matches()
+        +ScheduleNextMatchBatchAsync()
+        +HandleMatchCompletionEvent()
+    }
+    
+    class TournamentSignupService {
+        +CreateSignup()
+        +UpdateSignup()
+        +SaveSignupsAsync()
+        +CreateSignupEmbed()
+    }
+    
+    class TournamentRepositoryService {
+        +SaveTournamentAsync()
+        +LoadTournamentsAsync()
+        +CleanPlayerForSerialization()
+        +ArchiveTournamentAsync()
+    }
+    
+    class TeamService {
+        -_logger: ILogger<TeamService>
+        -_client: DiscordClient
+        -_permissionService: IPermissionService
+        -_playerRatingRepository: IPlayerRatingRepositoryService
+        -_teams: Dictionary<string, Team>
+        +InitializeAsync()
+        +CreateTeamAsync()
+        +UpdateTeamAsync()
+        +DeleteTeamAsync()
+        +UpdateTeamNameAsync()
+        +TransferTeamOwnershipAsync()
+        +SaveTeamsAsync()
+        -LoadTeamsAsync()
+        -ValidateTeamName()
+        -GenerateTeamId()
+    }
+    
+    class SeasonService {
+        +CreateSeasonAsync()
+        +GetSeasonByIdAsync()
+        +GetSeasonByNameAsync()
+        +GetActiveSeasonAsync()
+        +GetAllSeasonsAsync()
+        +EndSeasonAsync()
+        +SetActiveSeasonAsync()
+    }
+    
+    class ScrimmageService {
+        +CreateScrimmageAsync()
+        +StartScrimmageAsync()
+        +CancelScrimmageAsync()
+        +RecordGameResultAsync()
+        +FinalizeScrimmageAsync()
+        +GetActiveScrimmagesAsync()
+    }
+}
+
+package "Core Services Layer" as CoreLayer {
+    ' Core service interface
+    interface ITournamentPlayoffService {
+        +SetupPlayoffsAsync()
+        +StartPlayoffMatchesAsync()
+        +UpdateBracketAdvancementAsync()
+        +ProcessForfeitAsync()
+        +AreSemifinalsCompleted()
+        +CanCreateThirdPlaceMatch()
+        +CreateThirdPlaceMatchAsync()
+    }
+    
+    ' Implementation
+    class TournamentPlayoffService {
+        -_logger
+        -_matchOperations
+        -_stateValidator
+        -_bracketManager
+        +SetupPlayoffs()
+        +UpdateBracketAdvancement()
+        -HandleThirdPlaceAdvancement()
+        -CreateThirdPlaceMatch()
+        -GetQualifiedParticipants()
+        -SeedParticipants()
+    }
+    
+    class TournamentMatchService {
+        +CreateAndStart1v1Match()
+        +CreateAndStartMatch()
+        +UpdateMatchResultAsync()
+        +HandleMatchCompletion()
+        +HandleDeckSubmissionAsync()
+        +GetOrCreateTeamThreadsAsync()
+    }
+    
+    class TournamentGroupService {
+        +CreateGroups()
+        +DetermineGroupCount()
+        +GetOptimalGroupSizes()
+        +DistributePlayersWithSeeding()
+    }
+    
+    class MatchStatusService {
+        +UpdateToMapBanStageAsync()
+        +UpdateToDeckSubmissionStageAsync()
+        +RecordMapBanAsync()
+        +UpdateMatchStatusAsync()
+        +UpdateMatchStatusInAllThreadsAsync()
+        +CreateNewMatchStatusAsync()
+    }
+    
+    class TournamentStateService {
+        +SaveTournamentStateAsync()
+        +LoadTournamentStateAsync()
+        +UpdateTournamentStateAsync()
+        +TrackMatchProgress()
+        +ValidateAndRecoverThreadsAsync()
+        +RecoverMatchStatusEmbedsAsync()
+        +RebuildMatchThreadAssociationsAsync()
+        +UpdateTournamentFromRound()
+        +UpdateTournamentFromRounds()
+        +SafeSaveTournamentStateAsync()
+    }
+
+    class TournamentMapService {
+        +GetMapPoolAsync()
+        +ValidateMapBansAsync()
+        +GetMapSelectionOptionsAsync()
+    }
+
+    class TournamentGameService {
+        +HandleGameResultAsync()
+        +ProcessWinnerSelectionAsync()
+        +IsMatchCompleteAsync()
+    }
+    
+    class ScrimmageStatusService {
+        +UpdateStatusAsync()
+        +UpdateToMapBanStageAsync()
+        +RecordMapBanAsync()
+        +CreateStatusEmbedAsync()
+        +UpdateStatusEmbedAsync()
+    }
+    
+    class SeasonStateService {
+        +SaveSeasonStateAsync()
+        +LoadSeasonStateAsync()
+        +UpdateSeasonStateAsync()
+        +CreateRankingsEmbedAsync()
+    }
+    
+    class SeasonRepositoryService {
+        +SaveSeasonAsync()
+        +LoadSeasonsAsync()
+        +ArchiveSeasonAsync()
+    }
+    
+    class DiscordUtilities <<static>> {
+        +CreateThreadAsync()
+        +AddMembersToThreadAsync()
+    }
+}
+
+package "Base Services Layer" as BaseLayer {
+    ' Helper interfaces arranged vertically
+    interface ITournamentMatchOperationsService {
+        +CreateMatch()
+        +UpdateMatchResultAsync()
+    }
+    
+    interface ITournamentStateValidator {
+        +ValidateTournamentState()
+        +IsValidStateTransition()
+        +ValidateMatch()
+        +ValidateBracketStructure()
+        +ValidatePlayoffBracket()
+        +ValidateGroupStandings()
+        +TryRecoverMatchResult()
+        +TryRecoverBracketGeneration()
+        +ValidatePlayoffSetup()
+        +ValidateGroupMatchCreation()
+        +ValidateGroupCompletion()
+    }
+    
+    interface ITournamentBracketManager {
+        +UpdateBracketAdvancement()
+        +CreatePlayoffBracket()
+        +LinkBracketMatches()
+    }
+    
+    interface ITournamentScoreManager {
+        +UpdateGroupScores()
+        +CalculateStandings()
+    }
+    
+    interface IMatchStatusService {
+        +UpdateMatchStatusAsync()
+        +UpdateToMapBanStageAsync()
+        +UpdateToDeckSubmissionStageAsync()
+        +RecordMapBanAsync()
+        +UpdateMatchStatusInAllThreadsAsync()
+        +CreateNewMatchStatusAsync()
+        +ConfirmMapBansAsync()
+        +IsRefreshButtonOnCooldown()
+        +ReviseMapBansAsync()
+        +ConfirmDeckAsync()
+        +ReviseDeckAsync()
+    }
+    
+    interface ITournamentStateService {
+        +SaveTournamentStateAsync()
+        +LoadTournamentStateAsync()
+        +UpdateTournamentStateAsync()
+    }
+    
+    interface ITournamentRepositoryService {
+        +SaveTournamentAsync()
+        +LoadTournamentsAsync()
+        +ArchiveTournamentAsync()
+    }
+
+    interface IMapService {
+        +GetMapByName(mapName: string): Map?
+        +CreateMapEmbed(map: Map, description: string?): DiscordEmbedBuilder
+        +GetMapThumbnailAsync(mapName: string): Task<(string? url, byte[]? data)>
+        +NormalizeThumbnailPath(thumbnailPath: string): string
+        +SendMapEmbedAsync(channel: DiscordChannel, map: Map, description: string?, tempDisplaySeconds: int): Task<DiscordMessage>
+        +IsMapInPool(mapName: string, isInTournamentPool: bool): bool
+        +ValidateMap(mapName: string, out errorMessage: string?): bool
+        +GetMapsByPoolTypeAndSize(isInTournamentPool: bool, mapSize: string): List<string>
+    }
+
+    interface ITournamentMapService {
+        +GetTournamentMapPool(oneVOne: bool): List<string>
+        +GetRandomMap(oneVOne: bool): string
+        +GetRandomMaps(oneVOne: bool, count: int): List<string>
+        +GenerateMapList(oneVOne: bool, team1Bans: List<string>, team2Bans: List<string>, matchLength: int, round: Round?): List<string>
+        +GetAvailableMapsForNextGame(round: Round): List<string>
+        +ValidateMapBans(mapBans: List<string>, oneVOne: bool): (bool isValid, List<string> validatedBans, string? errorMessage)
+        +GenerateMapListBo1(oneVOne: bool, team1Bans: List<string>, team2Bans: List<string>, customMapPool: List<string>?, round: Round?): List<string>
+        +GenerateMapListBo3(oneVOne: bool, team1Bans: List<string>, team2Bans: List<string>, customMapPool: List<string>?, round: Round?): List<string>
+        +GenerateMapListBo5(oneVOne: bool, team1Bans: List<string>, team2Bans: List<string>, customMapPool: List<string>?, round: Round?): List<string>
+        +GetRandomMapWithVisualization(): (Map? map, DiscordEmbedBuilder embed)
+        +GetMapByName(mapName: string): Map?
+        +GetMapThumbnailAsync(mapName: string): Task<(string? url, byte[]? data)>
+        +GetRandomMapForNextGame(round: Round): string?
+    }
+
+    interface ITournamentGameService {
+        +HandleGameResultAsync()
+        +ProcessWinnerSelectionAsync()
+        +IsMatchCompleteAsync()
+    }
+    
+    interface ITeamService {
+        +InitializeAsync()
+        +CreateTeamAsync()
+        +UpdateTeamAsync()
+        +DeleteTeamAsync()
+        +UpdateTeamNameAsync()
+        +TransferTeamOwnershipAsync()
+        +IsTeamNameAvailableAsync()
+        +GetTeamByIdAsync()
+        +GetTeamByNameAsync()
+        +GetTopTeamsByRatingAsync()
+        +GetAllTeamsAsync()
+        +GetTeamsByTypeAsync()
+        +GetTeamCountsByTypeAsync()
+        +AddPlayerToTeamAsync()
+        +RemovePlayerFromTeamAsync()
+        +ChangePlayerRoleAsync()
+        +GetPlayerTeamsAsync()
+        +GetPlayerTeamsByTypeAsync()
+        +CanCreateTeamAsync()
+        +RecordMatchResultAsync()
+        +RecordTournamentMatchResultAsync()
+        +CanModifyTeamAsync()
+        +HasServerManagementPrivilegesAsync()
+        +GetTeamChangeCooldownAsync()
+        +ResetTeamChangeCooldownAsync()
+        +SaveTeamsAsync()
+    }
+    
+    interface ISeasonService {
+        +CreateSeasonAsync()
+        +GetSeasonByIdAsync()
+        +GetActiveSeasonAsync()
+        +EndSeasonAsync()
+        +SetActiveSeasonAsync()
+    }
+    
+    interface IScrimmageService {
+        +CreateScrimmageAsync()
+        +StartScrimmageAsync()
+        +CancelScrimmageAsync()
+        +RecordGameResultAsync()
+        +FinalizeScrimmageAsync()
+    }
+    
+    interface IScrimmageStatusService {
+        +UpdateStatusAsync()
+        +UpdateToMapBanStageAsync()
+        +RecordMapBanAsync()
+    }
+    
+    interface ISeasonStateService {
+        +SaveSeasonStateAsync()
+        +LoadSeasonStateAsync()
+        +UpdateSeasonStateAsync()
+    }
+    
+    interface ISeasonRepositoryService {
+        +SaveSeasonAsync()
+        +LoadSeasonsAsync()
+        +ArchiveSeasonAsync()
+    }
+    
+    interface IPermissionService {
+        +HasAdminPrivilegesAsync(userId: ulong): Task<bool>
+        +HasModeratorPrivilegesAsync(userId: ulong): Task<bool>
+        +HasWhitelistedRoleAsync(userId: ulong): Task<bool>
+    }
+
+    interface IRatingStateService {
+        +Initialize(): Task
+        +GetOrCreatePlayerRatingAsync(user: DiscordUser): Task<PlayerRating>
+        +GetPlayerRatingAsync(userId: ulong, gameType: GameType, tournamentRating: bool): Task<int>
+        +CalculateRatingChangesAsync(winnerId: ulong, loserId: ulong, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+        +CalculateTeamRatingChangesAsync(winnerTeam: Team, loserTeam: Team, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+        +RecordMatchResultAsync(winnerId: ulong, loserId: ulong, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+        +RecordTeamMatchResultAsync(winnerTeamId: string, loserTeamId: string, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+        +GetTopPlayersByRatingAsync(gameType: GameType, count: int, tournamentRating: bool): Task<List<PlayerRating>>
+        +GetPlayerRatingHistoryAsync(userId: ulong, gameType: GameType, count: int, tournamentRating: bool): Task<List<RatingChange>>
+        +SetPlayerRatingAsync(userId: ulong, gameType: GameType, newRating: int, tournamentRating: bool, adminId: ulong): Task<bool>
+        +ResetAllRatingsAsync(gameType: GameType, tournamentRating: bool): Task<int>
+        +GetLeaderboardStatsAsync(): Task<LeaderboardStats>
+    }
+
+    interface IPlayerRatingRepositoryService {
+        +SavePlayerRatingsAsync(ratings: List<PlayerRating>): Task<bool>
+        +LoadPlayerRatingsAsync(): Task<List<PlayerRating>>
+        +SavePlayerRatingHistoryAsync(userId: ulong, history: List<RatingChange>): Task<bool>
+        +LoadPlayerRatingHistoryAsync(userId: ulong): Task<List<RatingChange>>
+        +GetAllRatingsAsync(): Task<List<PlayerRating>>
+        +GetPlayerRatingAsync(userId: ulong): Task<PlayerRating?>
+        +ArchivePlayerRatingsAsync(seasonId: string): Task<bool>
+    }
+
+    interface ILeaderboardService {
+        +GetLeaderboardAsync(gameType: TeamGameType, seasonId: string?, page: int, itemsPerPage: int): Task<(List<LeaderboardEntry>, int, int)>
+        +CreateLeaderboardEmbedAsync(gameType: TeamGameType, seasonId: string?, page: int, itemsPerPage: int): Task<(DiscordEmbed, DiscordButtonComponent[], DiscordSelectComponent)>
+        +PostLeaderboardAsync(channel: DiscordChannel, gameType: TeamGameType, seasonId: string?): Task<DiscordMessage>
+        +UpdateLeaderboardAsync(message: DiscordMessage, gameType: TeamGameType, seasonId: string?, page: int): Task<DiscordMessage>
+        +GetPlayerRankingAsync(playerId: ulong, gameType: TeamGameType, seasonId: string?): Task<LeaderboardEntry?>
+        +GetTeamRankingAsync(teamId: string, gameType: TeamGameType, seasonId: string?): Task<LeaderboardEntry?>
+        +HasLeaderboardAdminPrivilegesAsync(userId: ulong): Task<bool>
+    }
+}
+
+' Connect Services to Models
+TournamentService --> Tournament
+TournamentSignupService --> TournamentSignup
+TournamentMatchService --> Match
+TournamentMatchService --> Round
+TournamentGroupService --> Group
+TournamentGroupService --> GroupParticipant
+TournamentPlayoffService --> Tournament
+TournamentPlayoffService --> Match
+MatchStatusService --> Round
+TournamentMapService --> Map
+TournamentGameService --> Round
+DiscordUtilities --> Team
+
+' Add new model connections
+TeamService --> RatingTeam
+SeasonService --> Season
+ScrimmageService --> Scrimmage
+ScrimmageStatusService --> Scrimmage
+
+' Add new relationship for thread creation flow
+TournamentManagerService --> TournamentMatchService : schedules matches via
+TournamentMatchService --> DiscordUtilities : uses for thread creation
+TournamentMatchService --> Team : creates threads for
+MatchStatusService --> Round.Team.Thread : updates status in
+
+' Add new match scheduling flow
+TournamentManagerService --> TournamentMatchService : CreateAndStart1v1Match/CreateAndStartMatch
+TournamentManagerService --> TournamentStateService : SaveTournamentStateAsync
+TournamentManagerService --> TournamentGroupService : EnsureParticipantsAreDiscordMembers
+TournamentMatchService --> DiscordUtilities : CreateThreadAsync
+TournamentManagerService ..> HandleMatchCompletionEvent : calls after match completes
+
+' Event System inheritance relationships
+TournamentSignupHandler --|> ComponentHandlerBase
+MapBanHandler --|> ComponentHandlerBase
+GameResultHandler --|> ComponentHandlerBase
+DeckSubmissionHandler --|> ComponentHandlerBase
+AdminThirdPlaceMatchHandler --|> ComponentHandlerBase
+SeasonHandler --|> ComponentHandlerBase
+ScrimmageComponentHandler --|> ComponentHandlerBase
+
+MapBanModalHandler --|> ModalHandlerBase
+DeckSubmissionModalHandler --|> ModalHandlerBase
+TournamentCreationModalHandler --|> ModalHandlerBase
+ScrimmageCreationModalHandler --|> ModalHandlerBase
+TeamCreationModalHandler --|> ModalHandlerBase
+
+' Event System dependencies
+ComponentInteractionHandler --> ComponentHandlerFactory
+ModalInteractionHandler --> ModalHandlerFactory
+
+ComponentHandlerFactory ..> ComponentHandlerBase : creates
+ModalHandlerFactory ..> ModalHandlerBase : creates
+
+TournamentSignupHandler --> ITournamentSignupService
+TournamentSignupHandler --> ITournamentService
+TournamentSignupHandler --> ITournamentStateService
+
+MapBanHandler --> IMatchStatusService
+MapBanHandler --> ITournamentMapService
+
+GameResultHandler --> ITournamentGameService
+
+DeckSubmissionHandler --> IMatchStatusService
+
+MapBanModalHandler --> IMatchStatusService
+MapBanModalHandler --> ITournamentMapService
+
+DeckSubmissionModalHandler --> IMatchStatusService
+
+TournamentCreationModalHandler --> ITournamentService
+TournamentCreationModalHandler --> ITournamentManagerService
+
+SeasonHandler --> ISeasonService
+ScrimmageComponentHandler --> IScrimmageService
+ScrimmageComponentHandler --> IScrimmageStatusService
+
+ScrimmageCreationModalHandler --> IScrimmageService
+TeamCreationModalHandler --> ITeamService
+
+' Core implementation relationships
+TournamentPlayoffService ..|> ITournamentPlayoffService
+TournamentMatchOperationsService ..|> ITournamentMatchOperationsService
+TournamentStateValidator ..|> ITournamentStateValidator
+TournamentBracketManager ..|> ITournamentBracketManager
+TournamentScoreManager ..|> ITournamentScoreManager
+MatchStatusService ..|> IMatchStatusService
+TournamentStateService ..|> ITournamentStateService
+TournamentRepositoryService ..|> ITournamentRepositoryService
+TournamentMapService ..|> ITournamentMapService
+TournamentGameService ..|> ITournamentGameService
+TeamService ..|> ITeamService
+SeasonService ..|> ISeasonService
+ScrimmageService ..|> IScrimmageService
+ScrimmageStatusService ..|> IScrimmageStatusService
+SeasonStateService ..|> ISeasonStateService
+SeasonRepositoryService ..|> ISeasonRepositoryService
+
+' Command/UI Layer dependencies
+TournamentManagementGroup --> TournamentService
+TournamentManagementGroup --> TournamentManagerService
+TournamentManagementGroup --> TournamentMatchService
+TournamentManagementGroup --> TournamentPlayoffService
+TournamentManagementGroup --> TournamentGroupService
+TournamentManagementGroup --> TournamentSignupService
+
+AdminThirdPlaceMatchHandler --> TournamentService
+AdminThirdPlaceMatchHandler --> TournamentPlayoffService
+
+GameHandlers --> TournamentMatchService
+GameHandlers --> MatchStatusService
+
+TeamGroup --> ITeamService
+TeamManagementGroup --> ITeamService
+SeasonGroup --> SeasonService
+ScrimmageGroup --> ScrimmageService
+ScrimmageGroup --> ScrimmageStatusService
+
+' Service coordinator dependencies
+TournamentService --> TournamentPlayoffService
+TournamentService --> TournamentGroupService
+TournamentService --> TournamentSignupService
+TournamentService --> TournamentRepositoryService
+
+TournamentManagerService --> TournamentMatchService
+TournamentManagerService --> TournamentPlayoffService
+TournamentManagerService --> TournamentGroupService
+TournamentManagerService --> TournamentStateService
+
+TeamService --> ITeamService
+SeasonService --> ISeasonService
+SeasonService --> ISeasonStateService
+SeasonService --> ISeasonRepositoryService
+ScrimmageService --> IScrimmageService
+ScrimmageService --> IScrimmageStatusService
+
+' Core service dependencies
+TournamentMatchService --> ITournamentMatchOperationsService
+TournamentMatchService --> ITournamentScoreManager
+TournamentMatchService --> ITournamentStateValidator
+TournamentMatchService --> IMatchStatusService
+TournamentMatchService --> ITournamentStateService
+
+TournamentPlayoffService --> ITournamentMatchOperationsService
+TournamentPlayoffService --> ITournamentStateValidator
+TournamentPlayoffService --> ITournamentBracketManager
+TournamentPlayoffService --> ITournamentStateService
+
+TournamentGroupService --> ITournamentMatchOperationsService
+TournamentGroupService --> ITournamentScoreManager
+TournamentGroupService --> ITournamentStateValidator
+TournamentGroupService --> ITournamentStateService
+
+MatchStatusService --> ITournamentStateService
+MatchStatusService --> ITournamentMapService
+
+ScrimmageStatusService --> IScrimmageService
+
+' Arrange services vertically within layers using hidden connections
+' Models Layer
+Tournament -[hidden]d-> Group
+Group -[hidden]d-> GroupParticipant
+GroupParticipant -[hidden]d-> Match
+Match -[hidden]d-> MatchParticipant
+MatchParticipant -[hidden]d-> MatchResult
+MatchResult -[hidden]d-> TournamentSignup
+TournamentSignup -[hidden]d-> Round
+Round -[hidden]d-> Team
+Team -[hidden]d-> Participant
+Participant -[hidden]d-> Map
+Map -[hidden]d-> TournamentSettings
+TournamentSettings -[hidden]d-> Season
+Season -[hidden]d-> SeasonRanking
+SeasonRanking -[hidden]d-> SeasonMessage
+SeasonMessage -[hidden]d-> SeasonMessageType
+SeasonMessageType -[hidden]d-> RatingTeam
+RatingTeam -[hidden]d-> RatingChange
+RatingChange -[hidden]d-> PlayerInfo
+PlayerInfo -[hidden]d-> PlayerRole
+PlayerRole -[hidden]d-> Scrimmage
+Scrimmage -[hidden]d-> ScrimmageTeam
+ScrimmageTeam -[hidden]d-> ScrimmageStatus
+ScrimmageStatus -[hidden]d-> MatchLength
+MatchLength -[hidden]d-> GameType
+GameType -[hidden]d-> TeamGameType
+TeamGameType -[hidden]d-> ScrimmageGameType
+ScrimmageGameType -[hidden]d-> TournamentGameType
+TournamentGameType -[hidden]d-> SignupGameType
+SignupGameType -[hidden]d-> TournamentStage
+
+' Event Layer
+ComponentInteractionHandler -[hidden]d-> ModalInteractionHandler
+ModalInteractionHandler -[hidden]d-> ComponentHandlerBase
+ComponentHandlerBase -[hidden]d-> ModalHandlerBase
+ModalHandlerBase -[hidden]d-> ComponentHandlerFactory
+ComponentHandlerFactory -[hidden]d-> ModalHandlerFactory
+ModalHandlerFactory -[hidden]d-> TournamentSignupHandler
+TournamentSignupHandler -[hidden]d-> MapBanHandler
+MapBanHandler -[hidden]d-> GameResultHandler
+GameResultHandler -[hidden]d-> DeckSubmissionHandler
+DeckSubmissionHandler -[hidden]d-> SeasonHandler
+SeasonHandler -[hidden]d-> ScrimmageComponentHandler
+MapBanModalHandler -[hidden]d-> DeckSubmissionModalHandler
+DeckSubmissionModalHandler -[hidden]d-> TournamentCreationModalHandler
+TournamentCreationModalHandler -[hidden]d-> ScrimmageCreationModalHandler
+ScrimmageCreationModalHandler -[hidden]d-> TeamCreationModalHandler
+
+' Command/UI Layer
+TournamentManagementGroup -[hidden]d-> AdminThirdPlaceMatchHandler
+AdminThirdPlaceMatchHandler -[hidden]d-> GameHandlers
+GameHandlers -[hidden]d-> TeamGroup
+TeamGroup -[hidden]d-> TeamManagementGroup
+TeamManagementGroup -[hidden]d-> SeasonGroup
+SeasonGroup -[hidden]d-> ScrimmageGroup
+
+' Service Coordinator Layer
+TournamentService -[hidden]d-> TournamentManagerService
+TournamentManagerService -[hidden]d-> TournamentSignupService
+TournamentSignupService -[hidden]d-> TournamentRepositoryService
+TournamentRepositoryService -[hidden]d-> ITeamService
+TeamService -[hidden]d-> ISeasonService
+SeasonService -[hidden]d-> IScrimmageService
+
+' Core Services Layer
+TournamentPlayoffService -[hidden]d-> TournamentMatchService
+TournamentMatchService -[hidden]d-> TournamentGroupService
+TournamentGroupService -[hidden]d-> MatchStatusService
+MatchStatusService -[hidden]d-> ITournamentStateService
+TournamentStateService -[hidden]d-> ITournamentMapService
+TournamentMapService -[hidden]d-> ITournamentGameService
+TournamentGameService -[hidden]d-> IScrimmageStatusService
+ScrimmageStatusService -[hidden]d-> ISeasonStateService
+SeasonStateService -[hidden]d-> ISeasonRepositoryService
+
+' Base Services Layer
+ITournamentMatchOperationsService -[hidden]d-> ITournamentStateValidator
+ITournamentStateValidator -[hidden]d-> ITournamentBracketManager
+ITournamentBracketManager -[hidden]d-> ITournamentScoreManager
+ITournamentScoreManager -[hidden]d-> IMatchStatusService
+IMatchStatusService -[hidden]d-> ITournamentStateService
+ITournamentStateService -[hidden]d-> ITournamentRepositoryService
+ITournamentRepositoryService -[hidden]d-> ITournamentMapService
+ITournamentMapService -[hidden]d-> ITournamentGameService
+ITournamentGameService -[hidden]d-> ITeamService
+ITeamService -[hidden]d-> ISeasonService
+ISeasonService -[hidden]d-> IScrimmageService
+IScrimmageService -[hidden]d-> IScrimmageStatusService
+IScrimmageStatusService -[hidden]d-> ISeasonStateService
+ISeasonStateService -[hidden]d-> ISeasonRepositoryService
+
+TournamentMatchOperationsService -[hidden]d-> ITournamentStateValidator
+TournamentStateValidator -[hidden]d-> ITournamentBracketManager
+TournamentBracketManager -[hidden]d-> ITournamentScoreManager
+
+' Add new recovery relationship
+TournamentStateService --> Round.Team.Thread : recovers deleted threads
+TournamentStateService --> Match : rebuilds thread associations
+TournamentStateService --> MatchStatusService : regenerates match status embeds
+
+' Add note about thread recovery capabilities
+note right of TournamentStateService::ValidateAndRecoverThreadsAsync
+  Comprehensive thread recovery system:
+  1. Detects and recreates deleted Discord threads
+  2. Reconstructs match status embeds for all matches
+  3. Rebuilds relationships between tournament 
+     matches and Discord threads
+  4. Updates tournament state based on completed matches
+end note
+
+' Add TournamentManagementGroup command for recovery
+TournamentManagementGroup --> ITournamentStateService : recover_threads command
+
+' Update relationships section to include new components
+TManagementBasicGroup --> TournamentService
+TManagementBasicGroup --> TournamentManagerService
+TManagementBasicGroup --> ITournamentRepositoryService
+TManagementBasicGroup --> ITournamentStateService
+
+TManagementSignupGroup --> ITournamentSignupService
+TManagementSignupGroup --> TournamentService
+TManagementSignupGroup --> ITournamentStateService
+
+TManagementRecoveryGroup --> ITournamentStateService
+TManagementRecoveryGroup --> ITournamentStateValidator
+TManagementRecoveryGroup --> TournamentService
+
+' Update recovery commands relationship
+TManagementRecoveryGroup --> ITournamentStateService : invokes thread/match recovery
+TManagementRecoveryGroup --> ITournamentStateValidator : validates tournament structure
+
+' Add note about generated enums
+note left of GameType
+  Base enum with [GenerateSpecializedEnums]
+  attribute that automatically generates
+  the specialized game type enums
+end note
+
+' Update OngoingRounds in the Misc package
+class OngoingRounds {
+    +TourneyRounds: List<Round>
+    +RegularRounds: List<Regular1v1>
+    +ScrimmageRounds: List<Scrimmage>
+    +Tournaments: List<Tournament>
+    +TournamentSignups: List<TournamentSignup>
+    +GetRoundByThreadIdOrDefault(threadId: ulong): Round?
+    +GetScrimmageByThreadIdOrDefault(threadId: ulong): Scrimmage?
+}
+
+' Update TournamentStateValidator reference to be in ServiceHelpers
+namespace Wabbit.Services.ServiceHelpers {
+    class TournamentStateValidator {
+        +ValidateTournamentState()
+        +IsValidStateTransition()
+        +ValidateMatch()
+        +ValidateBracketStructure()
+        +ValidatePlayoffBracket()
+        +ValidateGroupStandings()
+        +TryRecoverMatchResult()
+        +TryRecoverBracketGeneration()
+        +ValidatePlayoffSetup()
+        +ValidateGroupMatchCreation()
+        +ValidateGroupCompletion()
+    }
+}
+
+' Update inheritance relation for RefreshStatusHandler
+RefreshStatusHandler --|> ComponentHandlerBase
+
+' Update dependencies for RefreshStatusHandler
+RefreshStatusHandler --> OngoingRounds
+RefreshStatusHandler --> IMatchStatusService
+
+' Add RefreshStatusHandler dependency
+RefreshStatusHandler --> ITournamentStateService
+
+' Add TeamPermissionBaseAttribute in the BotClient/Attributes package
+package "BotClient/Attributes" as AttributesLayer {
+    abstract class TeamPermissionBaseAttribute {
+        #TeamParameterName: string
+        +ExecuteCheckAsync(context: CommandContext): ValueTask<string?>
+        #{abstract} PerformTeamPermissionCheckAsync(context: CommandContext, team: Team): Task<string?>
+    }
+    
+    class RequireTeamCaptainAttribute {
+        +RequireTeamCaptainAttribute(teamParameterName: string)
+        #PerformTeamPermissionCheckAsync(context: CommandContext, team: Team): Task<string?>
+    }
+    
+    class RequireTeamCorePlayerAttribute {
+        +RequireTeamCorePlayerAttribute(teamParameterName: string)
+        #PerformTeamPermissionCheckAsync(context: CommandContext, team: Team): Task<string?>
+    }
+    
+    class RequireTeamMemberAttribute {
+        +RequireTeamMemberAttribute(teamParameterName: string)
+        #PerformTeamPermissionCheckAsync(context: CommandContext, team: Team): Task<string?>
+    }
+    
+    class RequireWhitelistedRoleAttribute {
+        -_permissionService: IPermissionService
+        +ExecuteCheckAsync(context: CommandContext): ValueTask<string?>
+    }
+    
+    ' Add inheritance relationships
+    RequireTeamCaptainAttribute --|> TeamPermissionBaseAttribute
+    RequireTeamCorePlayerAttribute --|> TeamPermissionBaseAttribute
+    RequireTeamMemberAttribute --|> TeamPermissionBaseAttribute
+}
+
+' Update ServiceHelpers package with new helper classes
+package "Services/ServiceHelpers" as ServiceHelpersLayer {
+    class MapService {
+        +GetMapPoolAsync()
+        +ValidateMapBansAsync()
+        +GetMapSelectionOptionsAsync()
+        -LoadMapPool()
+        -SaveMapPool()
+    }
+    
+    class StatusEmbedHelpers <<static>> {
+        +CreateMatchStatusEmbed()
+        +CreateScrimmageStatusEmbed()
+        +CreateTeamStatusEmbed()
+        +AddMapBanSection()
+        +AddDeckSubmissionSection()
+        +AddGameResultsSection()
+    }
+    
+    class MapBanHelpers <<static>> {
+        +ProcessMapBanSelection()
+        +ValidateMapBans()
+        +DetermineMapPool()
+        +HandleMapBanConfirmation()
+    }
+    
+    class GameResultHelpers <<static>> {
+        +ProcessGameResult()
+        +CalculateMatchScores()
+        +ValidateGameWinner()
+        +GenerateGameWinnerDropdown()
+    }
+    
+    class ComponentHelpers <<static>> {
+        +CreateConfirmCancelButtons()
+        +CreateMapBanDropdown()
+        +CreateDeckSubmissionButtons()
+        +CreateRefreshButton()
+    }
+}
+
+' Add IPermissionService interface
+interface IPermissionService {
+    +HasAdminPrivilegesAsync(userId: ulong): Task<bool>
+    +HasModeratorPrivilegesAsync(userId: ulong): Task<bool>
+    +HasWhitelistedRoleAsync(userId: ulong): Task<bool>
+}
+
+' Add PermissionService implementation
+class PermissionService {
+    -_client: DiscordClient
+    -_config: BotConfig
+    +HasAdminPrivilegesAsync(userId: ulong): Task<bool>
+    +HasModeratorPrivilegesAsync(userId: ulong): Task<bool>
+    +HasWhitelistedRoleAsync(userId: ulong): Task<bool>
+    -IsServerOwnerAsync(userId: ulong): Task<bool>
+    -HasPermissionsAsync(userId: ulong, permissions: DiscordPermission): Task<bool>
+    -HasRoleAsync(userId: ulong, roleId: ulong): Task<bool>
+}
+
+' Add implementation relationship
+PermissionService ..|> IPermissionService
+
+' Add dependencies
+TeamService --> IPermissionService
+TeamPermissionBaseAttribute --> IPermissionService
+
+' Add ILeaderboardService interface
+interface ILeaderboardService {
+    +GetLeaderboardAsync(gameType: TeamGameType, seasonId: string?, page: int, itemsPerPage: int): Task<(List<LeaderboardEntry>, int, int)>
+    +CreateLeaderboardEmbedAsync(gameType: TeamGameType, seasonId: string?, page: int, itemsPerPage: int): Task<(DiscordEmbed, DiscordButtonComponent[], DiscordSelectComponent)>
+    +PostLeaderboardAsync(channel: DiscordChannel, gameType: TeamGameType, seasonId: string?): Task<DiscordMessage>
+    +UpdateLeaderboardAsync(message: DiscordMessage, gameType: TeamGameType, seasonId: string?, page: int): Task<DiscordMessage>
+    +GetPlayerRankingAsync(playerId: ulong, gameType: TeamGameType, seasonId: string?): Task<LeaderboardEntry?>
+    +GetTeamRankingAsync(teamId: string, gameType: TeamGameType, seasonId: string?): Task<LeaderboardEntry?>
+    +HasLeaderboardAdminPrivilegesAsync(userId: ulong): Task<bool>
+}
+
+' Add LeaderboardService implementation
+class LeaderboardService {
+    -_logger: ILogger<LeaderboardService>
+    -_teamService: ITeamService
+    -_seasonStateService: ISeasonStateService
+    -_permissionService: IPermissionService
+    +GetLeaderboardAsync(): Task<(List<LeaderboardEntry>, int, int)>
+    +CreateLeaderboardEmbedAsync(): Task<(DiscordEmbed, DiscordButtonComponent[], DiscordSelectComponent)>
+    +PostLeaderboardAsync(): Task<DiscordMessage>
+    +UpdateLeaderboardAsync(): Task<DiscordMessage>
+    +GetPlayerRankingAsync(): Task<LeaderboardEntry?>
+    +GetTeamRankingAsync(): Task<LeaderboardEntry?>
+    +HasLeaderboardAdminPrivilegesAsync(): Task<bool>
+    -CreateNavigationButtons(): DiscordButtonComponent[]
+    -CreateGameTypeSelector(): DiscordSelectComponent
+    -CreateSeasonSelector(): DiscordSelectComponent
+}
+
+' Add implementation relationship
+LeaderboardService ..|> ILeaderboardService
+
+' Add dependencies
+LeaderboardService --> ITeamService
+LeaderboardService --> ISeasonStateService
+LeaderboardService --> IPermissionService
+TeamGroup --> ILeaderboardService
+TeamManagementGroup --> ILeaderboardService
+
+' Add LeaderboardHandler component handler
+LeaderboardHandler --|> ComponentHandlerBase
+
+' Add dependencies for LeaderboardHandler
+LeaderboardHandler --> ILeaderboardService
+LeaderboardHandler --> ISeasonStateService
+
+' Add IRatingStateService to BaseLayer
+interface IRatingStateService {
+    +Initialize(): Task
+    +GetOrCreatePlayerRatingAsync(user: DiscordUser): Task<PlayerRating>
+    +GetPlayerRatingAsync(userId: ulong, gameType: GameType, tournamentRating: bool): Task<int>
+    +CalculateRatingChangesAsync(winnerId: ulong, loserId: ulong, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +CalculateTeamRatingChangesAsync(winnerTeam: Team, loserTeam: Team, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +RecordMatchResultAsync(winnerId: ulong, loserId: ulong, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +RecordTeamMatchResultAsync(winnerTeamId: string, loserTeamId: string, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +GetTopPlayersByRatingAsync(gameType: GameType, count: int, tournamentRating: bool): Task<List<PlayerRating>>
+    +GetPlayerRatingHistoryAsync(userId: ulong, gameType: GameType, count: int, tournamentRating: bool): Task<List<RatingChange>>
+    +SetPlayerRatingAsync(userId: ulong, gameType: GameType, newRating: int, tournamentRating: bool, adminId: ulong): Task<bool>
+    +ResetAllRatingsAsync(gameType: GameType, tournamentRating: bool): Task<int>
+    +GetLeaderboardStatsAsync(): Task<LeaderboardStats>
+}
+
+' Add RatingStateService to CoreLayer
+class RatingStateService {
+    -_logger: ILogger<RatingStateService>
+    -_ratingRepository: IPlayerRatingRepositoryService
+    -_playerRatings: Dictionary<ulong, PlayerRating>
+    +Initialize(): Task
+    +GetOrCreatePlayerRatingAsync(user: DiscordUser): Task<PlayerRating>
+    +GetPlayerRatingAsync(userId: ulong, gameType: GameType, tournamentRating: bool): Task<int>
+    +CalculateRatingChangesAsync(winnerId: ulong, loserId: ulong, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +CalculateTeamRatingChangesAsync(winnerTeam: Team, loserTeam: Team, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +RecordMatchResultAsync(winnerId: ulong, loserId: ulong, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    +RecordTeamMatchResultAsync(winnerTeamId: string, loserTeamId: string, gameType: GameType, isTournament: bool): Task<(int, int, int, int)>
+    -CalculateEloRatingChange(playerRating: int, opponentRating: int, isWin: bool, kFactor: int): int
+    -SaveRatingsAsync(): Task
+    -GetPlayerRatingData(userId: ulong): PlayerRating?
+}
+
+' Add implementation relationship
+RatingStateService ..|> IRatingStateService
+
+' Add more dependencies
+LeaderboardService --> IRatingStateService
+ScrimmageService --> IRatingStateService
+TeamService --> IRatingStateService
+RatingStateService --> IPlayerRatingRepositoryService
+
+' Add IPlayerRatingRepositoryService to BaseLayer
+interface IPlayerRatingRepositoryService {
+    +SavePlayerRatingsAsync(ratings: List<PlayerRating>): Task<bool>
+    +LoadPlayerRatingsAsync(): Task<List<PlayerRating>>
+    +SavePlayerRatingHistoryAsync(userId: ulong, history: List<RatingChange>): Task<bool>
+    +LoadPlayerRatingHistoryAsync(userId: ulong): Task<List<RatingChange>>
+    +GetAllRatingsAsync(): Task<List<PlayerRating>>
+    +GetPlayerRatingAsync(userId: ulong): Task<PlayerRating?>
+    +ArchivePlayerRatingsAsync(seasonId: string): Task<bool>
+}
+
+' Add PlayerRatingRepositoryService to ServiceCoordinator layer
+class PlayerRatingRepositoryService {
+    -_logger: ILogger<PlayerRatingRepositoryService>
+    -_jsonOptions: JsonSerializerOptions
+    -_ratingsFilePath: string
+    -_historyDirectory: string
+    -_archiveDirectory: string
+    +SavePlayerRatingsAsync(ratings: List<PlayerRating>): Task<bool>
+    +LoadPlayerRatingsAsync(): Task<List<PlayerRating>>
+    +SavePlayerRatingHistoryAsync(userId: ulong, history: List<RatingChange>): Task<bool>
+    +LoadPlayerRatingHistoryAsync(userId: ulong): Task<List<RatingChange>>
+    +GetAllRatingsAsync(): Task<List<PlayerRating>>
+    +GetPlayerRatingAsync(userId: ulong): Task<PlayerRating?>
+    +ArchivePlayerRatingsAsync(seasonId: string): Task<bool>
+    -EnsureDirectoriesExist(): void
+    -SerializeToFile<T>(data: T, filePath: string): Task<bool>
+    -DeserializeFromFile<T>(filePath: string): Task<T?>
+}
+
+' Add implementation relationship
+PlayerRatingRepositoryService ..|> IPlayerRatingRepositoryService
+
+' Add IMapService interface to BaseLayer
+interface IMapService {
+    +GetMapPoolAsync(isOneVOne: bool): Task<List<string>>
+    +GetRandomMaps(isOneVOne: bool, count: int): List<string>
+    +ValidateMapBansAsync(mapBans: List<string>, isOneVOne: bool): Task<bool>
+    +GetMapSelectionOptionsAsync(isOneVOne: bool, excludeMaps: List<string>): Task<List<DiscordSelectComponentOption>>
+    +GetTournamentMapPool(isOneVOne: bool): List<string>
+    +SaveMapPoolAsync(isOneVOne: bool, maps: List<string>): Task<bool>
+}
+
+' Add MapService to ServiceHelpers package
+class MapService {
+    -_logger: ILogger<MapService>
+    -_client: DiscordClient
+    -_config: BotConfig
+    -_oneVOneMapPool: List<string>
+    -_teamMapPool: List<string>
+    +GetMapPoolAsync(isOneVOne: bool): Task<List<string>>
+    +GetRandomMaps(isOneVOne: bool, count: int): List<string>
+    +ValidateMapBansAsync(mapBans: List<string>, isOneVOne: bool): Task<bool>
+    +GetMapSelectionOptionsAsync(isOneVOne: bool, excludeMaps: List<string>): Task<List<DiscordSelectComponentOption>>
+    +GetTournamentMapPool(isOneVOne: bool): List<string>
+    +SaveMapPoolAsync(isOneVOne: bool, maps: List<string>): Task<bool>
+    -LoadMapPoolAsync(): Task
+    -ShuffleList<T>(list: List<T>): List<T>
+}
+
+' Add implementation relationship
+MapService ..|> IMapService
+
+' Update ScrimmageStatusService relationships
+ScrimmageStatusService --> IMapService
+
+' Add dependency to RequireWhitelistedRoleAttribute
+RequireWhitelistedRoleAttribute --> IPermissionService
+
+@enduml 

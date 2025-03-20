@@ -1,11 +1,14 @@
 using System.Collections.Generic;
+using System.Linq;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
+using Moq;
 using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services;
 using Wabbit.Services.Interfaces;
+using TestParticipantInfo = Wabbit.Tests.TestInfrastructure.Models.ParticipantInfo;
 
 namespace Wabbit.Tests.TestInfrastructure
 {
@@ -141,7 +144,7 @@ namespace Wabbit.Tests.TestInfrastructure
         /// Creates groups based on the provided list of participants
         /// This is the adapter method that maps to what the tests expect
         /// </summary>
-        public List<Tournament.Group> CreateGroups(List<ParticipantInfo> participants)
+        public List<Tournament.Group> CreateGroups(List<TestParticipantInfo> participants)
         {
             // Create a new tournament for these participants
             var tournament = new Tournament
@@ -156,11 +159,8 @@ namespace Wabbit.Tests.TestInfrastructure
 
             foreach (var participant in participants)
             {
-                var mockMember = new Moq.Mock<DiscordMember>();
-                mockMember.Setup(m => m.Id).Returns(participant.Id);
-                mockMember.Setup(m => m.Username).Returns(participant.Username);
-                var member = mockMember.Object;
-
+                // Create mock DiscordMember using the converter
+                var member = ModelConverters.CreateMockDiscordMember(participant);
                 players.Add(member);
 
                 if (participant.Seed.HasValue && participant.Seed.Value > 0)
