@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
 using Wabbit.Misc;
+using Wabbit.BotClient.Config;
 
 namespace Wabbit.Services
 {
@@ -370,5 +371,64 @@ namespace Wabbit.Services
             MatchLength.Bo5 => 3,
             _ => 1 // Default to 1 for Bo1
         };
+
+        /// <summary>
+        /// Check if a user has admin privileges for scrimmage management
+        /// </summary>
+        public async Task<bool> HasScrimmageAdminPrivilegesAsync(ulong userId)
+        {
+            try
+            {
+                // Get the guild ID from the first server in config
+                var guildId = ConfigManager.Config?.Servers?.FirstOrDefault()?.ServerId ?? 0;
+                if (guildId == 0)
+                {
+                    _logger.LogWarning($"Cannot check Discord permissions for user {userId} - no guild ID configured");
+                    return false;
+                }
+
+                var guild = await _client.GetGuildAsync(guildId);
+                if (guild is null)
+                {
+                    _logger.LogWarning($"Cannot check Discord permissions for user {userId} - guild not found");
+                    return false;
+                }
+
+                DiscordMember? member;
+                try
+                {
+                    member = await guild.GetMemberAsync(userId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"Cannot check Discord permissions for user {userId} - member not found");
+                    return false;
+                }
+
+                // Check if user is the server owner or has Administrator or moderator permissions
+                return member.IsOwner ||
+                       member.Permissions.HasFlag(DiscordPermission.Administrator) ||
+                       member.Permissions.HasFlag(DiscordPermission.ManageGuild) ||
+                       member.Permissions.HasFlag(DiscordPermission.ModerateMembers);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error checking scrimmage admin privileges for user {userId}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Check if a user can manage a specific scrimmage
+        /// </summary>
+        public async Task<bool> CanManageScrimmageAsync(Scrimmage scrimmage, ulong userId)
+        {
+            // Check if user has admin privileges
+            if (await HasScrimmageAdminPrivilegesAsync(userId))
+                return true;
+
+            // Check if the user is a participant in the scrimmage
+            return scrimmage.TeamA.Captain.Id == userId || scrimmage.TeamB.Captain.Id == userId;
+        }
     }
 }

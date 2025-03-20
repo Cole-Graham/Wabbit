@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -28,6 +29,8 @@ namespace Wabbit.Services
         private string? _currentSeasonId;
         private readonly List<ulong> _admins;
         private bool _isInitialized;
+        private readonly DiscordClient _discordClient;
+        private readonly ulong _guildId;
 
         /// <summary>
         /// Initializes a new instance of the SeasonStateService class
@@ -36,7 +39,8 @@ namespace Wabbit.Services
             ILogger<SeasonStateService> logger,
             ISeasonRepositoryService seasonRepository,
             IPlayerRatingRepositoryService playerRatingRepository,
-            ITeamRepositoryService teamRepository)
+            ITeamRepositoryService teamRepository,
+            DiscordClient discordClient)
         {
             _logger = logger;
             _seasonRepository = seasonRepository;
@@ -45,6 +49,16 @@ namespace Wabbit.Services
             _seasons = new Dictionary<string, Season>();
             _admins = new List<ulong>(); // Will be populated during initialization
             _isInitialized = false;
+            _discordClient = discordClient;
+
+            // Get the guild ID from config
+            // Use the first server ID from the config if available
+            var guildId = ConfigManager.Config?.Servers?.FirstOrDefault()?.ServerId ?? 0;
+            if (guildId == 0)
+            {
+                _logger.LogWarning("No guild ID configured for season service. Server owner checks will not work.");
+            }
+            _guildId = guildId;
         }
 
         /// <summary>
@@ -403,7 +417,45 @@ namespace Wabbit.Services
             if (!_isInitialized)
                 await Initialize();
 
-            return _admins.Contains(userId);
+            try
+            {
+                // First check if user is in the admin list for backward compatibility
+                if (_admins.Contains(userId))
+                    return true;
+
+                // Then check Discord's built-in permissions
+                if (_guildId == 0)
+                {
+                    _logger.LogWarning($"Cannot check Discord permissions for user {userId} - no guild ID configured");
+                    return false;
+                }
+
+                var guild = await _discordClient.GetGuildAsync(_guildId);
+                if (guild is null)
+                {
+                    _logger.LogWarning($"Cannot check Discord permissions for user {userId} - guild not found");
+                    return false;
+                }
+
+                DiscordMember? member;
+                try
+                {
+                    member = await guild.GetMemberAsync(userId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"Cannot check Discord permissions for user {userId} - member not found");
+                    return false;
+                }
+
+                // Check if user is the server owner or has Administrator permission
+                return member.IsOwner || member.Permissions.HasFlag(DiscordPermission.Administrator);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error checking admin privileges for user {userId}");
+                return false;
+            }
         }
 
         /// <summary>

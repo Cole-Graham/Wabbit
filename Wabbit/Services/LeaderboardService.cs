@@ -487,5 +487,23 @@ namespace Wabbit.Services
 
             return new[] { button1v1, button2v2, button3v3, button4v4 };
         }
+
+        /// <summary>
+        /// Check if a user has admin privileges for leaderboard management
+        /// </summary>
+        public async Task<bool> HasLeaderboardAdminPrivilegesAsync(ulong userId)
+        {
+            try
+            {
+                // We'll delegate this to the season service since it already has a robust permission system
+                // Both season and leaderboard management should have the same level of privileges
+                return await _seasonStateService.HasSeasonAdminPrivilegesAsync(userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error checking leaderboard admin privileges for user {userId}");
+                return false;
+            }
+        }
     }
 }

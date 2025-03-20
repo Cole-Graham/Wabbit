@@ -15,6 +15,7 @@
             public ulong? SignupChannelId { get; set; }
             public ulong? StandingsChannelId { get; set; }
             public ulong? ScrimmageChannelId { get; set; }
+            public ulong? WhitelistedRoleId { get; set; }
         }
 
         public class TournamentConfig

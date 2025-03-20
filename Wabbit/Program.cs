@@ -151,6 +151,9 @@ namespace Wabbit
                     services.AddSingleton<ITeamStateService, TeamStateService>();
                     services.AddSingleton<ISeasonStateService, SeasonStateService>();
 
+                    // Register permission service
+                    services.AddSingleton<IPermissionService, PermissionService>();
+
                     // Register leaderboard service
                     services.AddSingleton<ILeaderboardService, LeaderboardService>();
 

@@ -74,5 +74,20 @@ namespace Wabbit.Services.Interfaces
         /// <param name="threadId">The Discord thread ID</param>
         /// <returns>The scrimmage if found, otherwise null</returns>
         Task<Scrimmage?> GetScrimmageByThreadIdAsync(ulong threadId);
+
+        /// <summary>
+        /// Check if a user has admin privileges for scrimmage management
+        /// </summary>
+        /// <param name="userId">The Discord user ID to check</param>
+        /// <returns>True if the user has admin privileges</returns>
+        Task<bool> HasScrimmageAdminPrivilegesAsync(ulong userId);
+
+        /// <summary>
+        /// Check if a user can manage a specific scrimmage
+        /// </summary>
+        /// <param name="scrimmage">The scrimmage to check</param>
+        /// <param name="userId">The Discord user ID to check</param>
+        /// <returns>True if the user can manage the scrimmage</returns>
+        Task<bool> CanManageScrimmageAsync(Scrimmage scrimmage, ulong userId);
     }
 }

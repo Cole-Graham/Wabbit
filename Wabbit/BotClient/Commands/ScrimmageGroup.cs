@@ -1,6 +1,7 @@
 using DSharpPlus.Commands;
 using DSharpPlus.Commands.ContextChecks;
 using DSharpPlus.Entities;
+using Wabbit.BotClient.Attributes;
 using Wabbit.BotClient.Config;
 using Wabbit.Models;
 using Wabbit.Services.Interfaces;
@@ -9,6 +10,7 @@ using System.ComponentModel;
 namespace Wabbit.BotClient.Commands
 {
     [Command("Scrimmage")]
+    [RequireWhitelistedRole]
     public class ScrimmageGroup
     {
         private readonly IScrimmageStatusService _scrimmageService;
@@ -126,11 +128,11 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            // Check if the user is one of the players
-            if (context.User.Id != scrimmage.TeamA.Captain.Id && context.User.Id != scrimmage.TeamB.Captain.Id)
+            // Check if the user has permission to manage this scrimmage
+            if (!await _scrimmageService.CanManageScrimmageAsync(scrimmage, context.User.Id))
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                    "Only players participating in this scrimmage can record results."));
+                    "Only players participating in this scrimmage or administrators can record results."));
                 return;
             }
 
@@ -173,11 +175,11 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            // Check if the user is one of the players
-            if (context.User.Id != scrimmage.TeamA.Captain.Id && context.User.Id != scrimmage.TeamB.Captain.Id)
+            // Check if the user has permission to manage this scrimmage
+            if (!await _scrimmageService.CanManageScrimmageAsync(scrimmage, context.User.Id))
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                    "Only players participating in this scrimmage can mark it as completed."));
+                    "Only players participating in this scrimmage or administrators can mark it as completed."));
                 return;
             }
 
@@ -205,11 +207,11 @@ namespace Wabbit.BotClient.Commands
                 return;
             }
 
-            // Check if the user is one of the players
-            if (context.User.Id != scrimmage.TeamA.Captain.Id && context.User.Id != scrimmage.TeamB.Captain.Id)
+            // Check if the user has permission to manage this scrimmage
+            if (!await _scrimmageService.CanManageScrimmageAsync(scrimmage, context.User.Id))
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                    "Only players participating in this scrimmage can cancel it."));
+                    "Only players participating in this scrimmage or administrators can cancel it."));
                 return;
             }
 
@@ -222,7 +224,6 @@ namespace Wabbit.BotClient.Commands
 
         [Command("set_scrimmage_channel")]
         [Description("Set the designated scrimmage channel")]
-        [RequirePermissions(DiscordPermission.Administrator)]
         public async Task SetScrimmageChannel(
             CommandContext context,
             [Description("Text channel to set as scrimmage channel")] DiscordChannel channel)
@@ -233,6 +234,14 @@ namespace Wabbit.BotClient.Commands
             {
                 await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
                     "This command must be used in a server"));
+                return;
+            }
+
+            // Check if the user has permission to manage scrimmages
+            if (!await _scrimmageService.HasScrimmageAdminPrivilegesAsync(context.User.Id))
+            {
+                await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                    "You don't have permission to set the scrimmage channel. This requires administrator or moderator privileges."));
                 return;
             }
 

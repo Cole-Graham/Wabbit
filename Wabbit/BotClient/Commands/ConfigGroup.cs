@@ -3,6 +3,7 @@ using DSharpPlus.Commands.ContextChecks;
 using DSharpPlus.Entities;
 using Wabbit.BotClient.Config;
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 
 namespace Wabbit.BotClient.Commands
 {
@@ -10,9 +11,16 @@ namespace Wabbit.BotClient.Commands
     [RequirePermissions(DiscordPermission.Administrator)]
     public class ConfigGroup
     {
+        private readonly ILogger<ConfigGroup> _logger;
+
+        public ConfigGroup(ILogger<ConfigGroup> logger)
+        {
+            _logger = logger;
+        }
+
         [Command("setup")]
         [Description("Initial bot set-up")]
-        public static async Task Setup(CommandContext context, [Description("Bot channel")] DiscordChannel botChannel, [Description("Deck channel")] DiscordChannel deckChannel)
+        public async Task Setup(CommandContext context, [Description("Bot channel")] DiscordChannel botChannel, [Description("Deck channel")] DiscordChannel deckChannel)
         {
             if (context.Guild is null)
             {
@@ -48,7 +56,7 @@ namespace Wabbit.BotClient.Commands
 
         [Command("test")]
         [Description("Bot status test")]
-        public static async Task Test(CommandContext context) =>
+        public async Task Test(CommandContext context) =>
             await context.RespondAsync("Bot is online");
 
         [Command("set_bot_channel")]
@@ -251,6 +259,72 @@ namespace Wabbit.BotClient.Commands
 
             string status = enabled ? "enabled" : "disabled";
             await context.EditResponseAsync($"Automatic thread archiving has been {status} for tournaments.");
+        }
+
+        [Command("set_whitelisted_role")]
+        [Description("Set the role that gives users access to basic bot commands")]
+        public async Task SetWhitelistedRole(
+            CommandContext context,
+            [Description("Discord role that should have access to use bot commands")] DiscordRole role)
+        {
+            await context.DeferResponseAsync();
+
+            // Get the server config, or create if none exists
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
+
+            // Update the whitelisted role ID
+            serverConfig.WhitelistedRoleId = role.Id;
+
+            // Save the config
+            await ConfigManager.SaveConfig();
+
+            await context.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"The {role.Mention} role has been set as the whitelisted role. " +
+                             $"Users with this role can now access basic bot commands."));
+        }
+
+        [Command("view_whitelisted_role")]
+        [Description("View which role is currently set as the whitelisted role")]
+        public async Task ViewWhitelistedRole(CommandContext context)
+        {
+            await context.DeferResponseAsync();
+
+            // Get the server config
+            var serverConfig = GetOrCreateServerConfig(context.Guild?.Id ?? 0);
+
+            if (serverConfig.WhitelistedRoleId == null)
+            {
+                await context.EditResponseAsync(new DiscordWebhookBuilder()
+                    .WithContent("No whitelisted role has been configured yet. " +
+                                "Use `/config set_whitelisted_role` to set one."));
+                return;
+            }
+
+            // Try to get the role from the guild
+            DiscordRole? role = null;
+            try
+            {
+                if (context.Guild is not null && context.Guild.Roles.TryGetValue(serverConfig.WhitelistedRoleId.Value, out var guildRole))
+                {
+                    role = guildRole;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Role not found
+                _logger.LogError(ex, $"Error finding role with ID {serverConfig.WhitelistedRoleId}");
+            }
+
+            if (role is null)
+            {
+                await context.EditResponseAsync(new DiscordWebhookBuilder()
+                    .WithContent($"The configured whitelisted role ID ({serverConfig.WhitelistedRoleId}) " +
+                                 $"could not be found in this server. The role may have been deleted."));
+                return;
+            }
+
+            await context.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"The current whitelisted role is: {role.Mention} (ID: {role.Id})"));
         }
 
         private BotConfig.ServerConfig GetOrCreateServerConfig(ulong guildId)

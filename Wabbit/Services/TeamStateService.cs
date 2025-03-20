@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
+using Wabbit.BotClient.Config;
 using Wabbit.Models;
 using Wabbit.Models.Rating;
 using Wabbit.Services.Interfaces;
@@ -20,8 +22,9 @@ namespace Wabbit.Services
         private readonly IPlayerRatingRepositoryService _playerRatingRepository;
         private readonly Dictionary<string, Team> _activeTeams;
         private readonly Dictionary<ulong, HashSet<string>> _playerTeamMemberships;
-        private readonly List<ulong> _admins;
         private bool _isInitialized;
+        private readonly DiscordClient _discordClient;
+        private readonly ulong _guildId;
 
         /// <summary>
         /// Initializes a new instance of the TeamStateService class
@@ -29,15 +32,25 @@ namespace Wabbit.Services
         public TeamStateService(
             ILogger<TeamStateService> logger,
             ITeamRepositoryService teamRepository,
-            IPlayerRatingRepositoryService playerRatingRepository)
+            IPlayerRatingRepositoryService playerRatingRepository,
+            DiscordClient discordClient)
         {
             _logger = logger;
             _teamRepository = teamRepository;
             _playerRatingRepository = playerRatingRepository;
             _activeTeams = new Dictionary<string, Team>();
             _playerTeamMemberships = new Dictionary<ulong, HashSet<string>>();
-            _admins = new List<ulong>(); // Will be populated during initialization
             _isInitialized = false;
+            _discordClient = discordClient;
+
+            // Get the guild ID from config
+            // Use the first server ID from the config if available
+            var guildId = ConfigManager.Config?.Servers?.FirstOrDefault()?.ServerId ?? 0;
+            if (guildId == 0)
+            {
+                _logger.LogWarning("No guild ID configured for team service. Server owner checks will not work.");
+            }
+            _guildId = guildId;
         }
 
         /// <summary>
@@ -51,10 +64,6 @@ namespace Wabbit.Services
             try
             {
                 _logger.LogInformation("Initializing team state...");
-
-                // Load admin list from config (this would typically come from a config service)
-                // TODO: Replace with actual admin list from configuration
-                _admins.AddRange(new ulong[] { 123456789012345678 }); // Placeholder admin IDs
 
                 // Load teams from repository
                 var teams = await _teamRepository.GetAllTeamsAsync();
@@ -128,7 +137,7 @@ namespace Wabbit.Services
                 await Initialize();
 
             // Admins can always create teams
-            if (_admins.Contains(userId))
+            if (await HasTeamAdminPrivilegesAsync(userId))
                 return true;
 
             // Check if the user already has teams of this type
@@ -269,7 +278,7 @@ namespace Wabbit.Services
 
             // Check if the requester has permission
             bool canModify = await CanModifyTeamAsync(teamId, requester.Id);
-            if (!canModify && !_admins.Contains(requester.Id))
+            if (!canModify && !await HasTeamAdminPrivilegesAsync(requester.Id))
                 return false;
 
             // Verify player counts
@@ -287,7 +296,7 @@ namespace Wabbit.Services
 
                     // Check cooldown for secondary player changes
                     var secondaryCooldown = await GetTeamChangeCooldownAsync(teamId, TeamChangeType.SecondaryPlayerChange);
-                    if (secondaryCooldown > 0 && !_admins.Contains(requester.Id))
+                    if (secondaryCooldown > 0 && !await HasTeamAdminPrivilegesAsync(requester.Id))
                         return false; // Still on cooldown
                     break;
                 case PlayerRole.Substitute:
@@ -296,7 +305,7 @@ namespace Wabbit.Services
 
                     // Check cooldown for substitute player changes
                     var substituteCooldown = await GetTeamChangeCooldownAsync(teamId, TeamChangeType.SubstitutePlayerChange);
-                    if (substituteCooldown > 0 && !_admins.Contains(requester.Id))
+                    if (substituteCooldown > 0 && !await HasTeamAdminPrivilegesAsync(requester.Id))
                         return false; // Still on cooldown
                     break;
             }
@@ -345,7 +354,7 @@ namespace Wabbit.Services
 
             // Check if the requester has permission
             bool canModify = await CanModifyTeamAsync(teamId, requester.Id);
-            if (!canModify && !_admins.Contains(requester.Id) && requester.Id != userId) // Player can remove themselves
+            if (!canModify && !await HasTeamAdminPrivilegesAsync(requester.Id) && requester.Id != userId) // Player can remove themselves
                 return false;
 
             // Check if the player is on the team
@@ -357,7 +366,7 @@ namespace Wabbit.Services
                 return false; // Player not on the team
 
             // Core players can only be removed by admins
-            if (isCore && !_admins.Contains(requester.Id) && requester.Id != team.CreatorId)
+            if (isCore && !await HasTeamAdminPrivilegesAsync(requester.Id) && requester.Id != team.CreatorId)
                 return false;
 
             // Use reflection to get player info list for the role
@@ -413,7 +422,7 @@ namespace Wabbit.Services
 
             // Check if the requester has permission
             bool canModify = await CanModifyTeamAsync(teamId, requester.Id);
-            if (!canModify && !_admins.Contains(requester.Id))
+            if (!canModify && !await HasTeamAdminPrivilegesAsync(requester.Id))
                 return false;
 
             // Check if the player is on the team
@@ -435,7 +444,7 @@ namespace Wabbit.Services
                 return true;
 
             // Core players can only be changed by admins
-            if (isCore && !_admins.Contains(requester.Id) && requester.Id != team.CreatorId)
+            if (isCore && !await HasTeamAdminPrivilegesAsync(requester.Id) && requester.Id != team.CreatorId)
                 return false;
 
             // Check if there's space in the new role
@@ -449,7 +458,7 @@ namespace Wabbit.Services
 
             // Check cooldowns if changing to/from Secondary or Substitute
             if ((currentRole == PlayerRole.Secondary || newRole == PlayerRole.Secondary) &&
-                !_admins.Contains(requester.Id))
+                !await HasTeamAdminPrivilegesAsync(requester.Id))
             {
                 var secondaryCooldown = await GetTeamChangeCooldownAsync(teamId, TeamChangeType.SecondaryPlayerChange);
                 if (secondaryCooldown > 0)
@@ -457,7 +466,7 @@ namespace Wabbit.Services
             }
 
             if ((currentRole == PlayerRole.Substitute || newRole == PlayerRole.Substitute) &&
-                !_admins.Contains(requester.Id))
+                !await HasTeamAdminPrivilegesAsync(requester.Id))
             {
                 var substituteCooldown = await GetTeamChangeCooldownAsync(teamId, TeamChangeType.SubstitutePlayerChange);
                 if (substituteCooldown > 0)
@@ -531,7 +540,7 @@ namespace Wabbit.Services
 
             // Check if the requester has permission
             bool canModify = await CanModifyTeamAsync(teamId, requester.Id);
-            if (!canModify && !_admins.Contains(requester.Id))
+            if (!canModify && !await HasTeamAdminPrivilegesAsync(requester.Id))
                 return false;
 
             // Check if the new name is available
@@ -540,7 +549,7 @@ namespace Wabbit.Services
                 return false;
 
             // Check cooldown for name changes
-            if (!_admins.Contains(requester.Id))
+            if (!await HasTeamAdminPrivilegesAsync(requester.Id))
             {
                 var nameCooldown = await GetTeamChangeCooldownAsync(teamId, TeamChangeType.NameChange);
                 if (nameCooldown > 0)
@@ -569,8 +578,8 @@ namespace Wabbit.Services
             if (!_isInitialized)
                 await Initialize();
 
-            // Admins can always modify teams
-            if (_admins.Contains(userId))
+            // Check if user has admin privileges first
+            if (await HasTeamAdminPrivilegesAsync(userId))
                 return true;
 
             // Get the team
@@ -584,6 +593,54 @@ namespace Wabbit.Services
 
             // Core players can modify the team
             return team.CorePlayers.Any(p => p.Id == userId);
+        }
+
+        /// <summary>
+        /// Check if a user has team admin privileges
+        /// </summary>
+        public async Task<bool> HasTeamAdminPrivilegesAsync(ulong userId)
+        {
+            if (!_isInitialized)
+                await Initialize();
+
+            try
+            {
+                // Check Discord's built-in permissions
+                if (_guildId == 0)
+                {
+                    _logger.LogWarning($"Cannot check Discord permissions for user {userId} - no guild ID configured");
+                    return false;
+                }
+
+                var guild = await _discordClient.GetGuildAsync(_guildId);
+                if (guild is null)
+                {
+                    _logger.LogWarning($"Cannot check Discord permissions for user {userId} - guild not found");
+                    return false;
+                }
+
+                DiscordMember? member;
+                try
+                {
+                    member = await guild.GetMemberAsync(userId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"Cannot check Discord permissions for user {userId} - member not found");
+                    return false;
+                }
+
+                // Check if user is the server owner or has Administrator permission
+                // Also consider moderator permissions (ManageGuild) for team management
+                return member.IsOwner ||
+                       member.Permissions.HasFlag(DiscordPermission.Administrator) ||
+                       member.Permissions.HasFlag(DiscordPermission.ManageGuild);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error checking team admin privileges for user {userId}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -648,7 +705,7 @@ namespace Wabbit.Services
                 return false;
 
             // Only admins or the creator can delete a team
-            if (!_admins.Contains(requester.Id) && team.CreatorId != requester.Id)
+            if (!await HasTeamAdminPrivilegesAsync(requester.Id) && team.CreatorId != requester.Id)
                 return false;
 
             // Remove team from repository
@@ -694,7 +751,7 @@ namespace Wabbit.Services
                 return false;
 
             // Only admins or the creator can transfer ownership
-            if (!_admins.Contains(requester.Id) && team.CreatorId != requester.Id)
+            if (!await HasTeamAdminPrivilegesAsync(requester.Id) && team.CreatorId != requester.Id)
                 return false;
 
             // Check if the new owner is a core player

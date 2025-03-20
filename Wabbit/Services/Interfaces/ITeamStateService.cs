@@ -35,6 +35,13 @@ namespace Wabbit.Services.Interfaces
         Task<bool> CanCreateTeamAsync(ulong userId, Wabbit.Models.TeamGameType type);
 
         /// <summary>
+        /// Check if a user has admin privileges for team management
+        /// </summary>
+        /// <param name="userId">Discord user ID to check</param>
+        /// <returns>True if the user has admin privileges</returns>
+        Task<bool> HasTeamAdminPrivilegesAsync(ulong userId);
+
+        /// <summary>
         /// Check if a team name is available
         /// </summary>
         /// <param name="name">Team name to check</param>

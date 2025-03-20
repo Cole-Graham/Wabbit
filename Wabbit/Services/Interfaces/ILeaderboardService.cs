@@ -76,5 +76,12 @@ namespace Wabbit.Services.Interfaces
         /// <param name="seasonId">Season ID to get ranking for, null for current season</param>
         /// <returns>Team ranking information</returns>
         Task<LeaderboardEntry?> GetTeamRankingAsync(string teamId, Wabbit.Models.TeamGameType gameType, string? seasonId = null);
+
+        /// <summary>
+        /// Check if a user has admin privileges for leaderboard management
+        /// </summary>
+        /// <param name="userId">Discord user ID to check</param>
+        /// <returns>True if the user has admin privileges</returns>
+        Task<bool> HasLeaderboardAdminPrivilegesAsync(ulong userId);
     }
 }

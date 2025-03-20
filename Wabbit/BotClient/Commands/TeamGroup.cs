@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
+using Wabbit.BotClient.Attributes;
 using Wabbit.Models;
 using Wabbit.Models.Rating;
 using Wabbit.Services.Interfaces;
@@ -14,6 +15,7 @@ using Wabbit.Services.Interfaces;
 namespace Wabbit.BotClient.Commands
 {
     [Command("Team")]
+    [RequireWhitelistedRole]
     public class TeamGroup
     {
         private readonly ILogger<TeamGroup> _logger;
@@ -256,6 +258,7 @@ namespace Wabbit.BotClient.Commands
 
         [Command("leave")]
         [Description("Leave a team you're a member of")]
+        [RequireTeamMember]
         public async Task LeaveTeamAsync(
             CommandContext context,
             [Description("Name of the team to leave")] string teamName)
@@ -416,6 +419,7 @@ namespace Wabbit.BotClient.Commands
 
         [Command("rename")]
         [Description("Change your team's name")]
+        [RequireTeamCorePlayer]
         public async Task RenameTeamAsync(
             CommandContext context,
             [Description("Current name of your team")] string currentName,
@@ -425,14 +429,6 @@ namespace Wabbit.BotClient.Commands
 
             try
             {
-                // Validate new name
-                if (string.IsNullOrWhiteSpace(newName) || newName.Length < 3 || newName.Length > 32)
-                {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        "❌ Team name must be between 3 and 32 characters long."));
-                    return;
-                }
-
                 // Find the team
                 var team = await _teamStateService.GetTeamByNameAsync(currentName);
                 if (team == null)
@@ -442,7 +438,26 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Check if new name is available
+                // Check if the user is a team owner/admin or has admin privileges
+                bool canModify = await _teamStateService.CanModifyTeamAsync(team.TeamId, context.User.Id);
+                bool isAdmin = await _teamStateService.HasTeamAdminPrivilegesAsync(context.User.Id);
+
+                if (!canModify && !isAdmin)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        $"❌ You don't have permission to rename team '{currentName}'. Only team owners, core players, or administrators can do this."));
+                    return;
+                }
+
+                // Check if the name is valid
+                if (string.IsNullOrWhiteSpace(newName) || newName.Length < 3 || newName.Length > 32)
+                {
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                        "❌ Team name must be between 3 and 32 characters long."));
+                    return;
+                }
+
+                // Check if the new name is available
                 if (!await _teamStateService.IsTeamNameAvailableAsync(newName))
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
@@ -450,18 +465,32 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Rename the team
+                // Try to rename the team
                 bool renamed = await _teamStateService.UpdateTeamNameAsync(team.TeamId, newName, context.User);
 
                 if (renamed)
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"✅ Team successfully renamed from '{currentName}' to '{newName}'."));
+                    var embed = new DiscordEmbedBuilder()
+                        .WithTitle($"✅ Team Renamed")
+                        .WithDescription($"Team '{currentName}' has been renamed to '{newName}'.")
+                        .WithColor(DiscordColor.Green);
+
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
                 }
                 else
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ Unable to rename team. You may not be the owner or the cooldown period hasn't elapsed."));
+                    // Get cooldown information
+                    int nameCooldown = await _teamStateService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.NameChange);
+                    if (nameCooldown > 0 && !isAdmin)
+                    {
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                            $"❌ This team name was changed recently. You can change it again in {nameCooldown} minutes."));
+                    }
+                    else
+                    {
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                            $"❌ Unable to rename team '{currentName}'. This could be due to a cooldown period or permission issue."));
+                    }
                 }
             }
             catch (Exception ex)
@@ -474,6 +503,7 @@ namespace Wabbit.BotClient.Commands
 
         [Command("change_secondary")]
         [Description("Change a secondary player in your team")]
+        [RequireTeamCorePlayer]
         public async Task ChangeSecondaryPlayerAsync(
             CommandContext context,
             [Description("Name of your team")] string teamName,
@@ -492,26 +522,51 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Check if team allows secondary players (1v1 doesn't)
-                if (team.GameType == Wabbit.Models.TeamGameType.OneVOne)
+                // Check if the user is a team owner/admin or has admin privileges
+                bool canModify = await _teamStateService.CanModifyTeamAsync(team.TeamId, context.User.Id);
+                bool isAdmin = await _teamStateService.HasTeamAdminPrivilegesAsync(context.User.Id);
+
+                if (!canModify && !isAdmin)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        "❌ 1v1 teams cannot have secondary players."));
+                        $"❌ You don't have permission to modify team '{teamName}'. Only team owners, core players, or administrators can do this."));
                     return;
                 }
 
-                // Change secondary player
-                bool changed = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Secondary, context.User);
-
-                if (changed)
+                // Check if the team is the right type
+                if (team.GameType == Wabbit.Models.TeamGameType.OneVOne)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"✅ Successfully added {player.Username} as a secondary player to team '{teamName}'."));
+                        "❌ 1v1 teams don't have secondary players."));
+                    return;
+                }
+
+                // Try to add the player
+                bool added = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Secondary, context.User);
+
+                if (added)
+                {
+                    var embed = new DiscordEmbedBuilder()
+                        .WithTitle($"✅ Secondary Player Added")
+                        .WithDescription($"{player.Mention} has been added as a secondary player to team '{teamName}'.")
+                        .WithColor(DiscordColor.Green);
+
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
                 }
                 else
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ Unable to change secondary player. You may not be the owner or the cooldown period hasn't elapsed."));
+                    // Get cooldown information
+                    int secondaryCooldown = await _teamStateService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.SecondaryPlayerChange);
+                    if (secondaryCooldown > 0 && !isAdmin)
+                    {
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                            $"❌ This team's secondary players were changed recently. You can change them again in {secondaryCooldown} minutes."));
+                    }
+                    else
+                    {
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                            $"❌ Unable to add {player.Username} to team '{teamName}'. The secondary player slots may be full or the player may already be on the team."));
+                    }
                 }
             }
             catch (Exception ex)
@@ -524,6 +579,7 @@ namespace Wabbit.BotClient.Commands
 
         [Command("change_substitute")]
         [Description("Change a substitute player in your team")]
+        [RequireTeamCorePlayer]
         public async Task ChangeSubstitutePlayerAsync(
             CommandContext context,
             [Description("Name of your team")] string teamName,
@@ -542,26 +598,51 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Check if team allows substitute players (1v1 and 2v2 don't)
-                if (team.GameType == Wabbit.Models.TeamGameType.OneVOne || team.GameType == Wabbit.Models.TeamGameType.TwoVTwo)
+                // Check if the user is a team owner/admin or has admin privileges
+                bool canModify = await _teamStateService.CanModifyTeamAsync(team.TeamId, context.User.Id);
+                bool isAdmin = await _teamStateService.HasTeamAdminPrivilegesAsync(context.User.Id);
+
+                if (!canModify && !isAdmin)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        "❌ 1v1 and 2v2 teams cannot have substitute players."));
+                        $"❌ You don't have permission to modify team '{teamName}'. Only team owners, core players, or administrators can do this."));
                     return;
                 }
 
-                // Change substitute player
-                bool changed = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Substitute, context.User);
-
-                if (changed)
+                // Check if the team is the right type
+                if (team.GameType == Wabbit.Models.TeamGameType.OneVOne || team.GameType == Wabbit.Models.TeamGameType.TwoVTwo)
                 {
                     await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"✅ Successfully added {player.Username} as a substitute player to team '{teamName}'."));
+                        "❌ 1v1 and 2v2 teams don't have substitute players."));
+                    return;
+                }
+
+                // Try to add the player
+                bool added = await _teamStateService.AddPlayerToTeamAsync(team.TeamId, player, PlayerRole.Substitute, context.User);
+
+                if (added)
+                {
+                    var embed = new DiscordEmbedBuilder()
+                        .WithTitle($"✅ Substitute Player Added")
+                        .WithDescription($"{player.Mention} has been added as a substitute player to team '{teamName}'.")
+                        .WithColor(DiscordColor.Green);
+
+                    await context.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
                 }
                 else
                 {
-                    await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
-                        $"❌ Unable to change substitute player. You may not be the owner or the cooldown period hasn't elapsed."));
+                    // Get cooldown information
+                    int substituteCooldown = await _teamStateService.GetTeamChangeCooldownAsync(team.TeamId, TeamChangeType.SubstitutePlayerChange);
+                    if (substituteCooldown > 0 && !isAdmin)
+                    {
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                            $"❌ This team's substitute players were changed recently. You can change them again in {substituteCooldown} minutes."));
+                    }
+                    else
+                    {
+                        await context.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                            $"❌ Unable to add {player.Username} to team '{teamName}'. The substitute player slots may be full or the player may already be on the team."));
+                    }
                 }
             }
             catch (Exception ex)
