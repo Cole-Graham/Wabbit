@@ -208,6 +208,7 @@ namespace Wabbit
                     extension.AddCommands([
                         typeof(BasicGroup),
                         typeof(ConfigGroup),
+                        typeof(TeamGroup),
                         typeof(TournamentGroup),
                         typeof(MapManagementGroup),
                         typeof(TournamentManagementGroup),
