@@ -31,6 +31,71 @@ To make the tests usable, the following steps are needed:
 3. Use proper constructor arguments for services or consider using more extensive mocking.
 4. Verify the actual property access patterns and adjust tests accordingly.
 
+## Implementation Plan
+
+The following is a comprehensive plan to address the issues and make the tests fully functional:
+
+### Phase 1: Analyze & Document Actual Interfaces
+1. **Document Actual Service Interfaces**
+   - Examine the actual `TournamentService`, `MatchStatusService`, and other service implementations
+   - Document constructor parameters, method signatures, and properties
+   - Create a table mapping expected interfaces to actual implementations
+
+2. **Add Missing Dependencies**
+   - Add Microsoft.Extensions.Logging reference
+   - Add specific namespace imports
+   - Create a TestBase class with common mock setups
+
+### Phase 2: Create Test Infrastructure
+1. **Create Adapter/Facade Classes**
+   - Implement test-specific service wrappers
+   - Provide simplified APIs for testing purposes
+   - Bridge between test expectations and actual implementations
+
+2. **Create Model Extensions**
+   - Add extension methods to bridge property differences
+   - Create test-specific model classes where needed
+   - Implement converters between test models and actual models
+
+### Phase 3: Fix Specific Issues
+1. **Missing Methods**
+   - Replace direct calls to missing methods with adapter method calls
+   - Implement missing functionality in the test project if needed
+   - Update tests to use the actual method names/signatures
+
+2. **Property Access Issues**
+   - Update TestHelpers.cs to use the correct property access patterns
+   - Create builders/factories that set properties using constructor parameters
+   - Use reflection for testing-only scenarios where properties are read-only
+
+3. **Type Incompatibilities**
+   - Add type converters between Round and Tournament.Match
+   - Fix nullability issues in mock setups
+   - Update test assertions to work with the actual types
+
+### Phase 4: Incremental Implementation
+1. **Start with the TestHelpers Class**
+   - Fix the base infrastructure first
+   - Update model creation helpers to match actual implementation
+
+2. **Implement One Test Class at a Time**
+   - Start with simple classes like MapBanCountTests
+   - Progress to more complex tests like BracketGenerationTests
+
+3. **Create Test-Specific Version of Services**
+   - Implement test-specific versions of critical services
+   - Focus on the specific functionality needed for testing
+
+### Phase 5: Mock Optimizations
+1. **Optimize Mock Setups**
+   - Fix expression tree issues by using proper lambda expressions
+   - Centralize common mock setups in a TestBase class
+   - Create reusable mock configurations
+
+2. **Refactor Tests for Better Isolation**
+   - Reduce dependencies on concrete implementations
+   - Use more interfaces and fewer concrete classes in tests
+
 ## Running Tests
 
 Once the implementation issues are resolved:
