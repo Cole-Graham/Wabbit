@@ -624,7 +624,8 @@ namespace Wabbit.Services
             if (round?.Teams != null)
             {
                 deckSubmissionsCompleted = round.Teams.All(t =>
-                    t?.Participants?.All(p => !string.IsNullOrEmpty(p?.Deck)) == true);
+                    t?.Participants?.Where(p => p?.Player is not null)
+                     .All(p => !string.IsNullOrEmpty(p?.Deck)) ?? false);
             }
 
             // Create a horizontal progress bar with arrows

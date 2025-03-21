@@ -116,7 +116,9 @@ namespace Wabbit.Services
                 }
 
                 // Check if all decks are submitted, which could trigger a stage transition
-                bool allDecksSubmitted = round.Teams?.All(t => t?.Participants?.All(p => !string.IsNullOrEmpty(p?.Deck)) ?? false) ?? false;
+                bool allDecksSubmitted = round.Teams?.All(t =>
+                    t?.Participants?.Where(p => p?.Player is not null)
+                     .All(p => !string.IsNullOrEmpty(p?.Deck)) ?? false) ?? false;
 
                 // If all decks are submitted and we're in deck submission stage, transition
                 if (round.CustomProperties != null && allDecksSubmitted && round.CurrentStage == MatchStage.DeckSubmission)
@@ -125,30 +127,81 @@ namespace Wabbit.Services
                     // but we need to track that a critical milestone was reached
                     round.CustomProperties["AllDecksSubmitted"] = true;
 
-                    // First, select a map for the game before transitioning to game results
-                    await UpdateMapInformationAsync(channel, round, client);
+                    try
+                    {
+                        // Instead of selecting a map here, we should rely on TournamentMatchService.HandleDeckSubmissionAsync
+                        // which should be called by the command handler after this method returns
+
+                        // For safety, ensure we have at least a fallback map in case HandleDeckSubmissionAsync isn't called
+                        if (round.Maps is null || !round.Maps.Any())
+                        {
+                            // Only add fallback map if we don't have any maps yet
+                            string? fallbackMap = _mapService.GetRandomMapForNextGame(round);
+                            if (fallbackMap == null)
+                            {
+                                _logger.LogError("Failed to get fallback map - using default");
+                                fallbackMap = "Default Map";
+                            }
+
+                            // Initialize maps collection if needed
+                            if (round.Maps is null)
+                            {
+                                round.Maps = new List<string>();
+                            }
+
+                            if (!round.Maps.Contains(fallbackMap))
+                            {
+                                round.Maps.Add(fallbackMap);
+                            }
+
+                            // Set custom instructions
+                            if (round.CustomProperties is null)
+                            {
+                                round.CustomProperties = new Dictionary<string, object>();
+                            }
+                            round.CustomProperties["Instructions"] = $"Next map is **{fallbackMap}**. Please prepare your decks accordingly.";
+                        }
+                    }
+                    catch (Exception mapEx)
+                    {
+                        _logger.LogError(mapEx, "Error ensuring fallback map is available");
+                    }
 
                     // Then transition to game results stage
                     _logger.LogInformation("All decks submitted. Automatically transitioning to game results stage.");
                     round.CurrentStage = MatchStage.GameResults;
 
-                    // Update game results stage in all team threads
+                    // First update this channel to ensure we don't lose the message
+                    try
+                    {
+                        await UpdateToGameResultsStageAsync(channel, round, client);
+                        _logger.LogInformation($"Updated game results stage in current channel {channel.Id}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Error updating game results stage in current channel {channel.Id}");
+                    }
+
+                    // Then update other team threads asynchronously to avoid getting stuck if one fails
                     if (round.Teams != null)
                     {
                         foreach (var teamObj in round.Teams)
                         {
-                            if (teamObj?.Thread is not null)
+                            if (teamObj?.Thread is not null && teamObj.Thread.Id != channel.Id)
                             {
-                                try
+                                // Fire and forget - don't await this call to avoid cascading failures
+                                _ = Task.Run(async () =>
                                 {
-                                    // Call UpdateToGameResultsStageAsync for each team's thread
-                                    await UpdateToGameResultsStageAsync(teamObj.Thread, round, client);
-                                    _logger.LogInformation($"Updated game results stage in thread {teamObj.Thread.Id} for team {teamObj.Name}");
-                                }
-                                catch (Exception threadEx)
-                                {
-                                    _logger.LogError(threadEx, $"Error updating game results stage in thread {teamObj.Thread.Id} for team {teamObj.Name}");
-                                }
+                                    try
+                                    {
+                                        await UpdateToGameResultsStageAsync(teamObj.Thread, round, client);
+                                        _logger.LogInformation($"Updated game results stage in thread {teamObj.Thread.Id} for team {teamObj.Name}");
+                                    }
+                                    catch (Exception threadEx)
+                                    {
+                                        _logger.LogError(threadEx, $"Error updating game results stage in thread {teamObj.Thread.Id} for team {teamObj.Name}");
+                                    }
+                                });
                             }
                         }
                     }
@@ -164,6 +217,13 @@ namespace Wabbit.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error confirming deck: {ex.Message}");
+
+                // Try to recover by updating the channel anyway
+                try
+                {
+                    await UpdateMatchStatusAsync(channel, round, client);
+                }
+                catch { }
             }
         }
 

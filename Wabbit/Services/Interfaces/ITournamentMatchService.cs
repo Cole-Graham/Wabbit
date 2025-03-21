@@ -67,5 +67,10 @@ namespace Wabbit.Services.Interfaces
             Tournament.Match match,
             DiscordClient client,
             TimeSpan? archiveDuration = null);
+
+        /// <summary>
+        /// Handles deck submission and reveals map if both teams have submitted
+        /// </summary>
+        Task HandleDeckSubmissionAsync(Round round, DiscordChannel channel, DiscordClient client);
     }
 }

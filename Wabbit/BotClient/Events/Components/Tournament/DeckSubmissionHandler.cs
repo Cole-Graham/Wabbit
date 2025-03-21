@@ -140,9 +140,6 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     return;
                 }
 
-                // Clean up map ban messages
-                await CleanupMapBanMessages(e.Channel);
-
                 // Delete the message with the button
                 try
                 {
@@ -229,6 +226,26 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                 // Call the MatchStatusService to handle the deck confirmation
                 await _matchStatusService.ConfirmDeckAsync(channel, round, userId, client);
 
+                // Get TournamentMatchService to handle deck submission
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var tournamentMatchService = scope.ServiceProvider.GetRequiredService<ITournamentMatchService>();
+
+                    // Call HandleDeckSubmissionAsync to manage map selection and other game logic
+                    try
+                    {
+                        // The HandleDeckSubmissionAsync method checks if all decks are submitted
+                        // and handles map selection and preparation for the next stage
+                        await tournamentMatchService.HandleDeckSubmissionAsync(round, channel, client);
+                        _logger.LogInformation($"TournamentMatchService.HandleDeckSubmissionAsync called for channel {channel.Id}");
+                    }
+                    catch (Exception matchEx)
+                    {
+                        _logger.LogError(matchEx, "Error while handling deck submission via TournamentMatchService");
+                        // Continue anyway - the match status should still be updated
+                    }
+                }
+
                 // Delete the confirmation message to reduce clutter
                 try
                 {
@@ -308,52 +325,6 @@ namespace Wabbit.BotClient.Events.Components.Tournament
             {
                 _logger.LogError(ex, "Error revising deck");
                 await SendErrorResponseAsync(e, $"There was an error revising your deck: {ex.Message}", hasBeenDeferred);
-            }
-        }
-
-        /// <summary>
-        /// Cleans up map ban related messages in a channel
-        /// </summary>
-        /// <param name="channel">The Discord channel</param>
-        private async Task CleanupMapBanMessages(DiscordChannel channel)
-        {
-            try
-            {
-                // Get recent messages in the channel
-                var messages = channel.GetMessagesAsync(50);
-                var messageList = new List<DiscordMessage>();
-
-                // Manually collect messages from the async enumerable
-                await foreach (var message in messages)
-                {
-                    messageList.Add(message);
-                }
-
-                // Find and delete map ban related messages
-                var messagesToDelete = messageList.Where(m =>
-                    (m.Author?.IsBot == true && m.Content?.Contains("map ban") == true) ||
-                    (m.Author?.IsBot == true && m.Content?.Contains("Map Ban") == true) ||
-                    (m.Author?.IsBot == true && m.Content?.Contains("scroll to see all map options") == true) ||
-                    (m.Author?.IsBot == true && m.Embeds?.Any(e => e.Title?.Contains("Map Ban") == true) == true)
-                ).ToList();
-
-                foreach (var message in messagesToDelete)
-                {
-                    try
-                    {
-                        await message.DeleteAsync();
-                        // Add a small delay to avoid rate limiting
-                        await Task.Delay(100);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete map ban message");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error cleaning up map ban messages");
             }
         }
     }
