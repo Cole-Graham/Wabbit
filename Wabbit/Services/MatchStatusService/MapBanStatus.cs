@@ -86,7 +86,7 @@ namespace Wabbit.Services
 
             // Add confirm/revise buttons - pass channel ID to show proper priorities
             var builder = new DiscordMessageBuilder()
-                .AddEmbed(CreateMatchStatusEmbed(round, null, channel.Id))
+                .AddEmbed(BuildMatchStatusEmbed(round, null, channel.Id))
                 .AddComponents(
                     new DiscordButtonComponent(
                         DiscordButtonStyle.Success,
@@ -174,7 +174,7 @@ namespace Wabbit.Services
                 }
 
                 // Create a fresh embed without any buttons
-                var embed = CreateMatchStatusEmbed(round);
+                var embed = BuildMatchStatusEmbed(round);
 
                 // Update match status in the current channel without confirm/revise buttons
                 var messageBuilder = new DiscordMessageBuilder()
@@ -267,7 +267,7 @@ namespace Wabbit.Services
             }
 
             // Create a fresh embed without any buttons
-            var embed = CreateMatchStatusEmbed(round);
+            var embed = BuildMatchStatusEmbed(round);
 
             // Update match status in the current channel without confirm/revise buttons
             var messageBuilder = new DiscordMessageBuilder()
@@ -343,7 +343,7 @@ namespace Wabbit.Services
 
             // Update the status message with the dropdown again
             var builder = new DiscordMessageBuilder()
-                .AddEmbed(CreateMatchStatusEmbed(round, mapPool))
+                .AddEmbed(BuildMatchStatusEmbed(round, mapPool))
                 .AddComponents(new DiscordSelectComponent(
                     $"map_ban_{round.GetHashCode()}",
                     $"Select {numBans} maps to ban (in order of priority)",

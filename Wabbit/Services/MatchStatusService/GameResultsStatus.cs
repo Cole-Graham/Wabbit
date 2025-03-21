@@ -18,90 +18,28 @@ namespace Wabbit.Services
         /// </summary>
         public async Task<DiscordMessage> UpdateToGameResultsStageAsync(DiscordChannel channel, Round round, DiscordClient client)
         {
-            try
+            _logger.LogInformation($"Updating to game results stage in channel {channel.Id}");
+
+            // Update the round's current stage
+            round.CurrentStage = MatchStage.GameResults;
+
+            // Add custom instruction about selecting a winner
+            if (round.CustomProperties == null)
+                round.CustomProperties = new Dictionary<string, object>();
+
+            string mapName = round.Maps?.LastOrDefault() ?? "Unknown Map";
+            round.CustomProperties["Instructions"] = $"The game will be played on **{mapName}**. After the match completes, select the winner using the dropdown below.";
+
+            // Get the existing message - Never create a new message unless we absolutely have to
+            var message = await GetMatchStatusMessageAsync(channel, client);
+
+            if (message is null)
             {
-                _logger.LogInformation($"Updating to game results stage in channel {channel.Id}");
-
-                // Update the round's current stage
-                round.CurrentStage = MatchStage.GameResults;
-
-                // Add custom instruction about selecting a winner
-                if (round.CustomProperties == null)
-                    round.CustomProperties = new Dictionary<string, object>();
-
-                string mapName = round.Maps?.LastOrDefault() ?? "Unknown Map";
-                round.CustomProperties["Instructions"] = $"The game will be played on **{mapName}**. After the match completes, select the winner using the dropdown below.";
-
-                // Get the existing message or create a new one 
-                var message = await GetMatchStatusMessageAsync(channel, client);
-
-                if (message is null)
-                {
-                    _logger.LogWarning($"No existing message found in channel {channel.Id}, creating new one");
-                    try
-                    {
-                        message = await CreateNewMatchStatusAsync(channel, round, client);
-                        _logger.LogInformation($"Created new game results message in channel {channel.Id} with ID {message.Id}");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"Failed to create new message in channel {channel.Id}, attempting recovery");
-                        // Try one more time with a basic approach
-                        var embed = CreateMatchStatusEmbed(round);
-                        var messageBuilder = new DiscordMessageBuilder().AddEmbed(embed);
-                        message = await channel.SendMessageAsync(messageBuilder);
-
-                        // Update mappings
-                        _channelToMessageMap[channel.Id] = message.Id;
-                        round.StatusMessageId = message.Id;
-                    }
-                }
-                else
-                {
-                    _logger.LogInformation($"Found existing message in channel {channel.Id} with ID {message.Id}, updating");
-                    try
-                    {
-                        await UpdateMatchStatusAsync(channel, round, client);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"Failed to update existing message in channel {channel.Id}, attempting recovery");
-                        // Try direct modification as a fallback
-                        var embed = CreateMatchStatusEmbed(round);
-                        await message.ModifyAsync(new DiscordMessageBuilder().AddEmbed(embed));
-                    }
-                }
-
-                return message;
+                _logger.LogWarning($"No existing message found in channel {channel.Id}, will attempt to update match status");
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error in UpdateToGameResultsStageAsync for channel {channel.Id}");
 
-                // Last resort recovery - create a basic message without the usual flow
-                try
-                {
-                    var fallbackEmbed = new DiscordEmbedBuilder()
-                        .WithTitle("Match Status")
-                        .WithDescription($"Current Stage: {round.CurrentStage}")
-                        .WithColor(new DiscordColor(75, 181, 67))
-                        .AddField("Recovery Mode", "The status message has been restored after an error.");
-
-                    var fallbackMessage = await channel.SendMessageAsync(
-                        new DiscordMessageBuilder().AddEmbed(fallbackEmbed));
-
-                    // Update mappings
-                    _channelToMessageMap[channel.Id] = fallbackMessage.Id;
-                    round.StatusMessageId = fallbackMessage.Id;
-
-                    return fallbackMessage;
-                }
-                catch
-                {
-                    // If even this fails, just rethrow the original exception
-                    throw;
-                }
-            }
+            // Always use UpdateMatchStatusAsync which will create or update as needed
+            return await UpdateMatchStatusAsync(channel, round, client);
         }
 
         /// <summary>
@@ -228,7 +166,7 @@ namespace Wabbit.Services
             round.CurrentStage = MatchStage.Completed;
 
             // Build a special finalized embed
-            var embed = CreateMatchStatusEmbed(round);
+            var embed = BuildMatchStatusEmbed(round);
 
             // Add summary of games
             StringBuilder gamesSummary = new();

@@ -1462,7 +1462,7 @@ package "Services/ServiceHelpers" as ServiceHelpersLayer {
     }
     
     class StatusEmbedHelpers <<static>> {
-        +CreateMatchStatusEmbed()
+        +BuildMatchStatusEmbed()
         +CreateScrimmageStatusEmbed()
         +CreateTeamStatusEmbed()
         +AddMapBanSection()

@@ -26,7 +26,7 @@ namespace Wabbit.Services
     {
         private readonly ILogger<MatchStatusService> _logger;
         private readonly ITournamentMapService _mapService;
-        private readonly Dictionary<ulong, ulong> _channelToMessageMap = new();
+        private readonly ConcurrentDictionary<ulong, ulong> _channelToMessageMap = new();
 
         // Add cooldown tracking for refresh buttons
         private readonly ConcurrentDictionary<string, DateTime> _refreshButtonCooldowns = new();
@@ -57,7 +57,7 @@ namespace Wabbit.Services
                 catch (Exception ex)
                 {
                     _logger.LogWarning($"Could not get match status message: {ex.Message}");
-                    _channelToMessageMap.Remove(channel.Id);
+                    _channelToMessageMap.TryRemove(channel.Id, out _);
                     return null;
                 }
             }
@@ -82,7 +82,7 @@ namespace Wabbit.Services
                 }
 
                 // Create the embed based on the round state - pass channel ID
-                var embed = CreateMatchStatusEmbed(round, null, channel.Id);
+                var embed = BuildMatchStatusEmbed(round, null, channel.Id);
 
                 // Create a message builder with the updated embed
                 var messageBuilder = new DiscordMessageBuilder()
@@ -174,34 +174,6 @@ namespace Wabbit.Services
         }
 
         /// <summary>
-        /// Initializes a new match status with proper stage setup
-        /// </summary>
-        public async Task<DiscordMessage> InitializeMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
-        {
-            if (channel is null) throw new ArgumentNullException(nameof(channel));
-            if (round is null) throw new ArgumentNullException(nameof(round));
-            if (client is null) throw new ArgumentNullException(nameof(client));
-
-            // Remove any existing message mapping for this channel
-            _channelToMessageMap.Remove(channel.Id);
-
-            // Clear any existing status message ID
-            round.StatusMessageId = null;
-
-            // Create initial message with no components
-            var message = await UpdateMatchStatusAsync(channel, round, client);
-
-            // Transition to first stage (usually map bans)
-            if (round.CurrentStage == MatchStage.Created)
-            {
-                round.CurrentStage = MatchStage.MapBan;
-                await UpdateToMapBanStageAsync(channel, round, client);
-            }
-
-            return message;
-        }
-
-        /// <summary>
         /// Creates a new match status embed for a new match, preserving history
         /// </summary>
         public async Task<DiscordMessage> CreateNewMatchStatusAsync(DiscordChannel channel, Round round, DiscordClient client)
@@ -210,14 +182,9 @@ namespace Wabbit.Services
             if (round is null) throw new ArgumentNullException(nameof(round));
             if (client is null) throw new ArgumentNullException(nameof(client));
 
-            // Remove any existing message mapping for this channel
-            _channelToMessageMap.Remove(channel.Id);
-
-            // Clear any existing status message ID
-            round.StatusMessageId = null;
-
+            // This method should ONLY be used when starting a new match
             // Build the base embed
-            var embed = CreateMatchStatusEmbed(round);
+            var embed = BuildMatchStatusEmbed(round);
 
             // Add a clear transition message for new matches in group stages
             if (round.GroupStageMatchNumber > 0 && round.TotalGroupStageMatches > 0)
@@ -234,8 +201,9 @@ namespace Wabbit.Services
                 .AddEmbed(embed);
 
             var newMessage = await channel.SendMessageAsync(messageBuilder);
+            _logger.LogInformation($"Created new match status message in channel {channel.Id} with ID {newMessage.Id}");
 
-            // Update mappings with the new message
+            // Update mappings with the new message - use thread-safe method
             _channelToMessageMap[channel.Id] = newMessage.Id;
             round.StatusMessageId = newMessage.Id;
 
@@ -251,38 +219,21 @@ namespace Wabbit.Services
 
             if (message is null)
             {
-                _logger.LogWarning($"Match status message not found in channel {channel.Id}. Creating a new one.");
+                _logger.LogWarning($"Match status message not found in channel {channel.Id}, creating a new one");
 
                 // Clear any existing status message ID since we're creating a new one
                 round.StatusMessageId = null;
 
-                // Check if this is a completed match - if so, we should create a new message
-                if (round.IsCompleted)
-                {
-                    return await CreateNewMatchStatusAsync(channel, round, client);
-                }
+                // Create a fresh message
+                var embed = BuildMatchStatusEmbed(round);
+                var messageBuilder = new DiscordMessageBuilder().AddEmbed(embed);
+                message = await channel.SendMessageAsync(messageBuilder);
 
-                // Recreate the message based on current round state
-                message = await UpdateMatchStatusAsync(channel, round, client);
+                // Update the mapping
+                _channelToMessageMap[channel.Id] = message.Id;
+                round.StatusMessageId = message.Id;
 
-                // Update the message with the current stage
-                switch (round.CurrentStage)
-                {
-                    case MatchStage.MapBan:
-                        await UpdateToMapBanStageAsync(channel, round, client);
-                        break;
-                    case MatchStage.DeckSubmission:
-                        await UpdateToDeckSubmissionStageAsync(channel, round, client);
-                        break;
-                    case MatchStage.GameResults:
-                        await UpdateToGameResultsStageAsync(channel, round, client);
-                        break;
-                    default:
-                        // Default to map ban stage if not specified
-                        round.CurrentStage = MatchStage.MapBan;
-                        await UpdateToMapBanStageAsync(channel, round, client);
-                        break;
-                }
+                _logger.LogInformation($"Created basic match status message in channel {channel.Id} with ID {message.Id}");
             }
 
             return message;
@@ -489,7 +440,7 @@ namespace Wabbit.Services
         /// <summary>
         /// Creates the basic match status embed with common information
         /// </summary>
-        private DiscordEmbedBuilder CreateMatchStatusEmbed(Round round, List<string>? cachedMapPool = null, ulong? channelId = null)
+        private DiscordEmbedBuilder BuildMatchStatusEmbed(Round round, List<string>? cachedMapPool = null, ulong? channelId = null)
         {
             // Default titles for regular matches
             string title = "Match Status";
