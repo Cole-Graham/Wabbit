@@ -26,19 +26,22 @@ namespace Wabbit.BotClient.Commands
         private readonly ITournamentStateService _stateService;
         private readonly ITournamentService _tournamentService;
         private readonly ITournamentMatchService _tournamentMatchService;
+        private readonly IMatchStatusService _matchStatusService;
 
         public TournamentGroup(
             OngoingRounds ongoingRounds,
             ILogger<TournamentGroup> logger,
             ITournamentStateService stateService,
             ITournamentService tournamentService,
-            ITournamentMatchService tournamentMatchService)
+            ITournamentMatchService tournamentMatchService,
+            IMatchStatusService matchStatusService)
         {
             _ongoingRounds = ongoingRounds;
             _logger = logger;
             _stateService = stateService;
             _tournamentService = tournamentService;
             _tournamentMatchService = tournamentMatchService;
+            _matchStatusService = matchStatusService;
         }
 
         [Command("submit_deck")]
@@ -73,6 +76,16 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
+                // Check if current stage allows deck submission
+                if (round.CurrentStage != MatchStage.DeckSubmission)
+                {
+                    string stageMessage = round.CurrentStage == MatchStage.MapBan
+                        ? "Map bans must be completed before deck submission."
+                        : "Deck submission is no longer available.";
+                    await context.EditResponseAsync($"Cannot submit deck in the current match stage. {stageMessage}");
+                    return;
+                }
+
                 // Find the team associated with this thread
                 var team = round.Teams?.FirstOrDefault(t => t.Thread is not null && t.Thread.Id == context.Channel.Id);
                 if (team is null)
@@ -101,37 +114,18 @@ namespace Wabbit.BotClient.Commands
                     return;
                 }
 
-                // Store as temporary deck code
-                participant.TempDeckCode = deckCode;
-                _logger.LogInformation($"Temporary deck code stored for user {context.User.Username} (ID: {context.User.Id})");
+                // Use MatchStatusService to record the deck submission
+                // This will handle storing the deck code, updating UI with confirm/revise buttons, and state saving
+                int gameNumber = round.Maps?.Count ?? 0;
+                await _matchStatusService.RecordDeckSubmissionAsync(
+                    context.Channel,
+                    round,
+                    context.User.Id,
+                    deckCode,
+                    gameNumber,
+                    context.Client);
 
-                // Create confirmation message with buttons
-                var confirmEmbed = new DiscordEmbedBuilder()
-                    .WithTitle("Confirm Deck Code")
-                    .WithDescription("Please review your deck code and confirm if it's correct:")
-                    .AddField("Deck Code", deckCode)
-                    .WithColor(DiscordColor.Orange);
 
-                var confirmBtn = new DiscordButtonComponent(
-                    DiscordButtonStyle.Success,
-                    $"confirm_deck_{context.User.Id}",
-                    "Confirm");
-
-                var reviseBtn = new DiscordButtonComponent(
-                    DiscordButtonStyle.Secondary,
-                    $"revise_deck_{context.User.Id}",
-                    "Revise");
-
-                // Send the confirmation message
-                await context.EditResponseAsync(
-                    new DiscordWebhookBuilder()
-                        .WithContent($"{context.User.Mention} Please review your deck code submission:")
-                        .AddEmbed(confirmEmbed)
-                        .AddComponents(confirmBtn, reviseBtn));
-
-                // Save the tournament state
-                await _stateService.SaveTournamentStateAsync(context.Client);
-                _logger.LogInformation($"Tournament state saved after deck submission for user {context.User.Username} (ID: {context.User.Id})");
             }
             catch (Exception ex)
             {

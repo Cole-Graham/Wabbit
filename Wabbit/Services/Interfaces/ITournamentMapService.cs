@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using DSharpPlus.Entities;
 using Wabbit.Models;
+using DSharpPlus;
 
 namespace Wabbit.Services.Interfaces
 {
@@ -99,5 +100,14 @@ namespace Wabbit.Services.Interfaces
         /// <param name="round">The current tournament round</param>
         /// <returns>A random map name, or null if no maps are available</returns>
         string? GetRandomMapForNextGame(Round round);
+
+        /// <summary>
+        /// Sends a map thumbnail message to a channel
+        /// </summary>
+        /// <param name="channel">The Discord channel to send the thumbnail to</param>
+        /// <param name="mapName">The name of the map</param>
+        /// <param name="client">The Discord client</param>
+        /// <returns>The sent message, or null if sending failed</returns>
+        Task<DiscordMessage?> SendMapThumbnailAsync(DiscordChannel channel, string mapName, DiscordClient client);
     }
 }

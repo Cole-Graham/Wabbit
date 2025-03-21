@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.Extensions.Logging;
 using Wabbit.Models;
@@ -505,6 +506,79 @@ namespace Wabbit.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting random map for next game");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Sends a map thumbnail as a message that auto-deletes after 5 minutes
+        /// </summary>
+        /// <param name="channel">The Discord channel to send to</param>
+        /// <param name="mapName">The name of the map to display</param>
+        /// <param name="client">The Discord client</param>
+        /// <returns>The sent message or null if sending failed</returns>
+        public async Task<DiscordMessage?> SendMapThumbnailAsync(DiscordChannel channel, string mapName, DiscordClient client)
+        {
+            try
+            {
+                // Get the map from our service
+                var map = _mapService.GetMapByName(mapName);
+                if (map == null)
+                {
+                    _logger.LogWarning($"Map {mapName} not found");
+                    return null;
+                }
+
+                // Create an embed for the map
+                var embed = new DiscordEmbedBuilder()
+                    .WithTitle($"🗺️ Next Map: {mapName}")
+                    .WithDescription($"The next game will be played on **{mapName}**.")
+                    .WithColor(new DiscordColor(75, 181, 67))
+                    .WithFooter("This message will be automatically deleted in 5 minutes.");
+
+                // Get the thumbnail data
+                var (thumbnailUrl, thumbnailData) = await _mapService.GetMapThumbnailAsync(mapName);
+
+                // Create message builder
+                var messageBuilder = new DiscordMessageBuilder();
+                messageBuilder.AddEmbed(embed);
+
+                // If we have a URL, use it
+                if (!string.IsNullOrEmpty(thumbnailUrl))
+                {
+                    embed.WithImageUrl(thumbnailUrl);
+                }
+                // If we have data, add as attachment
+                else if (thumbnailData != null)
+                {
+                    string fileName = $"map_{mapName}.png";
+                    using var ms = new MemoryStream(thumbnailData);
+                    messageBuilder.AddFile(fileName, ms);
+                    embed.WithImageUrl($"attachment://{fileName}");
+                }
+
+                // Send the message
+                var message = await channel.SendMessageAsync(messageBuilder);
+
+                // Schedule auto-deletion after 5 minutes
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(5));
+                    try
+                    {
+                        await message.DeleteAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, $"Failed to auto-delete map thumbnail for {mapName}");
+                    }
+                });
+
+                return message;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error sending map thumbnail for {mapName}");
                 return null;
             }
         }
