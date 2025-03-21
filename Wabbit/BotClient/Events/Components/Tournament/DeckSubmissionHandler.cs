@@ -12,6 +12,8 @@ using Wabbit.Misc;
 using Wabbit.Models;
 using Wabbit.Services;
 using Wabbit.Services.Interfaces;
+using System.Threading;
+using System.Collections.Concurrent;
 
 namespace Wabbit.BotClient.Events.Components.Tournament
 {
@@ -24,6 +26,7 @@ namespace Wabbit.BotClient.Events.Components.Tournament
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ITournamentManagerService _tournamentManagerService;
         private readonly IMatchStatusService _matchStatusService;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _matchLocks = new();
 
         /// <summary>
         /// Constructor with required dependencies
@@ -223,27 +226,38 @@ namespace Wabbit.BotClient.Events.Components.Tournament
                     return;
                 }
 
-                // Call the MatchStatusService to handle the deck confirmation
-                await _matchStatusService.ConfirmDeckAsync(channel, round, userId, client);
-
-                // Get TournamentMatchService to handle deck submission
-                using (var scope = _scopeFactory.CreateScope())
+                // Get or create a lock for this specific match
+                var matchLock = _matchLocks.GetOrAdd(round.Id, _ => new SemaphoreSlim(1, 1));
+                await matchLock.WaitAsync();
+                try
                 {
-                    var tournamentMatchService = scope.ServiceProvider.GetRequiredService<ITournamentMatchService>();
+                    // Call the MatchStatusService to handle the deck confirmation
+                    await _matchStatusService.ConfirmDeckAsync(channel, round, userId, client);
 
-                    // Call HandleDeckSubmissionAsync to manage map selection and other game logic
-                    try
+                    // Get TournamentMatchService to handle deck submission
+                    using (var scope = _scopeFactory.CreateScope())
                     {
-                        // The HandleDeckSubmissionAsync method checks if all decks are submitted
-                        // and handles map selection and preparation for the next stage
-                        await tournamentMatchService.HandleDeckSubmissionAsync(round, channel, client);
-                        _logger.LogInformation($"TournamentMatchService.HandleDeckSubmissionAsync called for channel {channel.Id}");
+                        var tournamentMatchService = scope.ServiceProvider.GetRequiredService<ITournamentMatchService>();
+
+                        // Call HandleDeckSubmissionAsync to manage map selection and other game logic
+                        try
+                        {
+                            // The HandleDeckSubmissionAsync method checks if all decks are submitted
+                            // and handles map selection and preparation for the next stage
+                            await tournamentMatchService.HandleDeckSubmissionAsync(round, channel, client);
+                            _logger.LogInformation($"TournamentMatchService.HandleDeckSubmissionAsync called for channel {channel.Id}");
+                        }
+                        catch (Exception matchEx)
+                        {
+                            _logger.LogError(matchEx, "Error while handling deck submission via TournamentMatchService");
+                            // Continue anyway - the match status should still be updated
+                        }
                     }
-                    catch (Exception matchEx)
-                    {
-                        _logger.LogError(matchEx, "Error while handling deck submission via TournamentMatchService");
-                        // Continue anyway - the match status should still be updated
-                    }
+                }
+                finally
+                {
+                    // Always release the lock
+                    matchLock.Release();
                 }
 
                 // Delete the confirmation message to reduce clutter
